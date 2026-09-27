@@ -209,6 +209,7 @@ const S = {
   teams:[], quotas:[],
   identity: loadJSON("cst_identity"),
   pin: localStorage.getItem("cst_pin") || null,
+  teamAccess: loadJSON("cst_team_access") || {}, // {teamId: true} - קב"ט שאימת את קוד הצוות שלו במכשיר הזה
   ui:{}
 };
 function loadJSON(k){ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):null; }catch(e){ return null; } }
@@ -483,8 +484,12 @@ async function saveSubmission(){
     const rows = [];
     Object.keys(ui.entries).forEach(date=>{
       const e = ui.entries[date];
-      if(e.dayStatus){ rows.push({submission_id:sub.id, entry_date:date, shift_type:e.dayStatus}); return; }
-      (e.types||[]).forEach(t=> rows.push({submission_id:sub.id, entry_date:date, shift_type:t}));
+      // הערה: כל האובייקטים במערך rows חייבים לשתף בדיוק את אותן מפתחות (כולל כשהערך null) -
+      // PostgREST דורש בהכנסה מרובה (POST עם מערך JSON) שכל האובייקטים יהיו הומוגניים במבנה,
+      // אחרת מוחזרת שגיאה PGRST102 ("All object keys must match"). זו הייתה תקלה אמיתית:
+      // יום עם שעות מותאמות (5 מפתחות) לצד יום אחר עם משמרת רגילה/יום שלם (3 מפתחות בלבד) גרם לשגיאה.
+      if(e.dayStatus){ rows.push({submission_id:sub.id, entry_date:date, shift_type:e.dayStatus, custom_start:null, custom_end:null}); return; }
+      (e.types||[]).forEach(t=> rows.push({submission_id:sub.id, entry_date:date, shift_type:t, custom_start:null, custom_end:null}));
       if(e.customOn) rows.push({submission_id:sub.id, entry_date:date, shift_type:"custom", custom_start:e.customStart, custom_end:e.customEnd});
     });
     if(rows.length){
@@ -514,6 +519,16 @@ function renderAggregate(){
     </div>`;
   }
   const team = teamById(ui.teamId);
+  if(!S.teamAccess[team.id]){
+    return `<div class="card">
+      <span class="backlink" data-action="agg-back">◀ צוות אחר</span>
+      <h2>קוד קב"ט — ${escapeHtml(team.name)}</h2>
+      <p class="muted">הזן/י את קוד הקב"ט כדי לצפות במה שהוגש עבור הצוות שלך.</p>
+      <div class="field"><label>קוד</label><input type="password" id="aggTeamCode" placeholder="קוד" value="${escapeHtml(ui.teamCodeValue||"")}"></div>
+      <button class="btn" data-action="agg-team-code-submit">כניסה</button>
+      ${ui.teamCodeError? `<p class="shortage">${escapeHtml(ui.teamCodeError)}</p>`:""}
+    </div>`;
+  }
   if(!ui.periodStart) ui.periodStart = currentPeriodStart(team);
   if(!ui.loaded){ loadAggregateData(team); return `<div class="card"><p>טוען...</p></div>`; }
 
@@ -1499,6 +1514,13 @@ function renderAdmin(){
   return `<div class="card">
     <span class="backlink" data-action="admin-back">◀ צוות אחר</span>
     <h2>ניהול עובדים — ${escapeHtml(team.name)}</h2>
+    <h3>קוד קב"ט (לצפייה בטבלה המרוכזת ובניית הסידור)</h3>
+    <div class="row">
+      <div class="field"><label>קוד נוכחי</label><input type="text" id="adminTeamCode" value="${escapeHtml(ui.teamCode||"")}"></div>
+      <button class="btn" data-action="admin-set-team-code">שמור קוד</button>
+    </div>
+    <p class="muted">הקוד הזה נדרש מהקב"ט כדי להיכנס ל"טבלה מרוכזת ובניית סידור" ולראות מה הוגש עבור הצוות שלו. לא קשור לקוד העריכה (PIN) שלך.</p>
+    ${ui.teamCodeMsg? `<p>${escapeHtml(ui.teamCodeMsg)}</p>`:""}
     <table>
       <thead><tr><th>שם</th><th>קוד אישי</th>${isMokedTeam(team)?"<th>תפקיד</th>":""}<th></th></tr></thead>
       <tbody>
@@ -1525,7 +1547,13 @@ function renderAdmin(){
 }
 async function loadAdminWorkers(){
   const ui = S.ui;
-  try{ ui.workers = await apiRpc("admin_list_workers", {p_pin:S.pin, p_team_id: ui.teamId}); }
+  try{
+    const [workers, teamCode] = await Promise.all([
+      apiRpc("admin_list_workers", {p_pin:S.pin, p_team_id: ui.teamId}),
+      apiRpc("admin_get_team_code", {p_pin:S.pin, p_team_id: ui.teamId})
+    ]);
+    ui.workers = workers; ui.teamCode = teamCode;
+  }
   catch(e){ ui.workers = []; ui.adminMsg = "שגיאה: "+e.message; }
   render();
 }
@@ -1609,6 +1637,21 @@ function onAppClick(e){
   // ---- aggregate ----
   if(a==="agg-pick-team"){ ui.teamId = el.dataset.id; ui.loaded=false; return render(); }
   if(a==="agg-back"){ S.ui = {}; return render(); }
+  if(a==="agg-team-code-submit"){
+    const code = document.getElementById("aggTeamCode").value;
+    ui.teamCodeValue = code;
+    if(!code){ ui.teamCodeError = "יש להזין קוד"; return render(); }
+    return (async()=>{
+      try{
+        const ok = await apiRpc("verify_team_code", {p_team_id: ui.teamId, p_code: code});
+        if(!ok){ ui.teamCodeError = "קוד שגוי"; return render(); }
+        S.teamAccess[ui.teamId] = true;
+        saveJSON("cst_team_access", S.teamAccess);
+        ui.teamCodeError = null; ui.teamCodeValue = null;
+        render();
+      }catch(err){ ui.teamCodeError = "שגיאה: "+err.message; render(); }
+    })();
+  }
   if(a==="agg-period-prev" || a==="agg-period-next"){
     const team = teamById(ui.teamId);
     ui.periodStart = shiftPeriod(ui.periodStart, team, a==="agg-period-prev"?-1:1);
@@ -1674,6 +1717,17 @@ function onAppClick(e){
   }
   if(a==="admin-pick-team"){ ui.teamId = el.dataset.id; ui.workers=null; return render(); }
   if(a==="admin-back"){ ui.teamId=null; ui.workers=null; return render(); }
+  if(a==="admin-set-team-code"){
+    const code = document.getElementById("adminTeamCode").value;
+    if(!code){ ui.teamCodeMsg = "יש להזין קוד"; return render(); }
+    return (async()=>{
+      try{
+        await apiRpc("admin_set_team_code", {p_pin:S.pin, p_team_id:ui.teamId, p_code:code});
+        ui.teamCode = code; ui.teamCodeMsg = "נשמר.";
+        render();
+      }catch(err){ ui.teamCodeMsg = "שגיאה: "+err.message; render(); }
+    })();
+  }
   if(a==="admin-add"){
     const name = document.getElementById("adminNewName").value;
     const code = document.getElementById("adminNewCode").value;
