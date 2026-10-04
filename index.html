@@ -1111,8 +1111,10 @@ function tmplHoursTxt(q, assignment){
   return `${startTxt}-${endTxt}`;
 }
 
-/* לאילו "בלוקי משמרת" בגזרה נתונה שייך טווח שעות מותאם (לשיבוץ שחוצה בין משמרות) - רק בלוקים
-   שהחפיפה איתם עולה על 3 שעות; חפיפה קצרה יותר לא נכללת (העובד "עובר" למשמרת הבאה בלבד) */
+/* לאילו "בלוקי משמרת" בגזרה נתונה שייך טווח שעות מותאם (לשיבוץ שחוצה בין משמרות) - כל בלוק שיש לו
+   חפיפה כלשהי (ולו דקה אחת) עם הטווח, ממוין כרונולוגית לפי סדר הבלוקים באותו יום. (עד 2026-10-04 היה
+   כאן סף של 3 שעות חפיפה; הוסר לבקשת סרגיי - ראו confirmTmplCustomHours/confirmMokedCustomHours
+   ו-tmplHoursTxt2 למטה, שתמיד מגבילים בפועל לכל היותר 2 בלוקים/שורות, לא משנה כמה בלוקים נחצים.) */
 function tmplCustomRangeBuckets(group, date, sector, customStart, customEnd){
   const secData = buildTemplateData(group, [date], S.quotas).find(s=>s.sector===sector);
   if(!secData) return [];
@@ -1124,9 +1126,27 @@ function tmplCustomRangeBuckets(group, date, sector, customStart, customEnd){
     if(!q) return;
     let qs = timeToMinutes(q.start_time), qe = timeToMinutes(q.end_time); if(qe<=qs) qe += 1440;
     const overlap = Math.min(ce,qe) - Math.max(cs,qs);
-    if(overlap > 180) hits.push({bucket:b, quota:q});
+    if(overlap > 0) hits.push({bucket:b, quota:q});
   });
   return hits;
+}
+
+/* כמו tmplHoursTxt, אך מודעת לפיצול שעות מותאמות שחוצות בין בלוקים: אם לשיבוץ יש custom_start/end
+   שחוצים יותר מבלוק אחד (ראו tmplCustomRangeBuckets), תמיד נכתבות לכל היותר 2 שורות (ראו
+   confirmTmplCustomHours/confirmMokedCustomHours) - "מוביל" (הבלוק המוקדם ביותר שנחצה) ו"עוגן" (הבלוק
+   שאחריו). "מוביל" מציג רק הערת שעת התחלה בפועל ("מ-X"), בלי שעת סיום; "עוגן" מציג את שעת ההתחלה
+   הסטנדרטית שלו (לא את השעה בפועל - זו כבר מוצגת ב"מוביל") ועד שעת הסיום בפועל, גם אם זו חורגת מעבר
+   לבלוק שלו עצמו (בלי ליצור בלוק/שורה שלישית). לבקשת סרגיי (2026-10-04). */
+function tmplHoursTxt2(group, date, sector, q, assignment){
+  const cs = assignment && assignment.custom_start ? assignment.custom_start.slice(0,5) : null;
+  const ce = assignment && assignment.custom_end ? assignment.custom_end.slice(0,5) : null;
+  if(!cs || !ce) return tmplHoursTxt(q, assignment);
+  const touched = tmplCustomRangeBuckets(group, date, sector, cs, ce);
+  if(touched.length < 2) return tmplHoursTxt(q, assignment);
+  const leading = touched[0].quota, anchor = touched[1].quota;
+  if(q.shift_type === leading.shift_type) return `(מ-${tmplHourNum(cs)})`;
+  if(q.shift_type === anchor.shift_type) return `${tmplHourNum(q.start_time)}-${tmplHourNum(ce)}`;
+  return tmplHoursTxt(q, assignment);
 }
 
 /* עובדים משובצים למשבצת נתונה, ממוינים לפי סדר השיבוץ (created_at, כי כך ui.assignments נטען) -
@@ -1167,7 +1187,7 @@ function renderTemplateGrid(group, dates, ui, mode){
           const list = tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type);
           const a = list[pos-1];
           const w = a ? (workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id]) : null;
-          const hoursTxt = a ? tmplHoursTxt(q, a) : `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
+          const hoursTxt = a ? tmplHoursTxt2(group, d, secData.sector, q, a) : `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
           const restBad = a && restViolations.has(restKey(a));
           const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
           if(mode==="manual"){
@@ -1206,12 +1226,12 @@ function renderMokedTemplateGrid(group, dates, ui, mode){
   const restViolations = computeRestViolations(ui.allAssignments || ui.assignments || []);
   const sectors = buildTemplateData(group, dates, quotas);
 
-  function cellText(picked, q){
+  function cellText(picked, q, sector, date){
     return picked.map(a=>{
       const w = workersById[a.worker_id];
       const restBad = restViolations.has(restKey(a));
       const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
-      return `<span class="${restBad?'tmpl-restwarn':''}">${escapeHtml(w?w.name:"?")}<br><span class="muted" style="font-size:.85em;">${tmplHoursTxt(q,a)}</span>${restNote}</span>`;
+      return `<span class="${restBad?'tmpl-restwarn':''}">${escapeHtml(w?w.name:"?")}<br><span class="muted" style="font-size:.85em;">${tmplHoursTxt2(group,date,sector,q,a)}</span>${restNote}</span>`;
     }).join(' \\ ');
   }
 
@@ -1231,10 +1251,10 @@ function renderMokedTemplateGrid(group, dates, ui, mode){
             const anyRestBad = picked.some(a=>restViolations.has(restKey(a)));
             if(mode==="manual"){
               const cls = "tmpl-cell" + (picked.length? (anyRestBad?" tmpl-restwarn":"") : " tmpl-missing");
-              const label = picked.length ? cellText(picked, q) : "חוסר";
+              const label = picked.length ? cellText(picked, q, secData.sector, d) : "חוסר";
               return `<td class="${cls}" data-action="tmpl-cell" data-sector="${escapeHtml(secData.sector)}" data-date="${d}" data-type="${q.shift_type}" data-role="${escapeHtml(role)}" data-ridx="${ridx}">${label}</td>`;
             }
-            if(picked.length) return `<td>${cellText(picked, q)}</td>`;
+            if(picked.length) return `<td>${cellText(picked, q, secData.sector, d)}</td>`;
             return `<td class="tmpl-missing">חוסר</td>`;
           }).join("");
           return `<tr><td class="tmpl-pos">${escapeHtml(role)}${roleRowsCount>1?` ${ridx}`:""}</td>${cells}</tr>`;
@@ -1561,7 +1581,10 @@ async function assignRoleAtPosition(sector, date, shiftType, role, ridx, workerI
   }
 }
 
-/* שיבוץ עם שעות מותאמות שעשוי לחצות בין כמה "בלוקי משמרת" - משבץ בכל בלוק שהחפיפה איתו > 3 שעות */
+/* שיבוץ עם שעות מותאמות שעשוי לחצות בין "בלוקי משמרת": תמיד לכל היותר 2 בלוקים/שורות (גם אם הטווח
+   נוגע ביותר מ-2 בלוקים בפועל) - הבלוק המוקדם ביותר שנחצה ("מוביל") והבלוק שאחריו ("עוגן"), ראו
+   tmplHoursTxt2 להסבר התצוגה. לבקשת סרגיי (2026-10-04) - עד אז היה כאן סף של חפיפה מעל 3 שעות ומספר
+   בלוקים לא מוגבל. */
 async function confirmTmplCustomHours(){
   const ui = S.ui;
   const c = ui.tmplCell;
@@ -1571,8 +1594,8 @@ async function confirmTmplCustomHours(){
   if(!cs || !ce){ ui.tmplCellMsg = "יש להזין שעת התחלה וסיום"; return render(); }
   const team = teamById(ui.teamId);
   const group = sectorGroupForTeam(team);
-  const hits = tmplCustomRangeBuckets(group, c.date, c.sector, cs, ce);
-  if(!hits.length){ ui.tmplCellMsg = "הטווח לא חופף אף משמרת מוגדרת ביום זה (חפיפה של יותר מ-3 שעות)"; return render(); }
+  const hits = tmplCustomRangeBuckets(group, c.date, c.sector, cs, ce).slice(0,2);
+  if(!hits.length){ ui.tmplCellMsg = "הטווח לא חופף אף משמרת מוגדרת ביום זה"; return render(); }
 
   try{
     for(const hit of hits){
@@ -1594,9 +1617,10 @@ async function confirmTmplCustomHours(){
   }
 }
 
-/* כמו confirmTmplCustomHours, אך למוקד: בכל בלוק שנחצה, העובד מצטרף/מתמקם בתוך תת-הרשימה של התפקיד
-   שלו בלבד (לא נוגע בתפקיד השני). בבלוק שבו נלחץ התא במקור - נכנס בדיוק לעמדה (ridx) שנבחרה, ובבלוקים
-   סמוכים - מצטרף כ"חפיפה" לסוף רשימת התפקיד שלו שם (בדיוק כמו "קארינה19\\סרגיי19" בטופס). */
+/* כמו confirmTmplCustomHours, אך למוקד: בכל בלוק (לכל היותר 2 - ראו confirmTmplCustomHours), העובד
+   מצטרף/מתמקם בתוך תת-הרשימה של התפקיד שלו בלבד (לא נוגע בתפקיד השני). בבלוק שבו נלחץ התא במקור -
+   נכנס בדיוק לעמדה (ridx) שנבחרה, ובבלוק הסמוך - מצטרף כ"חפיפה" לסוף רשימת התפקיד שלו שם (בדיוק כמו
+   "קארינה19\\סרגיי19" בטופס). */
 async function confirmMokedCustomHours(){
   const ui = S.ui;
   const c = ui.tmplCell;
@@ -1608,8 +1632,8 @@ async function confirmMokedCustomHours(){
   const group = sectorGroupForTeam(team);
   const workersById = ui.allWorkersById && Object.keys(ui.allWorkersById).length ? ui.allWorkersById : (()=>{ const m={}; ui.workers.forEach(w=>m[w.id]=w); return m; })();
   const role = workersById[workerId] ? workersById[workerId].role : c.role;
-  const hits = tmplCustomRangeBuckets(group, c.date, c.sector, cs, ce);
-  if(!hits.length){ ui.tmplCellMsg = "הטווח לא חופף אף משמרת מוגדרת ביום זה (חפיפה של יותר מ-3 שעות)"; return render(); }
+  const hits = tmplCustomRangeBuckets(group, c.date, c.sector, cs, ce).slice(0,2);
+  if(!hits.length){ ui.tmplCellMsg = "הטווח לא חופף אף משמרת מוגדרת ביום זה"; return render(); }
 
   try{
     for(const hit of hits){
@@ -1881,7 +1905,7 @@ function exportAssignments(){
             const list = tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type);
             const a = list[pos-1];
             const w = a ? ui.workers.find(x=>x.id===a.worker_id) : null;
-            const hoursTxt = a ? tmplHoursTxt(q, a) : `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
+            const hoursTxt = a ? tmplHoursTxt2(group, d, secData.sector, q, a) : `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
             return w? `${w.name} ${hoursTxt}` : "חוסר";
           });
           lines.push([`סייר ${pos}`, ...cells].join("\t"));
@@ -1918,7 +1942,7 @@ function exportAssignments(){
             const candidates = tmplRoleAssignedList(assignmentsByDate, d, secData.sector, q.shift_type, role, workersById);
             const picked = pickedForRoleCell(candidates, ridx, roleRowsCount);
             if(!picked.length) return "חוסר";
-            return picked.map(a=>{ const w=workersById[a.worker_id]; return `${w?w.name:"?"} ${tmplHoursTxt(q,a)}`; }).join(" \\ ");
+            return picked.map(a=>{ const w=workersById[a.worker_id]; return `${w?w.name:"?"} ${tmplHoursTxt2(group,d,secData.sector,q,a)}`; }).join(" \\ ");
           });
           lines.push([`${role}${roleRowsCount>1?` ${ridx}`:""}`, ...cells].join("\t"));
         }
