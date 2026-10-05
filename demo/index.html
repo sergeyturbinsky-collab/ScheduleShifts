@@ -654,6 +654,7 @@ function renderAggregate(){
       <b>תקופה: ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(dates[dates.length-1])}</b>
       <button class="btn small secondary" data-action="agg-period-next">תקופה הבאה ▶</button>
     </div>
+    ${renderMissingSubmissions(workers, ui.submittedWorkerIds, ui.exceptionWorkerIds, isMoked)}
     <h3>${isMoked?"אילוצים שהוגשו":"זמינות שהוגשה"}</h3>
     ${pivotHtml}
     <button class="btn secondary small" data-action="agg-export" style="margin-top:8px;">העתק טבלה (להדבקה באקסל)</button>
@@ -898,6 +899,29 @@ function renderPivot(dates, workers, entriesByWorker, submittedIds, exceptionIds
   ${!workers.length? `<p class="muted">אין עובדים רשומים לצוות זה. ניתן להוסיף דרך "ניהול עובדים ומורשי גישה".</p>`:""}
   <p class="muted">"פתח הגשה עבורו" מאפשר לעובד ספציפי להגיש אילוצים לתקופה זו גם אחרי שהמועד הרגיל של הצוות חלף (למשל אם פספס את הדדליין). דורש קוד עריכה.</p>
   ${renderPinOverlay()}`;
+}
+
+/* --------- טבלה נפרדת ובולטת של "מי עוד לא הגיש" לתקופה המוצגת - לבקשת סרגיי (2026-10-05), כדי
+   שמי שבונה את הסידור יראה בבירור (בלי לגלול בטבלה המרוכזת המלאה) אם עדיין חסרות הגשות לפני
+   שמריצים שיבוץ אוטומטי/ידני. אותו מקור-אמת (submittedIds) כמו בטבלה המרוכזת (renderPivot). */
+function renderMissingSubmissions(workers, submittedIds, exceptionIds, isMoked){
+  exceptionIds = exceptionIds || new Set();
+  if(!workers.length) return "";
+  const missing = workers.filter(w=>!submittedIds.has(w.id)).sort((a,b)=>a.name.localeCompare(b.name,"he"));
+  const warnNote = isMoked
+    ? 'מומלץ להמתין שכולם יגישו (או לפחות לבדוק את הרשימה כאן) לפני הרצת "שיבוץ אוטומטי" — במוקד עובד שלא הגיש נחשב זמין כברירת מחדל, ועלול להישבץ על בסיס זמינות שעוד תשתנה.'
+    : 'מומלץ לבדוק את הרשימה כאן לפני הרצת "שיבוץ אוטומטי" — עובד שלא הגיש לא נחשב זמין לאף משמרת, כך שהחוסרים בשיבוץ עלולים לנבוע מהגשות חסרות ולא ממחסור אמיתי בכוח אדם.';
+  return `<div class="card" style="${missing.length?"border-color:#d9822b;":""}">
+    <h3>מי עוד לא הגיש (${missing.length}/${workers.length})</h3>
+    ${!missing.length? `<p class="muted">כולם הגישו לתקופה זו ✅</p>` : `
+    <table>
+      <thead><tr><th>עובד</th><th></th></tr></thead>
+      <tbody>
+        ${missing.map(w=>`<tr><td style="text-align:right;">${escapeHtml(w.name)}</td><td>${exceptionIds.has(w.id)?'<span class="pill">הגשה פתוחה ידנית</span>':""}</td></tr>`).join("")}
+      </tbody>
+    </table>
+    <p class="muted">${warnNote}</p>`}
+  </div>`;
 }
 
 /* בונה את כל "המשבצות" (slot) הנדרשות לתקופה: תאריך × שורת התקן, לפי day_type (ובמוקד גם לפי weekday ספציפי) של כל תאריך */
