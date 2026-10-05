@@ -92,6 +92,17 @@
 .header-banner { margin: -14px -18px 14px; padding: 14px 8px; background: linear-gradient(135deg, rgb(15, 95, 168), rgb(47, 143, 214) 55%, rgb(87, 182, 234)); display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: nowrap; }
 .logo-chip { flex: 1 1 0px; min-width: 0px; max-width: 25%; padding: 2px; display: flex; align-items: center; justify-content: center; }
 .logo-chip img { max-width: 100%; max-height: 110px; width: auto; height: auto; display: block; filter: drop-shadow(rgba(6, 25, 45, 0.35) 0px 1px 3px); }
+
+/* פלט סידור להדפסה/PDF - לבקשת סרגיי (2026-10-05): כפתור "הדפס/PDF" מפעיל window.print(), וכללי
+   ה-@media print האלה מעלימים את כל שאר הדף ומשאירים רק את #printArea גלוי, מעמדת (position:absolute)
+   בראש העמוד כדי שההדפסה תתחיל מלמעלה בלי קשר למיקום המקורי שלו ב-DOM. */
+.print-header{margin-bottom:10px;}
+@media print{
+  body *{visibility:hidden;}
+  #printArea, #printArea *{visibility:visible;}
+  #printArea{position:absolute;top:0;right:0;left:0;width:100%;margin:0;padding:0;}
+  .no-print{display:none!important;}
+}
 </style>
 </head>
 <body>
@@ -611,6 +622,8 @@ function renderAggregate(){
   if(!ui.periodStart) ui.periodStart = currentPeriodStart(team);
   if(!ui.loaded){ loadAggregateData(team); return `<div class="card"><p>טוען...</p></div>`; }
 
+  if(ui.printOpen) return `<div class="card">${renderPrintView(team)}</div>`;
+
   if(ui.mode==="manual") return renderManualBuild(team);
 
   const group = sectorGroupForTeam(team);
@@ -667,11 +680,37 @@ function renderAggregate(){
         <button class="btn ok" data-action="open-pin" data-next="auto">שיבוץ אוטומטי</button>
         <button class="btn" data-action="open-pin" data-next="manual">שיבוץ ידני</button>
         <button class="btn secondary" data-action="toggle-monthly">פילוח חודשי (הגישו מול שובצו)</button>
+        <button class="btn secondary" data-action="open-print">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
       </div>
       ${ui.buildMsg? `<p style="margin-top:8px;">${escapeHtml(ui.buildMsg)}</p>`:""}
       ${renderMonthlyPanel(ui, isMoked)}
     </div>
     ${sideAside}
+  </div>`;
+}
+
+/* --------- פלט סידור להדפסה/PDF: גרסה נקייה של טבלת השיבוץ (כולל שורות "מראה" של חיפה אם רלוונטי),
+   בלי כפתורי עריכה, עם כפתור הדפסה (window.print) שמשתמש בכללי @media print כדי להעלים הכל חוץ
+   מ-#printArea. נגישה הן ממסך "טבלה מרוכזת" והן ממסך "שיבוץ ידני". לבקשת סרגיי (2026-10-05). --------- */
+function renderPrintView(team){
+  const ui = S.ui;
+  const group = sectorGroupForTeam(team);
+  const dates = periodDates(ui.periodStart, team);
+  const isMoked = group.citySectors[0]==="מוקד";
+  const grid = group.citySectors.length
+    ? (isMoked ? renderMokedTemplateGrid(group, dates, ui, "view") : renderTemplateGrid(group, dates, ui, "view"))
+    : `<p class="muted">אין נתוני התקנים להצגה.</p>`;
+  return `
+  <div class="row no-print" style="margin-bottom:10px;">
+    <button class="btn ok" data-action="do-print">🖨️ הדפס / שמור כ-PDF</button>
+    <button class="btn secondary" data-action="close-print">סגור</button>
+  </div>
+  <div id="printArea">
+    <div class="print-header">
+      <h2 style="margin:0 0 4px;">${escapeHtml(group.label)} — סידור עבודה</h2>
+      <p style="margin:0 0 10px;">תקופה: ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(dates[dates.length-1])}</p>
+    </div>
+    ${grid}
   </div>`;
 }
 
@@ -1200,6 +1239,37 @@ function pickedForRoleCell(candidates, ridx, roleRowsCount){
   return (ridx>=roleRowsCount) ? candidates.slice(ridx-1) : candidates.slice(ridx-1, ridx);
 }
 
+/* שורות "מראה" (תצוגה בלבד, לא ניתנות לעריכה) לבלוקי בוקר/ערב בגזרה עם משמרת "מתואמת" (כמו
+   מתואמת 11:00-23:00 בחיפה) - מציגות את אותם עובדים שכבר משובצים בבלוק ה"מתואמת" הנפרד (העריכה
+   בפועל נשארת שם, הבלוק הנפרד לא מוסר), כדי שיהיה אפשר לראות אותם גם בשורת הבוקר/ערב, ממוספרות
+   כהמשך ישיר של מספור ה"סייר" הרגיל של הבלוק (למשל: בוקר עם 3 תקנים + 2 מתואמת -> סייר 4, סייר 5
+   מתווספות). גנרי (לא תלוי בשם גזרה ספציפי) - מופעל על כל גזרה שיש לה בלוק "coordinated". לבקשת
+   סרגיי (2026-10-05): "עותק תצוגה" בלבד, בלי ליצור אפשרות עריכה כפולה. */
+function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDate, workers, allWorkersById, restViolations){
+  if(bucket.key!=="morning" && bucket.key!=="evening") return "";
+  return Array.from({length:coordBucket.maxReq}, (_,i)=>i+1).map(cpos=>{
+    const pos = bucket.maxReq + cpos;
+    const cells = dates.map(d=>{
+      const cq = coordBucket.perDate[d];
+      if(!cq || cpos>cq.required_count) return `<td class="tmpl-na"></td>`;
+      const list = tmplAssignedList(assignmentsByDate, d, sector, cq.shift_type);
+      const a = list[cpos-1];
+      const w = a ? (workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id]) : null;
+      if(!w) return `<td class="tmpl-missing" style="font-style:italic;">חוסר</td>`;
+      const cs = a.custom_start ? a.custom_start.slice(0,5) : cq.start_time.slice(0,5);
+      const ce = a.custom_end ? a.custom_end.slice(0,5) : cq.end_time.slice(0,5);
+      const q = bucket.perDate[d];
+      const hoursTxt = bucket.key==="morning"
+        ? `(מ-${tmplHourNum(cs)})`
+        : `${tmplHourNum(q?q.start_time:cq.start_time)}-${tmplHourNum(ce)}`;
+      const restBad = restViolations.has(restKey(a));
+      const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
+      return `<td class="${restBad?'tmpl-restwarn':''}" style="opacity:.8;font-style:italic;">${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
+    }).join("");
+    return `<tr class="tmpl-mirror-row"><td class="tmpl-pos">סייר ${pos}<br><span class="muted" style="font-size:.75em;font-weight:400;">(מתואמת)</span></td>${cells}</tr>`;
+  }).join("");
+}
+
 /* mode: "view" (תצוגה בלבד, במסך הפלט הראשי) או "manual" (משבצות לחיצות לשיבוץ ידני) */
 function renderTemplateGrid(group, dates, ui, mode){
   const quotas = S.quotas;
@@ -1212,6 +1282,7 @@ function renderTemplateGrid(group, dates, ui, mode){
 
   const blocksHtml = sectors.map(secData=>{
     if(!secData.buckets.length) return "";
+    const coordBucket = secData.buckets.find(b=>b.key==="coordinated");
     const bucketsHtml = secData.buckets.map(bucket=>{
       const rowsHtml = Array.from({length:bucket.maxReq}, (_,i)=>i+1).map(pos=>{
         const cells = dates.map(d=>{
@@ -1233,12 +1304,13 @@ function renderTemplateGrid(group, dates, ui, mode){
         }).join("");
         return `<tr><td class="tmpl-pos">סייר ${pos}</td>${cells}</tr>`;
       }).join("");
+      const mirrorHtml = coordBucket ? tmplCoordMirrorRows(secData.sector, bucket, coordBucket, dates, assignmentsByDate, workers, allWorkersById, restViolations) : "";
       return `
       <div class="tmpl-bucket-head">${escapeHtml(bucket.label)}</div>
       <div style="overflow-x:auto;">
       <table class="tmpl-table">
         <thead><tr><th></th>${dates.map(d=>`<th>${fmtDateHeb(d)}</th>`).join("")}</tr></thead>
-        <tbody>${rowsHtml || `<tr><td colspan="${dates.length+1}" class="muted">אין תקן</td></tr>`}</tbody>
+        <tbody>${rowsHtml || `<tr><td colspan="${dates.length+1}" class="muted">אין תקן</td></tr>`}${mirrorHtml}</tbody>
       </table>
       </div>`;
     }).join("");
@@ -1399,6 +1471,11 @@ function renderTmplCellOverlay(){
   }
 
   const options = workers.filter(w=> !currentIds.has(w.id) || w.id===(currentWorker&&currentWorker.id));
+  // --- מיון התצוגה לשני מדורים ברורים: קודם זמינים, אח"כ לא-זמינים (שיבוץ ידני בכל זאת) - ואז
+  // (למטה) האפשרות השלישית - זמינים מגזרה אחרת. לבקשת סרגיי (2026-10-05). ---
+  const availOptions = options.filter(w=>avail.some(a=>a.id===w.id));
+  const unavailOptions = options.filter(w=>!avail.some(a=>a.id===w.id));
+  const pickBtn = w => `<button class="btn small ${w.id===(currentWorker&&currentWorker.id)?"":"secondary"}" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}</button>`;
   return `
   <div class="overlay" data-action="tmpl-cell-bg">
     <div class="card" data-action="noop">
@@ -1406,11 +1483,16 @@ function renderTmplCellOverlay(){
       ${currentWorker? `<p class="muted">משובץ כרגע: ${escapeHtml(currentWorker.name)}</p>`:""}
       <div class="avail-list">
         <button class="btn small ${!currentWorker?"secondary":""}" data-action="tmpl-pick" data-worker="">חוסר / נקה</button>
-        ${options.map(w=>{
-          const isAvail = avail.some(a=>a.id===w.id);
-          return `<button class="btn small ${w.id===(currentWorker&&currentWorker.id)?"":"secondary"}" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${!isAvail?` <span class="muted">(לא זמין)</span>`:""}</button>`;
-        }).join("")}
       </div>
+      <p class="muted" style="margin:8px 0 2px;font-weight:600;">זמינים</p>
+      <div class="avail-list">
+        ${availOptions.length? availOptions.map(pickBtn).join("") : '<span class="muted">אין עובדים זמינים</span>'}
+      </div>
+      ${unavailOptions.length? `
+      <p class="muted" style="margin:8px 0 2px;font-weight:600;">לא זמינים (שיבוץ ידני בכל זאת)</p>
+      <div class="avail-list">
+        ${unavailOptions.map(pickBtn).join("")}
+      </div>` : ""}
       <div class="row" style="margin-top:8px;">
         <button class="btn small secondary" data-action="tmpl-other-sectors-toggle">${ui.tmplShowOtherSectors?"הסתר זמינים מגזרות אחרות":"הצג זמינים מגזרות אחרות"}</button>
       </div>
@@ -1491,6 +1573,11 @@ function renderMokedCellOverlay(){
   }
 
   const options = workers.filter(w=> w.role===c.role && !currentIds.has(w.id));
+  // --- מיון התצוגה לשני מדורים ברורים: קודם זמינים, אח"כ לא-זמינים (שיבוץ ידני בכל זאת) - ואז
+  // (למטה) האפשרות השלישית - זמינים מגזרה אחרת. לבקשת סרגיי (2026-10-05). ---
+  const availOptions = options.filter(w=>avail.some(a=>a.id===w.id));
+  const unavailOptions = options.filter(w=>!avail.some(a=>a.id===w.id));
+  const pickBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}</button>`;
   return `
   <div class="overlay" data-action="tmpl-cell-bg">
     <div class="card" data-action="noop">
@@ -1498,11 +1585,16 @@ function renderMokedCellOverlay(){
       ${currentNames? `<p class="muted">משובץ כרגע: ${escapeHtml(currentNames)}</p>`:""}
       <div class="avail-list">
         <button class="btn small ${!currentNames?"secondary":""}" data-action="tmpl-pick" data-worker="">חוסר / נקה</button>
-        ${options.map(w=>{
-          const isAvail = avail.some(a=>a.id===w.id);
-          return `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${!isAvail?` <span class="muted">(לא זמין)</span>`:""}</button>`;
-        }).join("") || '<span class="muted">אין עובדים נוספים בתפקיד זה</span>'}
       </div>
+      <p class="muted" style="margin:8px 0 2px;font-weight:600;">זמינים</p>
+      <div class="avail-list">
+        ${availOptions.length? availOptions.map(pickBtn).join("") : '<span class="muted">אין עובדים זמינים בתפקיד זה</span>'}
+      </div>
+      ${unavailOptions.length? `
+      <p class="muted" style="margin:8px 0 2px;font-weight:600;">לא זמינים (שיבוץ ידני בכל זאת)</p>
+      <div class="avail-list">
+        ${unavailOptions.map(pickBtn).join("")}
+      </div>` : ""}
       <div class="row" style="margin-top:8px;">
         <button class="btn small secondary" data-action="tmpl-other-sectors-toggle">${ui.tmplShowOtherSectors?"הסתר זמינים מגזרות אחרות":"הצג זמינים מגזרות אחרות"}</button>
       </div>
@@ -1883,6 +1975,7 @@ function renderManualBuild(team){
       <p class="muted">לחצו על משבצת כדי לבחור מי ישובץ אליה, או לסמן "חוסר". משבצות שחורות = לא נדרש באותו יום.</p>
       ${renderTemplateGrid(group, dates, ui, "manual")}
       <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
+      <button class="btn secondary small" data-action="open-print" style="margin-top:8px;">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
     </div>
     ${renderTmplCellOverlay()}`;
   }
@@ -1895,6 +1988,7 @@ function renderManualBuild(team){
     <p class="muted">לחצו על משבצת כדי לבחור מי ישובץ אליה לפי תפקיד (אחמ"ש/מוקדן), או לסמן "חוסר". משבצות שחורות = לא נדרש באותו יום.</p>
     ${renderMokedTemplateGrid(group, dates, ui, "manual")}
     <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
+    <button class="btn secondary small" data-action="open-print" style="margin-top:8px;">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
   </div>
   ${renderMokedCellOverlay()}`;
 }
@@ -2244,6 +2338,9 @@ function onAppClick(e){
   }
   if(a==="agg-export") return exportPivot();
   if(a==="agg-export-assign") return exportAssignments();
+  if(a==="open-print"){ ui.printOpen = true; return render(); }
+  if(a==="close-print"){ ui.printOpen = false; return render(); }
+  if(a==="do-print"){ window.print(); return; }
   if(a==="toggle-monthly"){
     ui.monthlyOpen = !ui.monthlyOpen;
     if(ui.monthlyOpen && !ui.monthlyValue){
