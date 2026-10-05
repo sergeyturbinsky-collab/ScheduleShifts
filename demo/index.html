@@ -2000,10 +2000,11 @@ function renderAdmin(){
     </div>
     <p class="muted">הקוד הזה נדרש כדי להיכנס ל"טבלה מרוכזת ובניית סידור" ולראות מה הוגש עבור ${escapeHtml(ui.recipientLabel)}. לא קשור לקוד העריכה (PIN) שלך.${merged?` (הקוד המשותף של ${escapeHtml(ui.recipientLabel)} — זהה לקוד שדורש שער הכניסה לטבלה המרוכזת עבור הכפתור הממוזג.)`:""}</p>
     ${ui.teamCodeMsg? `<p>${escapeHtml(ui.teamCodeMsg)}</p>`:""}
+    ${isLockActive(ui.teamCodeLockedUntil)? `<p class="shortage">🔒 קוד הקב"ט נעול כרגע (יותר מדי ניסיונות שגויים) — ייפתח אוטומטית בעוד כ-${lockMinutesLeft(ui.teamCodeLockedUntil)} דק'. <button class="btn small" data-action="admin-unlock-team">פתח נעילה עכשיו</button></p>`:""}
     <table>
       <thead><tr><th>שם</th><th>קוד אישי</th>${merged?"<th>גזרה</th>":""}${avihaiTeam?"<th>עיר</th>":""}${anyMoked?"<th>תפקיד</th>":""}<th></th></tr></thead>
       <tbody>
-        ${ui.workers.map(w=>`<tr><td>${escapeHtml(w.name)}</td><td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${w.team_id===avihaiTeam.id ? escapeHtml((w.city_sectors&&w.city_sectors.length)?w.city_sectors.join("/"):"כל האזור") : "-"}</td>`:""}${anyMoked?`<td>${escapeHtml(w.role||"-")}</td>`:""}<td><button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>`).join("") || `<tr><td colspan="${1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1}" class="muted">אין עדיין עובדים</td></tr>`}
+        ${ui.workers.map(w=>`<tr><td>${escapeHtml(w.name)}</td><td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${w.team_id===avihaiTeam.id ? escapeHtml((w.city_sectors&&w.city_sectors.length)?w.city_sectors.join("/"):"כל האזור") : "-"}</td>`:""}${anyMoked?`<td>${escapeHtml(w.role||"-")}</td>`:""}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>`).join("") || `<tr><td colspan="${1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1}" class="muted">אין עדיין עובדים</td></tr>`}
       </tbody>
     </table>
     <h3>הוספה / עדכון</h3>
@@ -2044,18 +2045,27 @@ async function loadAdminWorkers(){
   const ui = S.ui;
   try{
     const codeTeamId = adminCodeTeamId(ui.teamIds);
-    const [workerLists, teamCode] = await Promise.all([
+    const [workerLists, teamCode, teamLock] = await Promise.all([
       // admin_list_workers לא מחזיר team_id (מסונן כבר לפי הצוות שנשאל) - מתייגים כאן בצד הלקוח
       // כדי שתצוגת "גזרה" בטבלה הממוזגת תדע לאיזה צוות בסיס כל עובד שייך.
       Promise.all(ui.teamIds.map(tid=>apiRpc("admin_list_workers", {p_pin:S.pin, p_team_id: tid}).then(rows=>rows.map(w=>({...w, team_id:tid}))))),
-      apiRpc("admin_get_team_code", {p_pin:S.pin, p_team_id: codeTeamId})
+      apiRpc("admin_get_team_code", {p_pin:S.pin, p_team_id: codeTeamId}),
+      apiRpc("admin_get_team_lock_status", {p_pin:S.pin, p_team_id: codeTeamId})
     ]);
     ui.workers = workerLists.flat().sort((a,b)=>a.name.localeCompare(b.name,"he"));
     ui.teamCode = teamCode;
     ui.codeTeamId = codeTeamId;
+    ui.teamCodeLockedUntil = teamLock;
   }
   catch(e){ ui.workers = []; ui.adminMsg = "שגיאה: "+e.message; }
   render();
+}
+// נעילות (קוד אישי/קוד קב"ט) - 30 דקות אוטומטית אחרי 3 ניסיונות שגויים; כאן רק תצוגה+פתיחה ידנית
+function isLockActive(lockedUntil){
+  return !!lockedUntil && new Date(lockedUntil) > new Date();
+}
+function lockMinutesLeft(lockedUntil){
+  return Math.max(1, Math.ceil((new Date(lockedUntil) - new Date())/60000));
 }
 
 /* ============== EVENT HANDLING ============== */
@@ -2312,6 +2322,19 @@ function onAppClick(e){
     return (async()=>{
       try{ await apiRpc("admin_delete_worker",{p_pin:S.pin,p_worker_id:id}); ui.workers=null; render(); }
       catch(err){ ui.adminMsg="שגיאה: "+err.message; render(); }
+    })();
+  }
+  if(a==="admin-unlock-worker"){
+    const id = el.dataset.id;
+    return (async()=>{
+      try{ await apiRpc("admin_unlock_worker_code",{p_pin:S.pin,p_worker_id:id}); ui.adminMsg="הנעילה נפתחה."; ui.workers=null; render(); }
+      catch(err){ ui.adminMsg="שגיאה: "+err.message; render(); }
+    })();
+  }
+  if(a==="admin-unlock-team"){
+    return (async()=>{
+      try{ await apiRpc("admin_unlock_team_code",{p_pin:S.pin,p_team_id:ui.codeTeamId}); ui.teamCodeLockedUntil=null; ui.teamCodeMsg="הנעילה נפתחה."; render(); }
+      catch(err){ ui.teamCodeMsg="שגיאה: "+err.message; render(); }
     })();
   }
 }
