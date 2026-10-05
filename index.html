@@ -321,8 +321,7 @@ async function init(){
       apiGet("constraint_teams","select=*&order=sort_order"),
       apiGet("shift_quotas","select=*&order=sector,sort_order")
     ]);
-    // ריצ'ארד גליאזמן היה רישום כפול (אותם עובדים כמו עידן בסעד) - מוסתר מכל המסכים עד שהמחיקה בפועל תאושר
-    S.teams = teams.filter(t=>t.name!=="ריצ'ארד גליאזמן");
+    S.teams = teams;
     S.quotas = quotas;
   }catch(e){
     document.getElementById("app").innerHTML = `<div class="card"><p class="shortage">שגיאה בטעינת הנתונים: ${escapeHtml(e.message)}</p></div>`;
