@@ -922,12 +922,14 @@ function roleCountsText(rc){ if(!rc) return ""; return Object.keys(rc).map(r=>`$
    מודל הסימון שונה בין מוקד לשאר הצוותים: במוקד מה שמסומן חוסם ("מה שלא יכול לעבוד" - ברירת המחדל היא
    זמין, אלא אם נחסם במפורש). בשאר הצוותים (מאבטחים) מה שמסומן הוא בדיוק ההפך - היתר הזמינות ("מה שכן
    יכול לעבוד") - משמרת שלא סומנה עבורה כלל, או עובד שלא הגיש בכלל, נחשבים כלא זמינים. בשני המקרים,
-   חופשה/מילואים/מחלה חוסמים תמיד את כל היום, בכל משמרת. */
-function availableForSlot(slot, workers, entriesByWorker, assignmentsByDate, excludeSlotKey){
+   חופשה/מילואים/מחלה חוסמים תמיד את כל היום, בכל משמרת.
+   ignoreRole=true: מתעלם מהתאמת התפקיד (משמש בשיבוץ האוטומטי למוקד כדי לאתר אחמ"שים "פנויים"
+   שפתחו זמינות למשבצת אך לא נדרשים/לא שובצו בתקן אחמ"ש שלה - ראו runAutoAssign). */
+function availableForSlot(slot, workers, entriesByWorker, assignmentsByDate, excludeSlotKey, ignoreRole){
   const blocking = blockingEntryTypes(slot.shiftType);
   const isMoked = slot.sector==="מוקד";
   return workers.filter(w=>{
-    if(slot.roleCounts && !(w.role && slot.roleCounts[w.role])) return false;
+    if(!ignoreRole && slot.roleCounts && !(w.role && slot.roleCounts[w.role])) return false;
     // שיוך עיר (רלוונטי רק לארבע הערים בבריכה המשותפת של אורי שגיא - ראו computeWorkerCities)
     if(POOLED_CITY_SECTORS.includes(slot.sector)){
       const cities = w.cities!==undefined ? w.cities : computeWorkerCities(w);
@@ -1778,10 +1780,20 @@ async function runAutoAssign(){
     let chosen = [];
     const {ok: restOk, bad: restBad, newInterval} = splitByRest(avail, slot);
     if(slot.roleCounts){
-      // משבצת עם דרישת תפקידים (כמו במוקד: אחמ"ש/מוקדן) - ממלאים כל תפקיד בנפרד, לפי מה שכבר משובץ מאותו תפקיד
+      // משבצת עם דרישת תפקידים (כמו במוקד: אחמ"ש/מוקדן) - ממלאים כל תפקיד בנפרד, לפי מה שכבר משובץ מאותו תפקיד.
+      // סדר עיבוד התפקידים קבוע לפי MOKED_ROLE_ORDER (אחמ"ש לפני מוקדן) - לבקשת סרגיי (2026-10-05):
+      // 1) אחמ"שים ממלאים קודם את תקני האחמ"ש שלהם, 2) מוקדנים ממלאים את תקני המוקדן, 3) אם נשאר חוסר
+      // בתקן מוקדן אחרי שמוצו כל המוקדנים הזמינים (כולל פוגעי-מנוחה) - אחמ"שים שפתחו זמינות למשבצת הזו
+      // (גם אם המשבצת לא דורשת מהם תפקיד אחמ"ש בעצמה) אך לא שובצו בה (לא נדרשו/לא נשארו בתקן האחמ"ש
+      // שלהם) יכולים למלא את החוסר, כעדיפות אחרונה לפני "חוסר" מלא. אין כיוון הפוך (מוקדן לא ממלא תקן
+      // אחמ"ש). גם כאן שומרים על החלוקה ההוגנת (byFairness, אותו מנגנון כמו שאר השיבוץ) כך שכיסוי מוקדן
+      // ע"י אחמ"ש יתחלק הוגן בין האחמ"שים הפנויים, ולא יפול תמיד על אותו אדם.
       const alreadyByRole = {};
       already.forEach(a=>{ const w=workers.find(x=>x.id===a.worker_id); if(w&&w.role) alreadyByRole[w.role]=(alreadyByRole[w.role]||0)+1; });
-      Object.keys(slot.roleCounts).forEach(role=>{
+      const roleKeysOrdered = MOKED_ROLE_ORDER.filter(r=>slot.roleCounts[r]!=null)
+        .concat(Object.keys(slot.roleCounts).filter(r=>!MOKED_ROLE_ORDER.includes(r)));
+      let availAnyRole = null; // availableForSlot בלי סינון תפקיד - מחושב לכל היותר פעם אחת לכל משבצת, רק אם צריך fallback
+      roleKeysOrdered.forEach(role=>{
         const needRole = slot.roleCounts[role] - (alreadyByRole[role]||0);
         if(needRole<=0) return;
         const okRole = restOk.filter(w=>w.role===role && !chosen.some(c=>c.id===w.id)).slice().sort(byFairness);
@@ -1791,6 +1803,22 @@ async function runAutoAssign(){
           const more = badRole.slice(0, needRole - pickedRole.length);
           restForced += more.length;
           pickedRole = pickedRole.concat(more);
+        }
+        if(pickedRole.length < needRole && role==="מוקדן"){
+          // fallback: אחמ"שים זמינים (ללא סינון תפקיד) למשבצת זו, שלא נבחרו כבר לתקן האחמ"ש שלה
+          if(availAnyRole===null){
+            availAnyRole = availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType), true);
+          }
+          const fallbackPool = availAnyRole.filter(w=>w.role==='אחמ"ש' && !chosen.some(c=>c.id===w.id) && !pickedRole.some(c=>c.id===w.id));
+          const {ok: fbOk, bad: fbBad} = splitByRest(fallbackPool, slot);
+          const stillNeed = needRole - pickedRole.length;
+          let pickedFallback = fbOk.slice().sort(byFairness).slice(0, stillNeed);
+          if(pickedFallback.length < stillNeed){
+            const fbMore = fbBad.slice().sort(byFairness).slice(0, stillNeed - pickedFallback.length);
+            restForced += fbMore.length;
+            pickedFallback = pickedFallback.concat(fbMore);
+          }
+          pickedRole = pickedRole.concat(pickedFallback);
         }
         chosen = chosen.concat(pickedRole);
       });
@@ -2004,7 +2032,15 @@ function renderAdmin(){
     <table>
       <thead><tr><th>שם</th><th>קוד אישי</th>${merged?"<th>גזרה</th>":""}${avihaiTeam?"<th>עיר</th>":""}${anyMoked?"<th>תפקיד</th>":""}<th></th></tr></thead>
       <tbody>
-        ${ui.workers.map(w=>`<tr><td>${escapeHtml(w.name)}</td><td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${w.team_id===avihaiTeam.id ? escapeHtml((w.city_sectors&&w.city_sectors.length)?w.city_sectors.join("/"):"כל האזור") : "-"}</td>`:""}${anyMoked?`<td>${escapeHtml(w.role||"-")}</td>`:""}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>`).join("") || `<tr><td colspan="${1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1}" class="muted">אין עדיין עובדים</td></tr>`}
+        ${ui.workers.map(w=>{
+          const workerIsMoked = isMokedTeam(teamById(w.team_id));
+          const roleCell = !anyMoked ? "" : (!workerIsMoked ? `<td>${escapeHtml(w.role||"-")}</td>` : `<td><select data-action="admin-role-select" data-id="${w.id}" title="שינוי תפקיד (מוקדן/אחמ&quot;ש)">
+              <option value="" ${!w.role?"selected":""}>-</option>
+              <option value='אחמ"ש' ${w.role==='אחמ"ש'?"selected":""}>אחמ"ש</option>
+              <option value="מוקדן" ${w.role==="מוקדן"?"selected":""}>מוקדן</option>
+            </select></td>`);
+          return `<tr><td>${escapeHtml(w.name)}</td><td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${w.team_id===avihaiTeam.id ? escapeHtml((w.city_sectors&&w.city_sectors.length)?w.city_sectors.join("/"):"כל האזור") : "-"}</td>`:""}${roleCell}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>`;
+        }).join("") || `<tr><td colspan="${1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1}" class="muted">אין עדיין עובדים</td></tr>`}
       </tbody>
     </table>
     <h3>הוספה / עדכון</h3>
@@ -2079,6 +2115,14 @@ function attachHandlers(){
 function onAppChange(e){
   const t = e.target;
   if(t.dataset.action==="manual-check") return; // נקרא בזמן שמירה
+  if(t.dataset.action==="admin-role-select"){
+    const id = t.dataset.id, role = t.value || null;
+    const ui = S.ui;
+    (async()=>{
+      try{ await apiRpc("admin_update_worker_role",{p_pin:S.pin,p_worker_id:id,p_role:role}); ui.adminMsg="התפקיד עודכן."; ui.workers=null; render(); }
+      catch(err){ ui.adminMsg="שגיאה: "+err.message; render(); }
+    })();
+  }
 }
 
 function onAppClick(e){
