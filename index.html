@@ -98,10 +98,13 @@
    בראש העמוד כדי שההדפסה תתחיל מלמעלה בלי קשר למיקום המקורי שלו ב-DOM. */
 .print-header{margin-bottom:10px;}
 @media print{
+  body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
   body *{visibility:hidden;}
   #printArea, #printArea *{visibility:visible;}
   #printArea{position:absolute;top:0;right:0;left:0;width:100%;margin:0;padding:0;}
   .no-print{display:none!important;}
+  /* משבצות "לא נדרש" (בלי תקן, אף אחד לא אמור להיות משובץ) - כחול כהה בפלט ההדפסה/PDF, לבקשת סרגיי (2026-10-05) */
+  .tmpl-na{background:#0b2545!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
 }
 </style>
 </head>
@@ -622,7 +625,7 @@ function renderAggregate(){
   const dates = periodDates(ui.periodStart, team);
 
   const workers = ui.workers;
-  const pivotHtml = renderPivot(dates, workers, ui.entriesByWorker, ui.submittedWorkerIds, ui.exceptionWorkerIds, ui.periodStart);
+  const pivotHtml = renderPivot(dates, workers, ui.entriesByWorker, ui.submittedWorkerIds, ui.exceptionWorkerIds, ui.periodStart, ui.workerNotes);
 
   const isMoked = group.citySectors[0]==="מוקד";
   let quotaSection = "";
@@ -709,6 +712,10 @@ function renderPrintView(team){
 /* --------- "מי זמין לכל יום" (בנפרד מ"שיבוץ") - רשימה מאוחדת ליום, כולל מי שכבר שובץ ---------
    מבוססת על אותה availableForSlot כמו טבלת "זמינים" ב-renderQuotaPanel, אבל מאוחדת בין כל
    סוגי המשמרות של אותו יום, כדי לתת תמונה נוחה "מי בסביבה היום" בלי צורך לפתוח את התבנית. */
+/* לכל יום: לכל עובד - באילו משמרות (לא רק "זמין" באופן גורף) הוא זמין, לפי כל המשמרות שקיימות
+   בפועל לאותו תאריך (בכל הגזרות של הקבוצה, כמו קודם - ללא שינוי בהיקף). אם הוא זמין בכל המשמרות
+   שקיימות לאותו יום - נכתב "כל היום" במקום לפרט כל משמרת בנפרד. הכל בתוך אותה שורת-יום הקיימת
+   (לא רשימה נפרדת בסוף). לבקשת סרגיי (2026-10-06). */
 function renderAvailabilityByDay(dates, group, ui){
   const workers = ui.workers;
   const assignmentsByDate = {};
@@ -716,14 +723,22 @@ function renderAvailabilityByDay(dates, group, ui){
   const slots = buildSlots(dates, group, S.quotas);
   const rows = dates.map(d=>{
     const daySlots = slots.filter(s=>s.date===d);
-    const seen = new Map();
+    const shiftTypesForDay = Array.from(new Set(daySlots.map(s=>s.shiftType)));
+    const byWorker = new Map(); // worker.id -> {worker, types:Set}
     daySlots.forEach(slot=>{
       availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector, slot.shiftType)).forEach(w=>{
-        if(!seen.has(w.id)) seen.set(w.id, w);
+        if(!byWorker.has(w.id)) byWorker.set(w.id, {worker:w, types:new Set()});
+        byWorker.get(w.id).types.add(slot.shiftType);
       });
     });
-    const names = Array.from(seen.values()).sort((a,b)=>a.name.localeCompare(b.name,"he")).map(w=>escapeHtml(w.name)+(w.role?` [${escapeHtml(w.role)}]`:""));
-    return `<tr><td>${fmtDateHeb(d)}</td><td style="text-align:right;">${names.length?names.join(", "):'<span class="muted">אין</span>'}</td></tr>`;
+    const items = Array.from(byWorker.values())
+      .sort((a,b)=>a.worker.name.localeCompare(b.worker.name,"he"))
+      .map(({worker:w, types})=>{
+        const allDay = shiftTypesForDay.length>0 && shiftTypesForDay.every(st=>types.has(st));
+        const typesTxt = allDay ? "כל היום" : shiftTypesForDay.filter(st=>types.has(st)).map(st=>SHIFT_LABELS[st]||st).join(", ");
+        return `${escapeHtml(w.name)}${w.role?` [${escapeHtml(w.role)}]`:""} <span class="muted" style="font-size:.85em;">(${typesTxt})</span>`;
+      });
+    return `<tr><td>${fmtDateHeb(d)}</td><td style="text-align:right;">${items.length?items.join(", "):'<span class="muted">אין</span>'}</td></tr>`;
   }).join("");
   return `<div style="overflow-x:auto;"><table><thead><tr><th>תאריך</th><th>מי זמין</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
@@ -831,14 +846,15 @@ async function loadAggregateData(team){
     }catch(e){ ui.allWorkers=ui.allWorkers||[]; ui.allWorkersById=ui.allWorkersById||{}; ui.otherWorkers=ui.otherWorkers||[]; }
 
     const workerIds = workers.map(w=>w.id);
-    ui.entriesByWorker = {}; ui.submittedWorkerIds = new Set(); ui.exceptionWorkerIds = new Set();
+    ui.entriesByWorker = {}; ui.submittedWorkerIds = new Set(); ui.exceptionWorkerIds = new Set(); ui.workerNotes = {};
     if(workerIds.length){
       try{
         const exc = await apiGet("constraint_exceptions", `select=worker_id&period_start=eq.${ui.periodStart}&worker_id=in.(${workerIds.join(",")})`);
         exc.forEach(e=>ui.exceptionWorkerIds.add(e.worker_id));
       }catch(e){}
-      const subs = await apiGet("constraint_submissions", `select=id,worker_id&period_start=eq.${ui.periodStart}&worker_id=in.(${workerIds.join(",")})`);
-      subs.forEach(s=>ui.submittedWorkerIds.add(s.worker_id));
+      // --- הערות חופשיות (אופציונלי) שהעובד כתב בעת ההגשה - מוצגות לרואה הטבלה המרוכזת, ראו renderPivot. לבקשת סרגיי (2026-10-06). ---
+      const subs = await apiGet("constraint_submissions", `select=id,worker_id,note&period_start=eq.${ui.periodStart}&worker_id=in.(${workerIds.join(",")})`);
+      subs.forEach(s=>{ ui.submittedWorkerIds.add(s.worker_id); if(s.note && s.note.trim()) ui.workerNotes[s.worker_id] = s.note; });
       if(subs.length){
         const subIds = subs.map(s=>s.id);
         const entries = await apiGet("constraint_entries", `select=submission_id,entry_date,shift_type,custom_start,custom_end&submission_id=in.(${subIds.join(",")})`);
@@ -898,12 +914,13 @@ async function loadAggregateData(team){
   render();
 }
 
-function renderPivot(dates, workers, entriesByWorker, submittedIds, exceptionIds, periodStart){
+function renderPivot(dates, workers, entriesByWorker, submittedIds, exceptionIds, periodStart, workerNotes){
   exceptionIds = exceptionIds || new Set();
+  workerNotes = workerNotes || {};
   return `
   <div style="overflow-x:auto;">
   <table>
-    <thead><tr><th>עובד</th>${dates.map(d=>`<th>${fmtDateHeb(d)}</th>`).join("")}</tr></thead>
+    <thead><tr><th>עובד</th><th>הערה</th>${dates.map(d=>`<th>${fmtDateHeb(d)}</th>`).join("")}</tr></thead>
     <tbody>
       ${workers.map(w=>{
         const submitted = submittedIds.has(w.id);
@@ -915,8 +932,12 @@ function renderPivot(dates, workers, entriesByWorker, submittedIds, exceptionIds
           else statusHtml += ` <button class="btn small" data-action="open-pin" data-next="grant-exception" data-worker="${w.id}" data-period="${periodStart}">פתח הגשה עבורו</button>`;
         }
         const cityTag = (w.cities && w.cities.length) ? ` <span class="muted" style="font-size:.85em;">(${escapeHtml(w.cities.join("/"))})</span>` : "";
+        // --- הערה חופשית (אופציונלי) שהעובד כתב בעת ההגשה - עמודה נפרדת בצד, ליד שם העובד, לבקשת סרגיי (2026-10-06) ---
+        const note = workerNotes[w.id];
+        const noteCell = note ? `<td style="text-align:right;font-style:italic;">📝 ${escapeHtml(note)}</td>` : `<td class="muted">-</td>`;
         return `<tr>
           <td style="text-align:right;${submitted?"":"color:#8a8a8a;"}">${escapeHtml(w.name)}${cityTag}${statusHtml}</td>
+          ${noteCell}
           ${dates.map(d=>{
             const es = (entriesByWorker[w.id]||{})[d];
             if(!es || !es.length) return `<td>-</td>`;
