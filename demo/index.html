@@ -835,9 +835,9 @@ async function loadAggregateData(team){
   const group = sectorGroupForTeam(team);
   try{
     const teamFilter = group.teamIds.length>1 ? `in.(${group.teamIds.join(",")})` : `eq.${group.teamIds[0]}`;
-    // הערה (2026-10-06): auto_assign_exempt יוחזר בחזרה לכאן אחרי שה-SQL של migration_auto_assign_exempt_demo
-    // ירוץ בפועל (מוסיף את העמודה ל-roster_workers) - עד אז זה ישבור את השאילתה (עמודה לא קיימת).
-    const workers = await apiGet("roster_workers", `select=id,team_id,name,role,city_sectors&team_id=${teamFilter}&order=name`);
+    // auto_assign_exempt נוסף כאן ב-2026-10-06 אחרי שה-SQL של migration_auto_assign_exempt_demo רץ בהצלחה
+    // (מוסיף את העמודה ל-roster_workers) - נדרש כדי ש-runAutoAssign יוכל לסנן עובדים מוחרגים.
+    const workers = await apiGet("roster_workers", `select=id,team_id,name,role,city_sectors,auto_assign_exempt&team_id=${teamFilter}&order=name`);
     workers.forEach(w=>{ w.cities = computeWorkerCities(w); });
     ui.workers = workers;
 
