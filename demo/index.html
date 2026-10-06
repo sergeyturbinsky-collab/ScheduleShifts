@@ -1602,6 +1602,16 @@ function renderMokedCellOverlay(){
   const availIncludingBusy = slot ? availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(c.sector,c.type), false, true) : [];
   const currentNames = candidates.map(a=>{ const w=workersById[a.worker_id]; return w?w.name:"?"; }).join(", ");
 
+  // --- אחמ"ש יכול למלא גם תקן מוקדן בשיבוץ ידני (כיוון אחד בלבד - בדיוק כמו ה-fallback הקיים
+  // בשיבוץ האוטומטי, ראו runAutoAssign/section ז; אין כיוון הפוך, מוקדן אף פעם לא ממלא תקן אחמ"ש).
+  // לבקשת סרגיי (2026-10-06). מציג אחמ"שים זמינים (ignoreRole=true, מסונן לתפקיד אחמ"ש) שלא כבר
+  // משובצים לאותה משבצת בדיוק (בכל תפקיד). השיבוץ בפועל (assignRoleOverrideWorker) מוסיף אותם
+  // לרשימת השיבוץ הכוללת של המשבצת בלי לנסות "להתחזות" למוקדן - הם יוצגו בתצוגה תחת השורה של
+  // התפקיד האמיתי שלהם (אחמ"ש), בדיוק כמו שקורה כבר היום בשיבוץ האוטומטי. ---
+  const slotAssignedIds = new Set(tmplAssignedList(assignmentsByDate, c.date, c.sector, c.type).map(a=>a.worker_id));
+  const roleOverrideAvail = (c.role==="מוקדן" && slot) ? availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(c.sector,c.type), true) : [];
+  const roleOverrideOptions = roleOverrideAvail.filter(w=> w.role==='אחמ"ש' && !slotAssignedIds.has(w.id));
+
   // --- "הצג זמינים מגזרות אחרות": עובדים מצוותים אחרים באותו תפקיד, שסימנו בעצמם זמינות - לבקשת סרגיי (2026-09-28) ---
   const otherWorkers = (ui.otherWorkers||[]).filter(w=>w.role===c.role);
   const allAssignmentsByDate = {};
@@ -1675,6 +1685,11 @@ function renderMokedCellOverlay(){
       <p class="muted" style="margin:8px 0 2px;font-weight:600;">לא זמינים (שיבוץ ידני בכל זאת)</p>
       <div class="avail-list">
         ${unavailOptions.map(pickBtn).join("")}
+      </div>` : ""}
+      ${roleOverrideOptions.length? `
+      <p class="muted" style="margin:8px 0 2px;font-weight:600;">אחמ"שים זמינים (יכולים למלא גם תקן מוקדן)</p>
+      <div class="avail-list">
+        ${roleOverrideOptions.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)}</button>`).join("")}
       </div>` : ""}
       <div class="row" style="margin-top:8px;">
         <button class="btn small secondary" data-action="tmpl-other-sectors-toggle">${ui.tmplShowOtherSectors?"הסתר זמינים מגזרות אחרות":"הצג זמינים מגזרות אחרות"}</button>
@@ -1779,7 +1794,29 @@ async function assignRoleAtPosition(sector, date, shiftType, role, ridx, workerI
   const list = otherRoleIds.concat(roleIds);
   try{
     await setAssignmentListPreservingHours(sector, date, shiftType, list, "manual", workerId, customStart, customEnd);
-    ui.tmplCell = null; ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCustomStart=null; ui.tmplCustomEnd=null; ui.tmplCellMsg = null; ui.tmplShowOtherSectors=false;
+    ui.tmplCell = null; ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCustomStart=null; ui.tmplCustomEnd=null; ui.tmplCellMsg = null; ui.tmplShowOtherSectors=false; ui.tmplRoleOverride=null;
+    ui.loaded = false;
+    await loadAggregateData(team);
+  }catch(e){
+    ui.tmplCellMsg = "שגיאה בשמירה: " + e.message; render();
+  }
+}
+
+/* משבץ אחמ"ש כ"מילוי" לתקן מוקדן בשיבוץ ידני - כיוון אחד בלבד, ראו ההערה ליד roleOverrideOptions
+   ב-renderMokedCellOverlay. בניגוד ל-assignRoleAtPosition, לא מנסים למקם את העובד בתוך תת-הרשימה
+   של תפקיד "מוקדן" (הוא לא מוקדן בפועל) - פשוט מוסיפים אותו לרשימת השיבוץ הכוללת של המשבצת, בדיוק
+   כמו שה-fallback הקיים עושה בשיבוץ האוטומטי (runAutoAssign). בתצוגה הוא יופיע תחת השורה של
+   התפקיד האמיתי שלו (אחמ"ש) - זה הגיוני כי התפקיד מוצג לפי w.role בפועל, לא לפי "איזה תקן מילא". */
+async function assignRoleOverrideWorker(sector, date, shiftType, workerId, customStart, customEnd){
+  const ui = S.ui;
+  const team = teamById(ui.teamId);
+  const assignmentsByDate = {};
+  (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
+  const list = tmplAssignedList(assignmentsByDate, date, sector, shiftType).map(a=>a.worker_id);
+  if(!list.includes(workerId)) list.push(workerId);
+  try{
+    await setAssignmentListPreservingHours(sector, date, shiftType, list, "manual", workerId, customStart||null, customEnd||null);
+    ui.tmplCell = null; ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCustomStart=null; ui.tmplCustomEnd=null; ui.tmplCellMsg = null; ui.tmplShowOtherSectors=false; ui.tmplRoleOverride=null;
     ui.loaded = false;
     await loadAggregateData(team);
   }catch(e){
@@ -2454,11 +2491,12 @@ function onAppClick(e){
     ui.tmplCell = {sector:el.dataset.sector, date:el.dataset.date, type:el.dataset.type, pos:Number(el.dataset.pos)||null, role:el.dataset.role||null, ridx:el.dataset.ridx?Number(el.dataset.ridx):null};
     ui.tmplCellMsg = null;
     ui.tmplShowOtherSectors = false;
+    ui.tmplRoleOverride = null;
     return render();
   }
   if(a==="tmpl-cell-bg" || a==="tmpl-cell-close"){
     ui.tmplCell=null; ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCustomStart=null; ui.tmplCustomEnd=null; ui.tmplCellMsg=null;
-    ui.tmplAddWorkerOpen=false; ui.tmplAddWorkerMsg=null; ui.tmplShowOtherSectors=false;
+    ui.tmplAddWorkerOpen=false; ui.tmplAddWorkerMsg=null; ui.tmplShowOtherSectors=false; ui.tmplRoleOverride=null;
     return render();
   }
   if(a==="tmpl-other-sectors-toggle"){ ui.tmplShowOtherSectors = !ui.tmplShowOtherSectors; return render(); }
@@ -2501,17 +2539,32 @@ function onAppClick(e){
     if(!workerId){ // חוסר/נקה - מיידי
       return c.role ? assignRoleAtPosition(c.sector, c.date, c.type, c.role, c.ridx, null) : assignAtPosition(c.sector, c.date, c.type, c.pos, null);
     }
-    ui.tmplPickedWorker = workerId; ui.tmplHoursMode = null; ui.tmplCellMsg = null;
+    ui.tmplPickedWorker = workerId; ui.tmplHoursMode = null; ui.tmplCellMsg = null; ui.tmplRoleOverride = null;
     return render();
   }
-  if(a==="tmpl-hours-back"){ ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCellMsg=null; return render(); }
+  // אחמ"ש שנבחר למלא תקן מוקדן (שיבוץ ידני) - ראו assignRoleOverrideWorker. שלב 1: בוחרים עובד,
+  // ואז (כמו בכל בחירה אחרת) ממשיכים לבחירת שעות סטנדרטיות/מותאמות.
+  if(a==="tmpl-pick-role-override"){
+    const c = ui.tmplCell; if(!c) return;
+    const workerId = el.dataset.worker||null;
+    if(!workerId) return;
+    ui.tmplPickedWorker = workerId; ui.tmplHoursMode = null; ui.tmplCellMsg = null; ui.tmplRoleOverride = true;
+    return render();
+  }
+  if(a==="tmpl-hours-back"){ ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCellMsg=null; ui.tmplRoleOverride=null; return render(); }
   if(a==="tmpl-hours-standard"){
     const c = ui.tmplCell; if(!c) return;
+    if(ui.tmplRoleOverride) return assignRoleOverrideWorker(c.sector, c.date, c.type, ui.tmplPickedWorker, null, null);
     return c.role ? assignRoleAtPosition(c.sector, c.date, c.type, c.role, c.ridx, ui.tmplPickedWorker, null, null) : assignAtPosition(c.sector, c.date, c.type, c.pos, ui.tmplPickedWorker, null, null);
   }
   if(a==="tmpl-hours-custom"){ ui.tmplHoursMode = "custom"; return render(); }
   if(a==="tmpl-hours-confirm"){
     const c = ui.tmplCell; if(!c) return;
+    if(ui.tmplRoleOverride){
+      const cs = document.getElementById("tmplCustomStart").value;
+      const ce = document.getElementById("tmplCustomEnd").value;
+      return assignRoleOverrideWorker(c.sector, c.date, c.type, ui.tmplPickedWorker, cs, ce);
+    }
     return c.role ? confirmMokedCustomHours() : confirmTmplCustomHours();
   }
 
