@@ -1274,6 +1274,22 @@ function tmplRoleAssignedList(assignmentsByDate, date, sector, shiftType, role, 
     const w = workersById[a.worker_id]; return w && w.role===role;
   });
 }
+/* כנ"ל, אך עבור שורת "מוקדן" כולל גם שיבוצי אחמ"ש שמילאו את התקן כ"מילוי" (ראו assignRoleOverrideWorker,
+   2026-10-06) - בלעדי זה שיבוץ כזה נשאר בלתי-נראה לגמרי: אין לו שורת-תפקיד משלו באותו תאריך (roleCounts
+   של אותו יום לא כולל "אחמ"ש" בכלל, או כבר מכוסה ע"י אחמ"שים אמיתיים), והשורה מוקדן מסננת ל-w.role==="מוקדן"
+   בלבד - כך שהתא מציג "חוסר" למרות ששיבוץ אמיתי קיים ב-DB. roleCounts הוא role_counts של אותו תאריך/משמרת
+   (q.role_counts / slot.roleCounts) - "יתום" = עובד משובץ שהתפקיד האמיתי שלו לא מופיע שם בכלל (או מופיע
+   עם 0), כיוון חד-כיווני בלבד (אחמ"ש יכול "לבלוע" למוקדן, לעולם לא ההפך - מוקדן אף פעם לא נחשב יתום). */
+function tmplRoleAssignedListWithOverride(assignmentsByDate, date, sector, shiftType, role, workersById, roleCounts){
+  const list = tmplRoleAssignedList(assignmentsByDate, date, sector, shiftType, role, workersById);
+  if(role !== "מוקדן") return list;
+  const orphans = tmplAssignedList(assignmentsByDate, date, sector, shiftType).filter(a=>{
+    const w = workersById[a.worker_id];
+    if(!w || w.role==="מוקדן") return false; // כבר נספר למעלה
+    return !roleCounts || !roleCounts[w.role]; // אין לתפקיד האמיתי שלו שום שורה באותו תאריך
+  });
+  return list.concat(orphans);
+}
 /* אילו שיבוצים (מתוך רשימת המועמדים לתפקיד) מוצגים בשורה ridx: השורה האחרונה של התפקיד "בולעת" כל
    מי שנותר מעבר למספר השורות הרגיל (זה בדיוק מקרה ה"חפיפה" בטופס - שני אנשים על אותה משבצת, מוצגים
    יחד באותו תא, מופרדים ב-"\") */
@@ -1393,7 +1409,7 @@ function renderMokedTemplateGrid(group, dates, ui, mode){
             const q = bucket.perDate[d];
             const roleReq = q && q.role_counts ? (q.role_counts[role]||0) : 0;
             if(!q || ridx>roleReq) return `<td class="tmpl-na"></td>`;
-            const candidates = tmplRoleAssignedList(assignmentsByDate, d, secData.sector, q.shift_type, role, workersById);
+            const candidates = tmplRoleAssignedListWithOverride(assignmentsByDate, d, secData.sector, q.shift_type, role, workersById, q.role_counts);
             const picked = pickedForRoleCell(candidates, ridx, roleRowsCount);
             const anyRestBad = picked.some(a=>restViolations.has(restKey(a)));
             if(mode==="manual"){
@@ -1588,7 +1604,7 @@ function renderMokedCellOverlay(){
   (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
   const workers = ui.workers;
   const workersById = ui.allWorkersById && Object.keys(ui.allWorkersById).length ? ui.allWorkersById : (()=>{ const m={}; workers.forEach(w=>m[w.id]=w); return m; })();
-  const candidates = tmplRoleAssignedList(assignmentsByDate, c.date, c.sector, c.type, c.role, workersById);
+  const candidates = tmplRoleAssignedListWithOverride(assignmentsByDate, c.date, c.sector, c.type, c.role, workersById, slot?slot.roleCounts:null);
   const currentIds = new Set(candidates.map(a=>a.worker_id));
   const avail = slot ? availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(c.sector,c.type)) : [];
   // --- מי שסימן/ה זמינות למשמרת הזו אך כבר משובץ/ת למשמרת אחרת היום - מוצג/ת בנפרד, עם הערה על
@@ -2207,7 +2223,7 @@ function exportAssignments(){
             const q = bucket.perDate[d];
             const roleReq = q && q.role_counts ? (q.role_counts[role]||0) : 0;
             if(!q || ridx>roleReq) return "";
-            const candidates = tmplRoleAssignedList(assignmentsByDate, d, secData.sector, q.shift_type, role, workersById);
+            const candidates = tmplRoleAssignedListWithOverride(assignmentsByDate, d, secData.sector, q.shift_type, role, workersById, q.role_counts);
             const picked = pickedForRoleCell(candidates, ridx, roleRowsCount);
             if(!picked.length) return "חוסר";
             return picked.map(a=>{ const w=workersById[a.worker_id]; return `${w?w.name:"?"} ${tmplHoursTxt2(group,d,secData.sector,q,a,assignmentsByDate)}`; }).join(" \\ ");
