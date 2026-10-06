@@ -835,6 +835,8 @@ async function loadAggregateData(team){
   const group = sectorGroupForTeam(team);
   try{
     const teamFilter = group.teamIds.length>1 ? `in.(${group.teamIds.join(",")})` : `eq.${group.teamIds[0]}`;
+    // הערה (2026-10-06): auto_assign_exempt יוחזר בחזרה לכאן אחרי שה-SQL של migration_auto_assign_exempt_demo
+    // ירוץ בפועל (מוסיף את העמודה ל-roster_workers) - עד אז זה ישבור את השאילתה (עמודה לא קיימת).
     const workers = await apiGet("roster_workers", `select=id,team_id,name,role,city_sectors&team_id=${teamFilter}&order=name`);
     workers.forEach(w=>{ w.cities = computeWorkerCities(w); });
     ui.workers = workers;
@@ -1006,10 +1008,19 @@ function roleCountsText(rc){ if(!rc) return ""; return Object.keys(rc).map(r=>`$
    יכול לעבוד") - משמרת שלא סומנה עבורה כלל, או עובד שלא הגיש בכלל, נחשבים כלא זמינים. בשני המקרים,
    חופשה/מילואים/מחלה חוסמים תמיד את כל היום, בכל משמרת.
    ignoreRole=true: מתעלם מהתאמת התפקיד (משמש בשיבוץ האוטומטי למוקד כדי לאתר אחמ"שים "פנויים"
-   שפתחו זמינות למשבצת אך לא נדרשים/לא שובצו בתקן אחמ"ש שלה - ראו runAutoAssign). */
-function availableForSlot(slot, workers, entriesByWorker, assignmentsByDate, excludeSlotKey, ignoreRole){
+   שפתחו זמינות למשבצת אך לא נדרשים/לא שובצו בתקן אחמ"ש שלה - ראו runAutoAssign).
+   skipAlreadyCheck=true: לא מסנן מי שכבר משובץ למשמרת אחרת באותו יום (ברירת המחדל false משאירה
+   את ההתנהגות הקיימת בכל מקום אחר ללא שינוי) - משמש רק בבורר השיבוץ הידני (תא בודד), כדי להציג
+   גם מי שסימן זמינות אך כבר עובד משמרת אחרת היום, עם הערה, ולאפשר לשבץ אותו בכל זאת במכוון.
+   לבקשת סרגיי (2026-10-06).
+   תיקון באג (2026-10-06, לבקשת סרגיי: "בחלק מהמקומות... לא מופיעים לי כלל עובדי המוקד"): מודל
+   הסימון (חוסם/היתר) נקבע כעת לפי הצוות של כל עובד בעצמו (w.team_id), ולא לפי גזרת המשבצת
+   הנבדקת (slot.sector). קודם, כש-workers כולל עובדים מצוות אחר (כמו בתכונת "הצג זמינים מגזרות
+   אחרות") - עובדי מוקד שנבדקו מול משבצת של צוות מאבטחים פורשו לפי המודל ההפוך (היתר, לא חסימה),
+   וכמעט תמיד "נעלמו" כי אין להם סימון מפורש לרוב הימים/המשמרות (המודל שלהם הוא "ברירת מחדל זמין").
+   בשימוש הרגיל (workers מאותו צוות כמו ה-slot) זה לא משנה שום התנהגות קיימת - התוצאה זהה. */
+function availableForSlot(slot, workers, entriesByWorker, assignmentsByDate, excludeSlotKey, ignoreRole, skipAlreadyCheck){
   const blocking = blockingEntryTypes(slot.shiftType);
-  const isMoked = slot.sector==="מוקד";
   return workers.filter(w=>{
     if(!ignoreRole && slot.roleCounts && !(w.role && slot.roleCounts[w.role])) return false;
     // שיוך עיר (רלוונטי רק לארבע הערים בבריכה המשותפת של אורי שגיא - ראו computeWorkerCities)
@@ -1024,13 +1035,17 @@ function availableForSlot(slot, workers, entriesByWorker, assignmentsByDate, exc
       if(e.shift_type==="custom") return rangesOverlaps(e.custom_start,e.custom_end, slot.start, slot.end);
       return blocking.includes(e.shift_type);
     });
+    const workerTeam = S.teams.find(t=>t.id===w.team_id);
+    const isMoked = workerTeam ? isMokedTeam(workerTeam) : (slot.sector==="מוקד");
     if(isMoked){
       if(matches) return false; // מוקד: סימון = חסימה (המודל הקיים, ללא שינוי)
     } else {
       if(!matches) return false; // מאבטחים: רק סימון מפורש = זמינות; ברירת המחדל היא "לא זמין"
     }
-    const already = (assignmentsByDate[slot.date]||[]).some(a => a.worker_id===w.id && slotKey(a.sector,a.shift_type) !== excludeSlotKey);
-    if(already) return false;
+    if(!skipAlreadyCheck){
+      const already = (assignmentsByDate[slot.date]||[]).some(a => a.worker_id===w.id && slotKey(a.sector,a.shift_type) !== excludeSlotKey);
+      if(already) return false;
+    }
     return true;
   });
 }
@@ -1227,15 +1242,29 @@ function tmplCustomRangeBuckets(group, date, sector, customStart, customEnd){
    confirmTmplCustomHours/confirmMokedCustomHours) - "מוביל" (הבלוק המוקדם ביותר שנחצה) ו"עוגן" (הבלוק
    שאחריו). "מוביל" מציג רק הערת שעת התחלה בפועל ("מ-X"), בלי שעת סיום; "עוגן" מציג את שעת ההתחלה
    הסטנדרטית שלו (לא את השעה בפועל - זו כבר מוצגת ב"מוביל") ועד שעת הסיום בפועל, גם אם זו חורגת מעבר
-   לבלוק שלו עצמו (בלי ליצור בלוק/שורה שלישית). לבקשת סרגיי (2026-10-04). */
-function tmplHoursTxt2(group, date, sector, q, assignment){
+   לבלוק שלו עצמו (בלי ליצור בלוק/שורה שלישית). לבקשת סרגיי (2026-10-04).
+   תיקון באג (2026-10-06, לבקשת סרגיי: "הילה משובצת עד 16:00... זה לא מופיע בתצורה הנכונה"): הפיצול
+   ל"מוביל"/"עוגן" מניח ששתי השורות קיימות בפועל ב-DB (אחת לכל בלוק שנחצה) - אבל אם לעובד יש שיבוץ
+   עם שעות מותאמות חוצות-בלוק, וקיימת רק שורת שיבוץ אחת בפועל (ה"עוגן" חסר - למשל נוצר/נערך בנפרד,
+   לא דרך שני השלבים של confirmTmplCustomHours/confirmMokedCustomHours), אז ה"מוביל" היה מציג הערת
+   שעת-התחלה חסרת תועלת (ולעיתים מטעה, כמו עם הילה: שעת ההתחלה שלה היא הסטנדרטית - 07:00 - וההערה
+   "(מ-7)" לא מספרת שהיא עובדת עד 16:00 בכלל) - והטווח המלא לא הופיע באף מקום, כי אין שורה שנייה
+   שתציג אותו. התיקון: assignmentsByDate מועבר כפרמטר נוסף, ואם אין בפועל שורת שיבוץ לאותו עובד
+   בבלוק ה"עוגן" - מוצג הטווח המלא (כמו tmplHoursTxt הרגיל) ישירות בבלוק ה"מוביל", במקום ההערה
+   הקצרה. כשקיימות שתי השורות בפועל (המקרה התקין) - אין שינוי בהתנהגות. */
+function tmplHoursTxt2(group, date, sector, q, assignment, assignmentsByDate){
   const cs = assignment && assignment.custom_start ? assignment.custom_start.slice(0,5) : null;
   const ce = assignment && assignment.custom_end ? assignment.custom_end.slice(0,5) : null;
   if(!cs || !ce) return tmplHoursTxt(q, assignment);
   const touched = tmplCustomRangeBuckets(group, date, sector, cs, ce);
   if(touched.length < 2) return tmplHoursTxt(q, assignment);
   const leading = touched[0].quota, anchor = touched[1].quota;
-  if(q.shift_type === leading.shift_type) return `(מ-${tmplHourNum(cs)})`;
+  if(q.shift_type === leading.shift_type){
+    const anchorRows = (assignmentsByDate && assignmentsByDate[date]) || [];
+    const anchorHasRow = anchorRows.some(a=>a.sector===sector && a.shift_type===anchor.shift_type && a.worker_id===assignment.worker_id);
+    if(!anchorHasRow) return tmplHoursTxt(q, assignment); // אין שורת "עוגן" בפועל - מציגים את הטווח המלא כאן
+    return `(מ-${tmplHourNum(cs)})`;
+  }
   if(q.shift_type === anchor.shift_type) return `${tmplHourNum(q.start_time)}-${tmplHourNum(ce)}`;
   return tmplHoursTxt(q, assignment);
 }
@@ -1310,7 +1339,7 @@ function renderTemplateGrid(group, dates, ui, mode){
           const list = tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type);
           const a = list[pos-1];
           const w = a ? (workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id]) : null;
-          const hoursTxt = a ? tmplHoursTxt2(group, d, secData.sector, q, a) : `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
+          const hoursTxt = a ? tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate) : `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
           const restBad = a && restViolations.has(restKey(a));
           const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
           if(mode==="manual"){
@@ -1355,7 +1384,7 @@ function renderMokedTemplateGrid(group, dates, ui, mode){
       const w = workersById[a.worker_id];
       const restBad = restViolations.has(restKey(a));
       const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
-      return `<span class="${restBad?'tmpl-restwarn':''}">${escapeHtml(w?w.name:"?")}<br><span class="muted" style="font-size:.85em;">${tmplHoursTxt2(group,date,sector,q,a)}</span>${restNote}</span>`;
+      return `<span class="${restBad?'tmpl-restwarn':''}">${escapeHtml(w?w.name:"?")}<br><span class="muted" style="font-size:.85em;">${tmplHoursTxt2(group,date,sector,q,a,assignmentsByDate)}</span>${restNote}</span>`;
     }).join(' \\ ');
   }
 
@@ -1449,6 +1478,10 @@ function renderTmplCellOverlay(){
   const currentList = tmplAssignedList(assignmentsByDate, c.date, c.sector, c.type);
   const currentIds = new Set(currentList.map(a=>a.worker_id));
   const avail = slot ? availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(c.sector,c.type)) : [];
+  // --- מי שסימן/ה זמינות למשמרת הזו אך כבר משובץ/ת למשמרת אחרת היום - מוצג/ת בנפרד, עם הערה על
+  // המשמרת שבה הוא/היא כבר עובד/ת, ואפשר לשבץ בכל זאת (למשל תגבור/משמרת כפולה מכוונת). לבקשת
+  // סרגיי (2026-10-06). ---
+  const availIncludingBusy = slot ? availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(c.sector,c.type), false, true) : [];
   const currentWorker = currentList[c.pos-1] ? (workers.find(w=>w.id===currentList[c.pos-1].worker_id) || (ui.allWorkersById||{})[currentList[c.pos-1].worker_id]) : null;
 
   // --- "הצג זמינים מגזרות אחרות": רק עובדים שסימנו בעצמם זמינות ליום/משמרת הזו, מכל גזרה אחרת - לבקשת סרגיי (2026-09-28) ---
@@ -1490,11 +1523,19 @@ function renderTmplCellOverlay(){
   }
 
   const options = workers.filter(w=> !currentIds.has(w.id) || w.id===(currentWorker&&currentWorker.id));
-  // --- מיון התצוגה לשני מדורים ברורים: קודם זמינים, אח"כ לא-זמינים (שיבוץ ידני בכל זאת) - ואז
-  // (למטה) האפשרות השלישית - זמינים מגזרה אחרת. לבקשת סרגיי (2026-10-05). ---
+  // --- מיון התצוגה: קודם זמינים (ופנויים), אח"כ זמינים-אך-כבר-משובצים-היום-במשמרת-אחרת (עם הערה),
+  // אח"כ לא-זמינים (שיבוץ ידני בכל זאת) - ואז (למטה) האפשרות הרביעית - זמינים מגזרה אחרת.
+  // לבקשת סרגיי (2026-10-05, הורחב 2026-10-06). ---
   const availOptions = options.filter(w=>avail.some(a=>a.id===w.id));
-  const unavailOptions = options.filter(w=>!avail.some(a=>a.id===w.id));
+  const busyOptions = options.filter(w=> !avail.some(a=>a.id===w.id) && availIncludingBusy.some(a=>a.id===w.id));
+  const unavailOptions = options.filter(w=>!availIncludingBusy.some(a=>a.id===w.id));
   const pickBtn = w => `<button class="btn small ${w.id===(currentWorker&&currentWorker.id)?"":"secondary"}" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}</button>`;
+  const busyNote = w => {
+    const already = (assignmentsByDate[c.date]||[]).filter(a=>a.worker_id===w.id);
+    const labels = Array.from(new Set(already.map(a=>SHIFT_LABELS[a.shift_type]||a.shift_type)));
+    return labels.join("/") || "משמרת אחרת";
+  };
+  const busyBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`;
   return `
   <div class="overlay" data-action="tmpl-cell-bg">
     <div class="card" data-action="noop">
@@ -1507,6 +1548,11 @@ function renderTmplCellOverlay(){
       <div class="avail-list">
         ${availOptions.length? availOptions.map(pickBtn).join("") : '<span class="muted">אין עובדים זמינים</span>'}
       </div>
+      ${busyOptions.length? `
+      <p class="muted" style="margin:8px 0 2px;font-weight:600;">זמינים, אך כבר משובצים היום במשמרת אחרת</p>
+      <div class="avail-list">
+        ${busyOptions.map(busyBtn).join("")}
+      </div>` : ""}
       ${unavailOptions.length? `
       <p class="muted" style="margin:8px 0 2px;font-weight:600;">לא זמינים (שיבוץ ידני בכל זאת)</p>
       <div class="avail-list">
@@ -1551,6 +1597,9 @@ function renderMokedCellOverlay(){
   const candidates = tmplRoleAssignedList(assignmentsByDate, c.date, c.sector, c.type, c.role, workersById);
   const currentIds = new Set(candidates.map(a=>a.worker_id));
   const avail = slot ? availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(c.sector,c.type)) : [];
+  // --- מי שסימן/ה זמינות למשמרת הזו אך כבר משובץ/ת למשמרת אחרת היום - מוצג/ת בנפרד, עם הערה על
+  // המשמרת שבה הוא/היא כבר עובד/ת, ואפשר לשבץ בכל זאת. לבקשת סרגיי (2026-10-06). ---
+  const availIncludingBusy = slot ? availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(c.sector,c.type), false, true) : [];
   const currentNames = candidates.map(a=>{ const w=workersById[a.worker_id]; return w?w.name:"?"; }).join(", ");
 
   // --- "הצג זמינים מגזרות אחרות": עובדים מצוותים אחרים באותו תפקיד, שסימנו בעצמם זמינות - לבקשת סרגיי (2026-09-28) ---
@@ -1592,11 +1641,19 @@ function renderMokedCellOverlay(){
   }
 
   const options = workers.filter(w=> w.role===c.role && !currentIds.has(w.id));
-  // --- מיון התצוגה לשני מדורים ברורים: קודם זמינים, אח"כ לא-זמינים (שיבוץ ידני בכל זאת) - ואז
-  // (למטה) האפשרות השלישית - זמינים מגזרה אחרת. לבקשת סרגיי (2026-10-05). ---
+  // --- מיון התצוגה: קודם זמינים, אח"כ זמינים-אך-כבר-משובצים-היום-במשמרת-אחרת (עם הערה), אח"כ
+  // לא-זמינים (שיבוץ ידני בכל זאת) - ואז (למטה) האפשרות הרביעית - זמינים מגזרה אחרת. לבקשת סרגיי
+  // (2026-10-05, הורחב 2026-10-06). ---
   const availOptions = options.filter(w=>avail.some(a=>a.id===w.id));
-  const unavailOptions = options.filter(w=>!avail.some(a=>a.id===w.id));
+  const busyOptions = options.filter(w=> !avail.some(a=>a.id===w.id) && availIncludingBusy.some(a=>a.id===w.id));
+  const unavailOptions = options.filter(w=>!availIncludingBusy.some(a=>a.id===w.id));
   const pickBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}</button>`;
+  const busyNote = w => {
+    const already = (assignmentsByDate[c.date]||[]).filter(a=>a.worker_id===w.id);
+    const labels = Array.from(new Set(already.map(a=>SHIFT_LABELS[a.shift_type]||a.shift_type)));
+    return labels.join("/") || "משמרת אחרת";
+  };
+  const busyBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`;
   return `
   <div class="overlay" data-action="tmpl-cell-bg">
     <div class="card" data-action="noop">
@@ -1609,6 +1666,11 @@ function renderMokedCellOverlay(){
       <div class="avail-list">
         ${availOptions.length? availOptions.map(pickBtn).join("") : '<span class="muted">אין עובדים זמינים בתפקיד זה</span>'}
       </div>
+      ${busyOptions.length? `
+      <p class="muted" style="margin:8px 0 2px;font-weight:600;">זמינים, אך כבר משובצים היום במשמרת אחרת</p>
+      <div class="avail-list">
+        ${busyOptions.map(busyBtn).join("")}
+      </div>` : ""}
       ${unavailOptions.length? `
       <p class="muted" style="margin:8px 0 2px;font-weight:600;">לא זמינים (שיבוץ ידני בכל זאת)</p>
       <div class="avail-list">
@@ -1911,7 +1973,10 @@ async function runAutoAssign(){
     const already = (assignmentsByDate[slot.date]||[]).filter(a=>a.sector===slot.sector && a.shift_type===slot.shiftType);
     const need = slot.required - already.length;
     if(need<=0) continue;
-    const avail = availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType));
+    // עובד עם auto_assign_exempt=true (למשל סרגיי, לבקשתו 2026-10-06: "אל תשבץ אותי בשיבוצים אוטומטי")
+    // מודר כאן בלבד - מהמועמדים לשיבוץ אוטומטי. הוא עדיין מוצג כזמין/לא-זמין רגיל בכל מסך אחר
+    // (כולל בורר השיבוץ הידני, ששם אפשר עדיין לבחור בו ידנית בכוונה).
+    const avail = availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType)).filter(w=>!w.auto_assign_exempt);
     let chosen = [];
     const {ok: restOk, bad: restBad, newInterval} = splitByRest(avail, slot);
     if(slot.roleCounts){
@@ -1942,7 +2007,7 @@ async function runAutoAssign(){
         if(pickedRole.length < needRole && role==="מוקדן"){
           // fallback: אחמ"שים זמינים (ללא סינון תפקיד) למשבצת זו, שלא נבחרו כבר לתקן האחמ"ש שלה
           if(availAnyRole===null){
-            availAnyRole = availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType), true);
+            availAnyRole = availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType), true).filter(w=>!w.auto_assign_exempt);
           }
           const fallbackPool = availAnyRole.filter(w=>w.role==='אחמ"ש' && !chosen.some(c=>c.id===w.id) && !pickedRole.some(c=>c.id===w.id));
           const {ok: fbOk, bad: fbBad} = splitByRest(fallbackPool, slot);
@@ -2077,7 +2142,7 @@ function exportAssignments(){
             const list = tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type);
             const a = list[pos-1];
             const w = a ? ui.workers.find(x=>x.id===a.worker_id) : null;
-            const hoursTxt = a ? tmplHoursTxt2(group, d, secData.sector, q, a) : `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
+            const hoursTxt = a ? tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate) : `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
             return w? `${w.name} ${hoursTxt}` : "חוסר";
           });
           lines.push([`סייר ${pos}`, ...cells].join("\t"));
@@ -2114,7 +2179,7 @@ function exportAssignments(){
             const candidates = tmplRoleAssignedList(assignmentsByDate, d, secData.sector, q.shift_type, role, workersById);
             const picked = pickedForRoleCell(candidates, ridx, roleRowsCount);
             if(!picked.length) return "חוסר";
-            return picked.map(a=>{ const w=workersById[a.worker_id]; return `${w?w.name:"?"} ${tmplHoursTxt2(group,d,secData.sector,q,a)}`; }).join(" \\ ");
+            return picked.map(a=>{ const w=workersById[a.worker_id]; return `${w?w.name:"?"} ${tmplHoursTxt2(group,d,secData.sector,q,a,assignmentsByDate)}`; }).join(" \\ ");
           });
           lines.push([`${role}${roleRowsCount>1?` ${ridx}`:""}`, ...cells].join("\t"));
         }
@@ -2167,7 +2232,7 @@ function renderAdmin(){
     ${ui.teamCodeMsg? `<p>${escapeHtml(ui.teamCodeMsg)}</p>`:""}
     ${isLockActive(ui.teamCodeLockedUntil)? `<p class="shortage">🔒 קוד הקב"ט נעול כרגע (יותר מדי ניסיונות שגויים) — ייפתח אוטומטית בעוד כ-${lockMinutesLeft(ui.teamCodeLockedUntil)} דק'. <button class="btn small" data-action="admin-unlock-team">פתח נעילה עכשיו</button></p>`:""}
     <table>
-      <thead><tr><th>שם</th><th>קוד אישי</th>${merged?"<th>גזרה</th>":""}${avihaiTeam?"<th>עיר</th>":""}${anyMoked?"<th>תפקיד</th>":""}<th></th></tr></thead>
+      <thead><tr><th>שם</th><th>קוד אישי</th>${merged?"<th>גזרה</th>":""}${avihaiTeam?"<th>עיר</th>":""}${anyMoked?"<th>תפקיד</th>":""}<th title="כשמסומן, העובד לעולם לא ייבחר ב&quot;שיבוץ אוטומטי&quot; - עדיין אפשר לשבץ אותו ידנית">לא לשבץ אוטומטית</th><th></th></tr></thead>
       <tbody>
         ${ui.workers.map(w=>{
           const workerIsMoked = isMokedTeam(teamById(w.team_id));
@@ -2176,8 +2241,9 @@ function renderAdmin(){
               <option value='אחמ"ש' ${w.role==='אחמ"ש'?"selected":""}>אחמ"ש</option>
               <option value="מוקדן" ${w.role==="מוקדן"?"selected":""}>מוקדן</option>
             </select></td>`);
-          return `<tr><td>${escapeHtml(w.name)}</td><td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${w.team_id===avihaiTeam.id ? escapeHtml((w.city_sectors&&w.city_sectors.length)?w.city_sectors.join("/"):"כל האזור") : "-"}</td>`:""}${roleCell}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>`;
-        }).join("") || `<tr><td colspan="${1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1}" class="muted">אין עדיין עובדים</td></tr>`}
+          const exemptCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-auto-exempt" data-id="${w.id}" ${w.auto_assign_exempt?"checked":""}></td>`;
+          return `<tr><td>${escapeHtml(w.name)}</td><td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${w.team_id===avihaiTeam.id ? escapeHtml((w.city_sectors&&w.city_sectors.length)?w.city_sectors.join("/"):"כל האזור") : "-"}</td>`:""}${roleCell}${exemptCell}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>`;
+        }).join("") || `<tr><td colspan="${1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1+1}" class="muted">אין עדיין עובדים</td></tr>`}
       </tbody>
     </table>
     <h3>הוספה / עדכון</h3>
@@ -2257,6 +2323,16 @@ function onAppChange(e){
     const ui = S.ui;
     (async()=>{
       try{ await apiRpc("admin_update_worker_role",{p_pin:S.pin,p_worker_id:id,p_role:role}); ui.adminMsg="התפקיד עודכן."; ui.workers=null; render(); }
+      catch(err){ ui.adminMsg="שגיאה: "+err.message; render(); }
+    })();
+  }
+  // "לא לשבץ אוטומטית" - לבקשת סרגיי (2026-10-06): תיבת סימון לכל עובד, נשמרת מיידית; רק מדירה
+  // משיבוץ אוטומטי (runAutoAssign) - לא משפיעה על זמינות/שיבוץ ידני.
+  if(t.dataset.action==="admin-toggle-auto-exempt"){
+    const id = t.dataset.id, exempt = t.checked;
+    const ui = S.ui;
+    (async()=>{
+      try{ await apiRpc("admin_update_worker_auto_assign_exempt",{p_pin:S.pin,p_worker_id:id,p_exempt:exempt}); ui.adminMsg="עודכן."; ui.workers=null; render(); }
       catch(err){ ui.adminMsg="שגיאה: "+err.message; render(); }
     })();
   }
