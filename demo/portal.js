@@ -26,10 +26,10 @@ function matches(name, q){
 function listHtml(App){
   const esc = App.escapeHtml;
   const shown = (P.workers||[]).filter(w=>matches(w.name, P.query));
-  if(!shown.length) return `<p class="muted">לא נמצא עובד בשם הזה.</p>`;
+  if(!shown.length) return `<div class="portal-row muted" style="cursor:default;">לא נמצא עובד בשם הזה.</div>`;
   return shown.map(w=>{
     const t = App.teamById(w.team_id);
-    return `<button class="btn ${w.id===P.selectedId?"":"secondary"} portal-name" data-action="portal-pick" data-id="${w.id}">${esc(w.name)}${t?` <span class="muted" style="font-size:.85em;">(${esc(t.name)})</span>`:""}</button>`;
+    return `<div class="portal-row" data-action="portal-pick" data-id="${w.id}">${esc(w.name)}${t?` <span class="muted" style="font-size:.85em;">(${esc(t.name)})</span>`:""}</div>`;
   }).join("");
 }
 
@@ -54,7 +54,7 @@ function renderLogin(App){
       <div class="field"><label>הקלד/י את שמך</label>
         <input type="text" id="portalSearch" data-action="portal-search" autocomplete="off" placeholder="למשל: הא..." value="${esc(P.query)}">
       </div>
-      <div class="avail-list portal-list" id="portalList" style="max-height:340px;overflow-y:auto;">${listHtml(App)}</div>
+      <div class="portal-list" id="portalList">${listHtml(App)}</div>
     ` : `
       <p><b>${esc(sel.name)}</b> <span class="btn small secondary" data-action="portal-unpick" style="cursor:pointer;">לא אני</span></p>
       <div class="row">
@@ -222,6 +222,18 @@ function onClick(App, a, el){
   }
   return undefined;
 }
+
+/* רשימה נגללת: שם אחד בכל שורה, בתוך תיבה בגובה קבוע עם גלילה (לבקשת סרגיי, 2026-10-07) */
+(function addStyles(){
+  if(document.getElementById("portalStyles")) return;
+  const st = document.createElement("style"); st.id = "portalStyles";
+  st.textContent = `
+    .portal-list{max-height:240px;overflow-y:auto;border:1px solid #cfd8e3;border-radius:8px;background:#fff;margin-top:4px;}
+    .portal-row{padding:9px 12px;border-bottom:1px solid #eef2f6;cursor:pointer;text-align:right;}
+    .portal-row:last-child{border-bottom:none;}
+    .portal-row:hover{background:#eef4fb;}`;
+  (document.head||document.documentElement).appendChild(st);
+})();
 
 window.Portal = { renderHome, onClick, onInput, onKey, resetState(){ P.shifts=null; P.checkedSession=false; } };
 })();
