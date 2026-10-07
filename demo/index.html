@@ -17,6 +17,9 @@
   header.top h1{font-size:18px;margin:0;}
   header.top .sub{font-size:12px;opacity:.85;}
   main{max-width:1100px;margin:0 auto;padding:16px;}
+  /* מסכי לוח המשמרות (טבלה מרוכזת / שיבוץ ידני) - רוחב גדול יותר כדי שהלוח יוצג רחב, לבקשת סרגיי (2026-10-07) */
+  main:has(.tmpl-table){max-width:min(1800px,98vw);}
+  .tmpl-shadow{display:block;margin-top:3px;padding-top:3px;border-top:1px dashed #bbb;}
   .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px;box-shadow:0 1px 3px rgba(20,60,110,.06);}
   h2{font-size:17px;margin:0 0 12px;color:var(--primary-dark);}
   h3{font-size:15px;margin:14px 0 8px;color:var(--primary-dark);}
@@ -649,14 +652,13 @@ function renderAggregate(){
     quotaSection = `<p class="muted">אין נתוני התקנים למוקד — מסך זה מציג ריכוז אילוצים בלבד, ללא בניית סידור.</p>`;
   }
 
-  const sideAside = group.citySectors.length ? `
-    <div class="side-aside">
+  // "מי זמין לכל יום" - מתחת ללוח המשמרות (שתופס עכשיו את כל הרוחב), לבקשת סרגיי (2026-10-07)
+  const availCard = group.citySectors.length ? `
       <div class="card">
         <h3>מי זמין לכל יום</h3>
         <p class="muted" style="margin-top:-6px;">כולל גם עובדים שכבר שובצו לאותו יום — מציג זמינות אמיתית, לא רק חוסרים.</p>
         ${renderAvailabilityByDay(dates, group, ui)}
-      </div>
-    </div>`:"";
+      </div>`:"";
 
   return `
   <div class="card">
@@ -670,8 +672,7 @@ function renderAggregate(){
     </div>
     ${renderMissingSubmissions(workers, ui.submittedWorkerIds, ui.exceptionWorkerIds, isMoked)}
   </div>
-  <div class="side-layout">
-    <div class="card side-main">
+  <div class="card">
       <h3>${isMoked?"זמינות מול התקנים":"שיבוץ"}</h3>
       ${quotaSection}
       <div class="row" style="margin-top:12px;">
@@ -682,9 +683,8 @@ function renderAggregate(){
       </div>
       ${ui.buildMsg? `<p style="margin-top:8px;">${escapeHtml(ui.buildMsg)}</p>`:""}
       ${renderMonthlyPanel(ui, isMoked)}
-    </div>
-    ${sideAside}
   </div>
+  ${availCard}
   ${renderBottomTables(team, group, dates, ui)}`;
 }
 
@@ -864,7 +864,7 @@ async function loadAggregateData(team){
     const teamFilter = group.teamIds.length>1 ? `in.(${group.teamIds.join(",")})` : `eq.${group.teamIds[0]}`;
     // auto_assign_exempt נוסף כאן ב-2026-10-06 אחרי שה-SQL של migration_auto_assign_exempt_demo רץ בהצלחה
     // (מוסיף את העמודה ל-roster_workers) - נדרש כדי ש-runAutoAssign יוכל לסנן עובדים מוחרגים.
-    const workers = await apiGet("roster_workers", `select=id,team_id,name,role,city_sectors,auto_assign_exempt&team_id=${teamFilter}&order=name`);
+    const workers = await apiGet("roster_workers", `select=id,team_id,name,role,city_sectors,auto_assign_exempt,shadow_trainee&team_id=${teamFilter}&order=name`);
     workers.forEach(w=>{ w.cities = computeWorkerCities(w); });
     ui.workers = workers;
 
@@ -873,7 +873,7 @@ async function loadAggregateData(team){
     // אף שדה קיים - ui.workers/ui.entriesByWorker/ui.assignments (למטה) נשארים בדיוק כמו קודם, כדי
     // שלא לשנות שום התנהגות קיימת (כולל הוגנות השיבוץ האוטומטי). לבקשת סרגיי, 2026-09-28. ---
     try{
-      const allWorkersRaw = await apiGet("roster_workers", `select=id,team_id,name,role,city_sectors&order=name`);
+      const allWorkersRaw = await apiGet("roster_workers", `select=id,team_id,name,role,city_sectors,shadow_trainee&order=name`);
       allWorkersRaw.forEach(w=>{ w.cities = computeWorkerCities(w); });
       ui.allWorkers = allWorkersRaw;
       ui.allWorkersById = {}; allWorkersRaw.forEach(w=>{ ui.allWorkersById[w.id]=w; });
@@ -1311,7 +1311,26 @@ function tmplHoursTxt2(group, date, sector, q, assignment, assignmentsByDate){
 /* עובדים משובצים למשבצת נתונה, ממוינים לפי סדר השיבוץ (created_at, כי כך ui.assignments נטען) -
    סדר זה הוא גם מספור ה"סייר" בתבנית */
 function tmplAssignedList(assignmentsByDate, date, sector, shiftType){
-  return (assignmentsByDate[date]||[]).filter(a=>a.sector===sector && a.shift_type===shiftType);
+  // שיבוצי "חפיפה" (shadow_of) לא תופסים מקום בתקן - מוצגים בנפרד בתא של העובד שאיתו עושים חפיפה
+  return (assignmentsByDate[date]||[]).filter(a=>a.sector===sector && a.shift_type===shiftType && !a.shadow_of);
+}
+/* ---------- חפיפה (עובד בהכשרה) - לבקשת סרגיי (2026-10-07) ----------
+   עובד שמסומן "חפיפה" במסך ניהול העובדים (roster_workers.shadow_trainee) אפשר לשבץ באותה קוביה יחד עם
+   עובד שכבר משובץ בה, בבחירת "חפיפה" במסך בחירת סוג המשמרת. השיבוץ נשמר כשורה רגילה ב-shift_assignments
+   עם shadow_of = העובד שאיתו עושים חפיפה; היא לא נספרת כמילוי תקן, ומוצגת בתא של אותו עובד עם (ח).
+   אם העובד המארח הוסר מהמשבצת, החפיפה נשארת ומוצגת בתא הראשון של המשבצת. */
+function tmplShadowList(assignmentsByDate, date, sector, shiftType){
+  return (assignmentsByDate[date]||[]).filter(a=>a.sector===sector && a.shift_type===shiftType && a.shadow_of);
+}
+function tmplCellShadows(assignmentsByDate, date, sector, shiftType, hostIds, isFirstCell){
+  const regularIds = new Set(tmplAssignedList(assignmentsByDate, date, sector, shiftType).map(a=>a.worker_id));
+  return tmplShadowList(assignmentsByDate, date, sector, shiftType).filter(sh=> hostIds.includes(sh.shadow_of) || (isFirstCell && !regularIds.has(sh.shadow_of)));
+}
+function tmplShadowHtml(shadows, q, nameOf){
+  return shadows.map(sh=>`<span class="tmpl-shadow">${escapeHtml(nameOf(sh.worker_id))} (ח)<br><span class="muted" style="font-size:.85em;">${tmplHoursTxt(q, sh)}</span></span>`).join("");
+}
+function tmplShadowText(shadows, q, nameOf){
+  return shadows.map(sh=>` + ${nameOf(sh.worker_id)} (ח) ${tmplHoursTxt(q, sh)}`).join("");
 }
 /* כנ"ל, אך מסונן לתפקיד נתון (למוקד: אחמ"ש/מוקדן) - התפקיד נלקח מהעובד עצמו (roster_workers.role), לא מהשיבוץ */
 function tmplRoleAssignedList(assignmentsByDate, date, sector, shiftType, role, workersById){
@@ -1399,13 +1418,14 @@ function renderTemplateGrid(group, dates, ui, mode){
           const restBad = a && restViolations.has(restKey(a));
           const restTight = a && !restBad && restViolations.tight.has(restKey(a));
           const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
+          const shadowHtml = tmplShadowHtml(tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, a?[a.worker_id]:[], pos===1), q, id=>{ const x = workers.find(y=>y.id===id) || allWorkersById[id]; return x?x.name:"?"; });
           if(mode==="manual"){
             const cls = "tmpl-cell" + (w? (restBad?" tmpl-restwarn":(restTight?" tmpl-resttight":"")) : " tmpl-missing");
-            const label = w? `${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}` : "חוסר";
+            const label = (w? `${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}` : "חוסר") + shadowHtml;
             return `<td class="${cls}" data-action="tmpl-cell" data-sector="${escapeHtml(secData.sector)}" data-date="${d}" data-type="${q.shift_type}" data-pos="${pos}">${label}</td>`;
           }
-          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}">${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
-          return `<td class="tmpl-missing">חוסר</td>`;
+          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}">${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}${shadowHtml}</td>`;
+          return `<td class="tmpl-missing">חוסר${shadowHtml}</td>`;
         }).join("");
         return `<tr><td class="tmpl-pos">סייר ${pos}</td>${cells}</tr>`;
       }).join("");
@@ -1460,13 +1480,16 @@ function renderMokedTemplateGrid(group, dates, ui, mode){
             const picked = pickedForRoleCell(candidates, ridx, roleRowsCount);
             const anyRestBad = picked.some(a=>restViolations.has(restKey(a)));
             const anyRestTight = !anyRestBad && picked.some(a=>restViolations.tight.has(restKey(a)));
+            // התא הראשון של המשבצת (התפקיד הראשון שנדרש באותו יום, שורה 1) - שם מוצגות חפיפות "יתומות"
+            const firstRole = bucket.roles.find(r=> q.role_counts && (q.role_counts[r]||0)>0);
+            const shadowHtml = tmplShadowHtml(tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, picked.map(a=>a.worker_id), role===firstRole && ridx===1), q, id=>{ const x=workersById[id]; return x?x.name:"?"; });
             if(mode==="manual"){
               const cls = "tmpl-cell" + (picked.length? (anyRestBad?" tmpl-restwarn":(anyRestTight?" tmpl-resttight":"")) : " tmpl-missing");
-              const label = picked.length ? cellText(picked, q, secData.sector, d) : "חוסר";
+              const label = (picked.length ? cellText(picked, q, secData.sector, d) : "חוסר") + shadowHtml;
               return `<td class="${cls}" data-action="tmpl-cell" data-sector="${escapeHtml(secData.sector)}" data-date="${d}" data-type="${q.shift_type}" data-role="${escapeHtml(role)}" data-ridx="${ridx}">${label}</td>`;
             }
-            if(picked.length) return `<td class="${anyRestTight?'tmpl-resttight':''}">${cellText(picked, q, secData.sector, d)}</td>`;
-            return `<td class="tmpl-missing">חוסר</td>`;
+            if(picked.length) return `<td class="${anyRestTight?'tmpl-resttight':''}">${cellText(picked, q, secData.sector, d)}${shadowHtml}</td>`;
+            return `<td class="tmpl-missing">חוסר${shadowHtml}</td>`;
           }).join("");
           return `<tr><td class="tmpl-pos">${escapeHtml(role)}${roleRowsCount>1?` ${ridx}`:""}</td>${cells}</tr>`;
         }).join("");
@@ -1521,6 +1544,22 @@ function renderAddWorkerForm(sector, group, role){
   </div>`;
 }
 
+/* כפתור "חפיפה" במסך בחירת סוג המשמרת - רק לעובד שמסומן "חפיפה" בניהול העובדים, ורק כשבתא כבר משובץ
+   עובד אחר (איתו נעשית החפיפה). */
+function tmplShadowButton(c, w){
+  if(!w || !w.shadow_trainee) return "";
+  const host = tmplCellHost(c);
+  if(!host || host.worker_id===w.id) return `<span class="muted" style="font-size:.85em;">חפיפה אפשרית רק בתא שכבר משובץ בו עובד אחר</span>`;
+  const hw = (S.ui.workers||[]).find(x=>x.id===host.worker_id) || (S.ui.allWorkersById||{})[host.worker_id];
+  return `<button class="btn secondary" data-action="tmpl-hours-shadow">חפיפה (עם ${escapeHtml(hw?hw.name:"")})</button>`;
+}
+function tmplShadowInfoHtml(c){
+  const shadows = tmplCellShadowsFor(c);
+  if(!shadows.length) return "";
+  const nameOf = id=>{ const x=(S.ui.workers||[]).find(y=>y.id===id)||(S.ui.allWorkersById||{})[id]; return x?x.name:"?"; };
+  return `<p class="muted">בחפיפה בתא הזה: ${shadows.map(sh=>`${escapeHtml(nameOf(sh.worker_id))} (ח) <button class="btn small secondary" data-action="tmpl-remove-shadow" data-worker="${sh.worker_id}">הסר חפיפה</button>`).join(" ")}</p>`;
+}
+
 function renderTmplCellOverlay(){
   const ui = S.ui;
   const c = ui.tmplCell;
@@ -1560,6 +1599,7 @@ function renderTmplCellOverlay(){
           <div class="row">
             <button class="btn" data-action="tmpl-hours-standard">משמרת סטנדרטית</button>
             <button class="btn secondary" data-action="tmpl-hours-custom">שעות מותאמות</button>
+            ${tmplShadowButton(c, w)}
           </div>
         ` : `
           <div class="row">
@@ -1599,6 +1639,7 @@ function renderTmplCellOverlay(){
     <div class="card" data-action="noop">
       <h3>${escapeHtml(c.sector)} · ${fmtDateHeb(c.date)} · סייר ${c.pos}</h3>
       ${currentWorker? `<p class="muted">משובץ כרגע: ${escapeHtml(currentWorker.name)}</p>`:""}
+      ${tmplShadowInfoHtml(c)}
       <div class="avail-list">
         <button class="btn small ${!currentWorker?"secondary":""}" data-action="tmpl-pick" data-worker="">חוסר / נקה</button>
       </div>
@@ -1688,6 +1729,7 @@ function renderMokedCellOverlay(){
           <div class="row">
             <button class="btn" data-action="tmpl-hours-standard">משמרת סטנדרטית</button>
             <button class="btn secondary" data-action="tmpl-hours-custom">שעות מותאמות</button>
+            ${tmplShadowButton(c, w)}
           </div>
         ` : `
           <div class="row">
@@ -1727,6 +1769,7 @@ function renderMokedCellOverlay(){
     <div class="card" data-action="noop">
       <h3>${escapeHtml(c.sector)} · ${fmtDateHeb(c.date)} · ${escapeHtml(c.role)}</h3>
       ${currentNames? `<p class="muted">משובץ כרגע: ${escapeHtml(currentNames)}</p>`:""}
+      ${tmplShadowInfoHtml(c)}
       <div class="avail-list">
         <button class="btn small ${!currentNames?"secondary":""}" data-action="tmpl-pick" data-worker="">חוסר / נקה</button>
       </div>
@@ -1776,21 +1819,72 @@ function renderMokedCellOverlay(){
    אותה משמרת, ולכן בלי השחזור הזה כל עריכה של משבצת אחת הייתה מוחקת "חפיפות"/שעות מותאמות של
    עובדים אחרים שכבר משובצים לאותה משמרת (למשל: קארינה עם שעות מותאמות במשמרת ערב, ואז שיבוץ עובד
    נוסף לאותה משמרת - היה מאפס את השעות המותאמות של קארינה). */
-async function setAssignmentListPreservingHours(sector, date, shiftType, list, method, justSetWorkerId, justSetStart, justSetEnd){
+async function setAssignmentListPreservingHours(sector, date, shiftType, list, method, justSetWorkerId, justSetStart, justSetEnd, opts){
+  // opts.addShadow = {workerId, hostId, cs, ce} - מוסיף שיבוץ "חפיפה"; opts.dropShadowIds - מסיר חפיפות.
+  // חפיפות קיימות במשבצת נשמרות (rpc_assignment_set מוחק את כל שורות המשבצת), אלא אם העובד עבר לשיבוץ רגיל.
+  opts = opts || {};
   const ui = S.ui;
-  const assignmentsByDate = {};
-  (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
+  const slotRows = (ui.assignments||[]).filter(a=>a.entry_date===date && a.sector===sector && a.shift_type===shiftType);
   const prevHours = {};
-  tmplAssignedList(assignmentsByDate, date, sector, shiftType).forEach(a=>{
-    if(a.custom_start || a.custom_end) prevHours[a.worker_id] = {cs:a.custom_start, ce:a.custom_end};
-  });
-  await apiRpc("rpc_assignment_set", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_ids:list, p_method:method});
+  slotRows.forEach(a=>{ if(a.custom_start || a.custom_end) prevHours[a.worker_id] = {cs:a.custom_start, ce:a.custom_end}; });
+  const drop = opts.dropShadowIds || [];
+  const addId = opts.addShadow ? opts.addShadow.workerId : null;
+  const shadowEntries = slotRows.filter(a=>a.shadow_of && !list.includes(a.worker_id) && !drop.includes(a.worker_id) && a.worker_id!==addId)
+    .map(a=>({workerId:a.worker_id, hostId:a.shadow_of, cs:a.custom_start, ce:a.custom_end}));
+  if(opts.addShadow) shadowEntries.push(opts.addShadow);
+  const fullList = list.concat(shadowEntries.map(x=>x.workerId).filter(id=>!list.includes(id)));
+  await apiRpc("rpc_assignment_set", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_ids:fullList, p_method:method});
   if(justSetWorkerId && (justSetStart||justSetEnd)){
     await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:justSetWorkerId, p_custom_start:justSetStart||null, p_custom_end:justSetEnd||null});
   }
   for(const wid of list){
     if(wid===justSetWorkerId) continue;
     if(prevHours[wid]) await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:wid, p_custom_start:prevHours[wid].cs, p_custom_end:prevHours[wid].ce});
+  }
+  for(const sh of shadowEntries){
+    await apiRpc("rpc_assignment_set_shadow", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:sh.workerId, p_shadow_of:sh.hostId});
+    if(sh.cs || sh.ce) await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:sh.workerId, p_custom_start:sh.cs||null, p_custom_end:sh.ce||null});
+  }
+}
+
+/* העובד שכבר משובץ בתא שנלחץ (אם יש) - איתו נעשית "חפיפה" */
+function tmplCellHost(c){
+  const ui = S.ui;
+  const assignmentsByDate = {};
+  (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
+  if(!c.role){
+    return tmplAssignedList(assignmentsByDate, c.date, c.sector, c.type)[c.pos-1] || null;
+  }
+  const workersById = ui.allWorkersById && Object.keys(ui.allWorkersById).length ? ui.allWorkersById : (()=>{ const m={}; (ui.workers||[]).forEach(w=>m[w.id]=w); return m; })();
+  const team = teamById(ui.teamId);
+  const group = sectorGroupForTeam(team);
+  const slot = buildSlots([c.date], group, S.quotas).find(s=>s.sector===c.sector && s.shiftType===c.type);
+  const candidates = tmplRoleAssignedListWithOverride(assignmentsByDate, c.date, c.sector, c.type, c.role, workersById, slot?slot.roleCounts:null);
+  return candidates[c.ridx-1] || null;
+}
+/* חפיפות שמוצגות בתא שנלחץ (לתצוגה + כפתור הסרה בבורר) */
+function tmplCellShadowsFor(c){
+  const ui = S.ui;
+  const assignmentsByDate = {};
+  (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
+  const host = tmplCellHost(c);
+  const regularIds = new Set(tmplAssignedList(assignmentsByDate, c.date, c.sector, c.type).map(a=>a.worker_id));
+  // כולל חפיפות "יתומות" (העובד המארח כבר לא במשבצת), כדי שאפשר יהיה להסיר אותן מכל תא במשבצת
+  return tmplShadowList(assignmentsByDate, c.date, c.sector, c.type).filter(sh=> (host && sh.shadow_of===host.worker_id) || !regularIds.has(sh.shadow_of));
+}
+async function tmplSaveShadowChange(c, opts){
+  const ui = S.ui;
+  const assignmentsByDate = {};
+  (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
+  let list = tmplAssignedList(assignmentsByDate, c.date, c.sector, c.type).map(a=>a.worker_id);
+  if(opts.addShadow) list = list.filter(id=>id!==opts.addShadow.workerId); // עובד שהיה רגיל במשבצת עובר לחפיפה
+  try{
+    await setAssignmentListPreservingHours(c.sector, c.date, c.type, list, "manual", null, null, null, opts);
+    ui.tmplCell = null; ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCustomStart=null; ui.tmplCustomEnd=null; ui.tmplCellMsg = null; ui.tmplShowOtherSectors=false; ui.tmplRoleOverride=null;
+    ui.loaded = false;
+    await loadAggregateData(teamById(ui.teamId));
+  }catch(e){
+    ui.tmplCellMsg = "שגיאה בשמירה: " + e.message; render();
   }
 }
 
@@ -2065,7 +2159,8 @@ async function runAutoAssign(){
   ui.buildMsg = "מבצע שיבוץ אוטומטי...";
   let filled=0, short=0, restForced=0;
   for(const slot of slots){
-    const already = (assignmentsByDate[slot.date]||[]).filter(a=>a.sector===slot.sector && a.shift_type===slot.shiftType);
+    const alreadyAll = (assignmentsByDate[slot.date]||[]).filter(a=>a.sector===slot.sector && a.shift_type===slot.shiftType);
+    const already = alreadyAll.filter(a=>!a.shadow_of); // חפיפות לא נספרות כמילוי תקן
     const need = slot.required - already.length;
     if(need<=0) continue;
     // עובד עם auto_assign_exempt=true (למשל סרגיי, לבקשתו 2026-10-06: "אל תשבץ אותי בשיבוצים אוטומטי")
@@ -2127,9 +2222,14 @@ async function runAutoAssign(){
     }
     if(chosen.length < need) short++;
     if(chosen.length===0) continue;
-    const fullList = already.map(a=>a.worker_id).concat(chosen.map(w=>w.id));
+    const fullList = alreadyAll.map(a=>a.worker_id).concat(chosen.map(w=>w.id));
     try{
       await apiRpc("rpc_assignment_set", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_ids: fullList, p_method:"auto"});
+      // rpc_assignment_set מוחק ומכניס מחדש את כל שורות המשבצת - משחזרים חפיפות ושעות מותאמות של שיבוצים קיימים
+      for(const a of alreadyAll.filter(x=>x.id)){
+        if(a.shadow_of) await apiRpc("rpc_assignment_set_shadow", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:a.worker_id, p_shadow_of:a.shadow_of});
+        if(a.custom_start || a.custom_end) await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:a.worker_id, p_custom_start:a.custom_start, p_custom_end:a.custom_end});
+      }
       filled++;
       chosen.forEach(w=>{ assignCount[w.id]++; recordChosenInterval(w.id, newInterval); (assignmentsByDate[slot.date]=assignmentsByDate[slot.date]||[]).push({sector:slot.sector, shift_type:slot.shiftType, worker_id:w.id, entry_date:slot.date}); });
     }catch(e){ ui.buildMsg = "שגיאה בשמירת שיבוץ: " + e.message; render(); return; }
@@ -2260,7 +2360,8 @@ function exportAssignments(){
             const a = list[pos-1];
             const w = a ? ui.workers.find(x=>x.id===a.worker_id) : null;
             const hoursTxt = a ? tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate) : `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
-            return w? `${w.name} ${hoursTxt}` : "חוסר";
+            const shTxt = tmplShadowText(tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, a?[a.worker_id]:[], pos===1), q, id=>{ const x=ui.workers.find(y=>y.id===id)||(ui.allWorkersById||{})[id]; return x?x.name:"?"; });
+            return (w? `${w.name} ${hoursTxt}` : "חוסר") + shTxt;
           });
           lines.push([`סייר ${pos}`, ...cells].join("\t"));
         }
@@ -2295,8 +2396,10 @@ function exportAssignments(){
             if(!q || ridx>roleReq) return "";
             const candidates = tmplRoleAssignedListWithOverride(assignmentsByDate, d, secData.sector, q.shift_type, role, workersById, q.role_counts);
             const picked = pickedForRoleCell(candidates, ridx, roleRowsCount);
-            if(!picked.length) return "חוסר";
-            return picked.map(a=>{ const w=workersById[a.worker_id]; return `${w?w.name:"?"} ${tmplHoursTxt2(group,d,secData.sector,q,a,assignmentsByDate)}`; }).join(" \\ ");
+            const firstRole = bucket.roles.find(r=> q.role_counts && (q.role_counts[r]||0)>0);
+            const shTxt = tmplShadowText(tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, picked.map(a=>a.worker_id), role===firstRole && ridx===1), q, id=>{ const x=workersById[id]||(ui.allWorkersById||{})[id]; return x?x.name:"?"; });
+            if(!picked.length) return "חוסר" + shTxt;
+            return picked.map(a=>{ const w=workersById[a.worker_id]; return `${w?w.name:"?"} ${tmplHoursTxt2(group,d,secData.sector,q,a,assignmentsByDate)}`; }).join(" \\ ") + shTxt;
           });
           lines.push([`${role}${roleRowsCount>1?` ${ridx}`:""}`, ...cells].join("\t"));
         }
@@ -2349,7 +2452,7 @@ function renderAdmin(){
     ${ui.teamCodeMsg? `<p>${escapeHtml(ui.teamCodeMsg)}</p>`:""}
     ${isLockActive(ui.teamCodeLockedUntil)? `<p class="shortage">🔒 קוד הקב"ט נעול כרגע (יותר מדי ניסיונות שגויים) — ייפתח אוטומטית בעוד כ-${lockMinutesLeft(ui.teamCodeLockedUntil)} דק'. <button class="btn small" data-action="admin-unlock-team">פתח נעילה עכשיו</button></p>`:""}
     <table>
-      <thead><tr><th>שם</th><th>קוד אישי</th>${merged?"<th>גזרה</th>":""}${avihaiTeam?"<th>עיר</th>":""}${anyMoked?"<th>תפקיד</th>":""}<th title="כשמסומן, העובד לעולם לא ייבחר ב&quot;שיבוץ אוטומטי&quot; - עדיין אפשר לשבץ אותו ידנית">לא לשבץ אוטומטית</th><th></th></tr></thead>
+      <thead><tr><th>שם</th><th title="עובד בהכשרה - אפשר לשבץ אותו בחפיפה, באותה קוביה עם עובד שכבר משובץ">חפיפה</th><th>קוד אישי</th>${merged?"<th>גזרה</th>":""}${avihaiTeam?"<th>עיר</th>":""}${anyMoked?"<th>תפקיד</th>":""}<th title="כשמסומן, העובד לעולם לא ייבחר ב&quot;שיבוץ אוטומטי&quot; - עדיין אפשר לשבץ אותו ידנית">לא לשבץ אוטומטית</th><th></th></tr></thead>
       <tbody>
         ${ui.workers.map(w=>{
           const workerIsMoked = isMokedTeam(teamById(w.team_id));
@@ -2359,8 +2462,9 @@ function renderAdmin(){
               <option value="מוקדן" ${w.role==="מוקדן"?"selected":""}>מוקדן</option>
             </select></td>`);
           const exemptCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-auto-exempt" data-id="${w.id}" ${w.auto_assign_exempt?"checked":""}></td>`;
-          return `<tr><td>${escapeHtml(w.name)}</td><td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${w.team_id===avihaiTeam.id ? escapeHtml((w.city_sectors&&w.city_sectors.length)?w.city_sectors.join("/"):"כל האזור") : "-"}</td>`:""}${roleCell}${exemptCell}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>`;
-        }).join("") || `<tr><td colspan="${1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1+1}" class="muted">אין עדיין עובדים</td></tr>`}
+          const shadowCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-shadow" data-id="${w.id}" ${w.shadow_trainee?"checked":""}></td>`;
+          return `<tr><td>${escapeHtml(w.name)}</td>${shadowCell}<td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${w.team_id===avihaiTeam.id ? escapeHtml((w.city_sectors&&w.city_sectors.length)?w.city_sectors.join("/"):"כל האזור") : "-"}</td>`:""}${roleCell}${exemptCell}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>`;
+        }).join("") || `<tr><td colspan="${1+1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1+1}" class="muted">אין עדיין עובדים</td></tr>`}
       </tbody>
     </table>
     <h3>הוספה / עדכון</h3>
@@ -2409,6 +2513,12 @@ async function loadAdminWorkers(){
       apiRpc("admin_get_team_lock_status", {p_pin:S.pin, p_team_id: codeTeamId})
     ]);
     ui.workers = workerLists.flat().sort((a,b)=>a.name.localeCompare(b.name,"he"));
+    // סימון "חפיפה" נטען ישירות מהטבלה (admin_list_workers לא מחזירה אותו) - 2026-10-07
+    try{
+      const flags = await apiGet("roster_workers", `select=id,shadow_trainee&team_id=in.(${ui.teamIds.join(",")})`);
+      const fm = {}; flags.forEach(r=>fm[r.id]=r.shadow_trainee);
+      ui.workers.forEach(w=>{ w.shadow_trainee = !!fm[w.id]; });
+    }catch(e){ ui.workers.forEach(w=>{ w.shadow_trainee = !!w.shadow_trainee; }); }
     ui.teamCode = teamCode;
     ui.codeTeamId = codeTeamId;
     ui.teamCodeLockedUntil = teamLock;
@@ -2445,6 +2555,15 @@ function onAppChange(e){
   }
   // "לא לשבץ אוטומטית" - לבקשת סרגיי (2026-10-06): תיבת סימון לכל עובד, נשמרת מיידית; רק מדירה
   // משיבוץ אוטומטי (runAutoAssign) - לא משפיעה על זמינות/שיבוץ ידני.
+  // "חפיפה" - עובד בהכשרה שאפשר לשבץ באותה קוביה עם עובד שכבר משובץ (2026-10-07)
+  if(t.dataset.action==="admin-toggle-shadow"){
+    const id = t.dataset.id, val = t.checked;
+    const ui = S.ui;
+    (async()=>{
+      try{ await apiRpc("admin_update_worker_shadow_trainee",{p_pin:S.pin,p_worker_id:id,p_value:val}); ui.adminMsg="עודכן."; ui.workers=null; render(); }
+      catch(err){ ui.adminMsg="שגיאה: "+err.message; render(); }
+    })();
+  }
   if(t.dataset.action==="admin-toggle-auto-exempt"){
     const id = t.dataset.id, exempt = t.checked;
     const ui = S.ui;
@@ -2638,6 +2757,17 @@ function onAppClick(e){
     return c.role ? assignRoleAtPosition(c.sector, c.date, c.type, c.role, c.ridx, ui.tmplPickedWorker, null, null) : assignAtPosition(c.sector, c.date, c.type, c.pos, ui.tmplPickedWorker, null, null);
   }
   if(a==="tmpl-hours-custom"){ ui.tmplHoursMode = "custom"; return render(); }
+  // חפיפה: העובד שנבחר נוסף לתא יחד עם העובד שכבר משובץ בו, באותן שעות שלו (2026-10-07)
+  if(a==="tmpl-hours-shadow"){
+    const c = ui.tmplCell; if(!c) return;
+    const host = tmplCellHost(c);
+    if(!host){ ui.tmplCellMsg = "אין עובד משובץ בתא הזה"; return render(); }
+    return tmplSaveShadowChange(c, {addShadow:{workerId:ui.tmplPickedWorker, hostId:host.worker_id, cs:host.custom_start||null, ce:host.custom_end||null}});
+  }
+  if(a==="tmpl-remove-shadow"){
+    const c = ui.tmplCell; if(!c) return;
+    return tmplSaveShadowChange(c, {dropShadowIds:[el.dataset.worker]});
+  }
   if(a==="tmpl-hours-confirm"){
     const c = ui.tmplCell; if(!c) return;
     if(ui.tmplRoleOverride){
