@@ -1041,7 +1041,9 @@ function roleCountsText(rc){ if(!rc) return ""; return Object.keys(rc).map(r=>`$
    וכמעט תמיד "נעלמו" כי אין להם סימון מפורש לרוב הימים/המשמרות (המודל שלהם הוא "ברירת מחדל זמין").
    בשימוש הרגיל (workers מאותו צוות כמו ה-slot) זה לא משנה שום התנהגות קיימת - התוצאה זהה. */
 function availableForSlot(slot, workers, entriesByWorker, assignmentsByDate, excludeSlotKey, ignoreRole, skipAlreadyCheck){
-  const blocking = blockingEntryTypes(slot.shiftType);
+  // בשבת טופס ההגשה מציע רק "מוצ"ש" - סימון כזה חל גם על משמרות שבת אחרות (כמו ערב מוצ"ש 20:00-23:00
+  // במוקד, נוסף 2026-10-07), כי כולן בתוך חלון המוצ"ש.
+  const blocking = blockingEntryTypes(slot.shiftType).concat(dayTypeForDate(slot.date)==="saturday" && slot.shiftType!=="motzash" ? ["motzash"] : []);
   return workers.filter(w=>{
     if(!ignoreRole && slot.roleCounts && !(w.role && slot.roleCounts[w.role])) return false;
     // שיוך עיר (רלוונטי רק לארבע הערים בבריכה המשותפת של מאיר אזרואל - ראו computeWorkerCities)
