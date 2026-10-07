@@ -672,7 +672,7 @@ function renderAggregate(){
       <b>תקופה: ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(dates[dates.length-1])}</b>
       <button class="btn small secondary" data-action="agg-period-next">תקופה הבאה ▶</button>
     </div>
-    ${renderMissingSubmissions(workers, ui.submittedWorkerIds, ui.exceptionWorkerIds, isMoked)}
+    ${renderMissingSubmissions(workers, ui.submittedWorkerIds, ui.exceptionWorkerIds, isMoked, ui.periodStart)}
   </div>
   <div class="card">
       <h3>${isMoked?"זמינות מול התקנים":"שיבוץ"}</h3>
@@ -953,6 +953,10 @@ async function loadAggregateData(team){
   render();
 }
 
+function excButtonsHtml(workerId, submitted, hasExc, periodStart){
+  if(hasExc) return ` <span class="pill">הגשה פתוחה ידנית</span> <button class="btn small secondary" data-action="open-pin" data-next="revoke-exception" data-worker="${workerId}" data-period="${periodStart}">בטל פתיחה</button>`;
+  return ` <button class="btn small${submitted?" secondary":""}" data-action="open-pin" data-next="grant-exception" data-worker="${workerId}" data-period="${periodStart}">${submitted?"פתח הגשה מחדש":"פתח הגשה עבורו"}</button>`;
+}
 function renderPivot(dates, workers, entriesByWorker, submittedIds, exceptionIds, periodStart, workerNotes){
   exceptionIds = exceptionIds || new Set();
   workerNotes = workerNotes || {};
@@ -965,11 +969,10 @@ function renderPivot(dates, workers, entriesByWorker, submittedIds, exceptionIds
         const submitted = submittedIds.has(w.id);
         const hasExc = exceptionIds.has(w.id);
         let statusHtml = "";
-        if(!submitted){
-          statusHtml = ' <span class="pill">לא הגיש</span>';
-          if(hasExc) statusHtml += ` <span class="pill">הגשה פתוחה ידנית</span> <button class="btn small secondary" data-action="open-pin" data-next="revoke-exception" data-worker="${w.id}" data-period="${periodStart}">בטל פתיחה</button>`;
-          else statusHtml += ` <button class="btn small" data-action="open-pin" data-next="grant-exception" data-worker="${w.id}" data-period="${periodStart}">פתח הגשה עבורו</button>`;
-        }
+        if(!submitted) statusHtml = ' <span class="pill">לא הגיש</span>';
+        // פתיחת הגשה ידנית אחרי שהמערכת ננעלה - לכל עובד, גם למי שכבר הגיש (כדי שיוכל לעדכן). קודם
+        // הכפתור הוצג רק למי שלא הגיש, ולכן "נעלם" כשכולם הגישו. לבקשת סרגיי (2026-10-07).
+        statusHtml += excButtonsHtml(w.id, submitted, hasExc, periodStart);
         const cityTag = (w.cities && w.cities.length) ? ` <span class="muted" style="font-size:.85em;">(${escapeHtml(w.cities.join("/"))})</span>` : "";
         // --- הערה חופשית (אופציונלי) שהעובד כתב בעת ההגשה - עמודה נפרדת בצד, ליד שם העובד, לבקשת סרגיי (2026-10-06) ---
         const note = workerNotes[w.id];
@@ -988,14 +991,14 @@ function renderPivot(dates, workers, entriesByWorker, submittedIds, exceptionIds
   </table>
   </div>
   ${!workers.length? `<p class="muted">אין עובדים רשומים לצוות זה. ניתן להוסיף דרך "ניהול עובדים ומורשי גישה".</p>`:""}
-  <p class="muted">"פתח הגשה עבורו" מאפשר לעובד ספציפי להגיש אילוצים לתקופה זו גם אחרי שהמועד הרגיל של הצוות חלף (למשל אם פספס את הדדליין). דורש קוד עריכה.</p>
+  <p class="muted">"פתח הגשה עבורו" / "פתח הגשה מחדש" מאפשר לעובד ספציפי להגיש או לעדכן אילוצים לתקופה זו גם אחרי שהמועד הרגיל של הצוות חלף (למשל אם פספס את הדדליין). דורש קוד עריכה.</p>
   ${renderPinOverlay()}`;
 }
 
 /* --------- טבלה נפרדת ובולטת של "מי עוד לא הגיש" לתקופה המוצגת - לבקשת סרגיי (2026-10-05), כדי
    שמי שבונה את הסידור יראה בבירור (בלי לגלול בטבלה המרוכזת המלאה) אם עדיין חסרות הגשות לפני
    שמריצים שיבוץ אוטומטי/ידני. אותו מקור-אמת (submittedIds) כמו בטבלה המרוכזת (renderPivot). */
-function renderMissingSubmissions(workers, submittedIds, exceptionIds, isMoked){
+function renderMissingSubmissions(workers, submittedIds, exceptionIds, isMoked, periodStart){
   exceptionIds = exceptionIds || new Set();
   if(!workers.length) return "";
   const missing = workers.filter(w=>!submittedIds.has(w.id)).sort((a,b)=>a.name.localeCompare(b.name,"he"));
@@ -1008,7 +1011,7 @@ function renderMissingSubmissions(workers, submittedIds, exceptionIds, isMoked){
     <table>
       <thead><tr><th>עובד</th><th></th></tr></thead>
       <tbody>
-        ${missing.map(w=>`<tr><td style="text-align:right;">${escapeHtml(w.name)}</td><td>${exceptionIds.has(w.id)?'<span class="pill">הגשה פתוחה ידנית</span>':""}</td></tr>`).join("")}
+        ${missing.map(w=>`<tr><td style="text-align:right;">${escapeHtml(w.name)}</td><td>${periodStart? excButtonsHtml(w.id, false, exceptionIds.has(w.id), periodStart) : (exceptionIds.has(w.id)?'<span class="pill">הגשה פתוחה ידנית</span>':"")}</td></tr>`).join("")}
       </tbody>
     </table>
     <p class="muted">${warnNote}</p>`}
@@ -1722,6 +1725,10 @@ function renderMokedCellOverlay(){
     ? availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(c.sector,c.type), true, true)
         .filter(w=> w.role==='אחמ"ש' && !slotAssignedIds.has(w.id) && !roleOverrideOptions.some(o=>o.id===w.id))
     : [];
+  // וגם אחמ"שים שלא זמינים לפי ההגשה - מוצגים (לא מוסתרים), לשיבוץ ידני בכל זאת. לבקשת סרגיי (2026-10-07)
+  const roleOverrideUnavail = (c.role==="מוקדן")
+    ? workers.filter(w=> w.role==='אחמ"ש' && !slotAssignedIds.has(w.id) && !roleOverrideOptions.some(o=>o.id===w.id) && !roleOverrideBusy.some(o=>o.id===w.id))
+    : [];
 
   // --- "הצג זמינים מגזרות אחרות": עובדים מצוותים אחרים באותו תפקיד, שסימנו בעצמם זמינות - לבקשת סרגיי (2026-09-28) ---
   const otherWorkers = (ui.otherWorkers||[]).filter(w=>w.role===c.role);
@@ -1799,11 +1806,12 @@ function renderMokedCellOverlay(){
       <div class="avail-list">
         ${unavailOptions.map(pickBtn).join("")}
       </div>` : ""}
-      ${(roleOverrideOptions.length || roleOverrideBusy.length)? `
-      <p class="muted" style="margin:8px 0 2px;font-weight:600;">אחמ"שים זמינים (יכולים למלא גם תקן מוקדן)</p>
+      ${(roleOverrideOptions.length || roleOverrideBusy.length || roleOverrideUnavail.length)? `
+      <p class="muted" style="margin:8px 0 2px;font-weight:600;">אחמ"שים (יכולים למלא גם תקן מוקדן)</p>
       <div class="avail-list">
         ${roleOverrideOptions.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)}</button>`).join("")}
         ${roleOverrideBusy.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`).join("")}
+        ${roleOverrideUnavail.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)} <span class="muted">(לא זמין/ה)</span></button>`).join("")}
       </div>` : ""}
       <div class="row" style="margin-top:8px;">
         <button class="btn small secondary" data-action="tmpl-other-sectors-toggle">${ui.tmplShowOtherSectors?"הסתר זמינים מגזרות אחרות":"הצג זמינים מגזרות אחרות"}</button>
