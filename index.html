@@ -628,7 +628,6 @@ function renderAggregate(){
   const dates = periodDates(ui.periodStart, team);
 
   const workers = ui.workers;
-  const pivotHtml = renderPivot(dates, workers, ui.entriesByWorker, ui.submittedWorkerIds, ui.exceptionWorkerIds, ui.periodStart, ui.workerNotes);
 
   const isMoked = group.citySectors[0]==="מוקד";
   let quotaSection = "";
@@ -649,10 +648,6 @@ function renderAggregate(){
         <p class="muted" style="margin-top:-6px;">כולל גם עובדים שכבר שובצו לאותו יום — מציג זמינות אמיתית, לא רק חוסרים.</p>
         ${renderAvailabilityByDay(dates, group, ui)}
       </div>
-      <div class="card">
-        <h3>סיכום משמרות לעובד${isMoked?" (לפי שבוע)":" — השבוע"}</h3>
-        ${renderWorkloadSummary(team, dates, ui)}
-      </div>
     </div>`:"";
 
   return `
@@ -666,9 +661,6 @@ function renderAggregate(){
       <button class="btn small secondary" data-action="agg-period-next">תקופה הבאה ▶</button>
     </div>
     ${renderMissingSubmissions(workers, ui.submittedWorkerIds, ui.exceptionWorkerIds, isMoked)}
-    <h3>${isMoked?"אילוצים שהוגשו":"זמינות שהוגשה"}</h3>
-    ${pivotHtml}
-    <button class="btn secondary small" data-action="agg-export" style="margin-top:8px;">העתק טבלה (להדבקה באקסל)</button>
   </div>
   <div class="side-layout">
     <div class="card side-main">
@@ -684,7 +676,8 @@ function renderAggregate(){
       ${renderMonthlyPanel(ui, isMoked)}
     </div>
     ${sideAside}
-  </div>`;
+  </div>
+  ${renderBottomTables(team, group, dates, ui)}`;
 }
 
 /* --------- פלט סידור להדפסה/PDF: גרסה נקייה של טבלת השיבוץ (כולל שורות "מראה" של חיפה אם רלוונטי),
@@ -2141,26 +2134,30 @@ async function runAutoAssign(){
 }
 
 /* --------- שיבוץ ידני --------- */
+/* --------- שתי הטבלאות שבתחתית מסך הטבלה המרוכזת (שיבוץ אוטומטי) ומסך השיבוץ הידני, באותו סדר בשניהם:
+   קודם "כמה משמרות לכל עובד" (שובץ + בסוגריים כמה יכול לעבוד), ואחריה "אילוצים/זמינות שהוגשו" עם
+   הערות העובדים. מתעדכנות אחרי כל שיבוץ (loadAggregateData + render). לבקשת סרגיי (2026-10-07). --------- */
+function renderBottomTables(team, group, dates, ui){
+  const isMoked = group.citySectors[0]==="מוקד";
+  return `
+  <div class="card">
+    <h3>כמה משמרות לכל עובד${isMoked?" (לפי שבוע)":""}</h3>
+    <p class="muted" style="margin-top:-6px;">מתעדכן אוטומטית אחרי כל שיבוץ.</p>
+    ${renderWorkloadSummary(team, dates, ui)}
+  </div>
+  <div class="card">
+    <h3>${isMoked?"אילוצים שהוגשו":"זמינות שהוגשה"} (כולל הערות העובדים)</h3>
+    ${renderPivot(dates, ui.workers||[], ui.entriesByWorker||{}, ui.submittedWorkerIds||new Set(), ui.exceptionWorkerIds, ui.periodStart, ui.workerNotes)}
+    <button class="btn secondary small" data-action="agg-export" style="margin-top:8px;">העתק טבלה (להדבקה באקסל)</button>
+  </div>`;
+}
+
 function renderManualBuild(team){
   const ui = S.ui;
   const group = sectorGroupForTeam(team);
   const dates = periodDates(ui.periodStart, team);
-  // --- טבלת האילוצים/זמינות שהוגשו (כולל עמודת "הערה" של כל עובד) - מוצגת גם במסך השיבוץ הידני,
-  //     כדי לראות את ההגשות וההערות תוך כדי שיבוץ, בלי לחזור לטבלה המרוכזת. לבקשת סרגיי (2026-10-07) ---
-  const manualIsMoked = group.citySectors[0]==="מוקד";
-  const submittedCard = `
-  <div class="card">
-    <h3>${manualIsMoked?"אילוצים שהוגשו":"זמינות שהוגשה"} (כולל הערות העובדים)</h3>
-    ${renderPivot(dates, ui.workers||[], ui.entriesByWorker||{}, ui.submittedWorkerIds||new Set(), ui.exceptionWorkerIds, ui.periodStart, ui.workerNotes)}
-  </div>`;
-  // --- סיכום משמרות לעובד לפי שבוע, בתחתית מסך השיבוץ הידני. מתעדכן אוטומטית אחרי כל שיבוץ/ניקוי,
-  //     כי כל פעולת שיבוץ טוענת מחדש את ui.assignments (loadAggregateData) ומרנדרת. לבקשת סרגיי (2026-10-07) ---
-  const workloadCard = `
-  <div class="card">
-    <h3>כמה משמרות לכל עובד${manualIsMoked?" (לפי שבוע)":""}</h3>
-    <p class="muted" style="margin-top:-6px;">מתעדכן אוטומטית אחרי כל שיבוץ.</p>
-    ${renderWorkloadSummary(team, dates, ui)}
-  </div>`;
+  // שתי הטבלאות בתחתית (כמה משמרות, ואחריה אילוצים+הערות) - זהה לטבלה המרוכזת. לבקשת סרגיי (2026-10-07)
+  const bottomTables = renderBottomTables(team, group, dates, ui);
 
   if(group.citySectors[0]!=="מוקד"){
     return `
@@ -2173,8 +2170,7 @@ function renderManualBuild(team){
       <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
       <button class="btn secondary small" data-action="open-print" style="margin-top:8px;">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
     </div>
-    ${submittedCard}
-    ${workloadCard}
+    ${bottomTables}
     ${renderTmplCellOverlay()}`;
   }
 
@@ -2188,8 +2184,7 @@ function renderManualBuild(team){
     <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
     <button class="btn secondary small" data-action="open-print" style="margin-top:8px;">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
   </div>
-  ${submittedCard}
-  ${workloadCard}
+  ${bottomTables}
   ${renderMokedCellOverlay()}`;
 }
 
