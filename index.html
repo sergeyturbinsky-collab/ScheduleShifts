@@ -230,7 +230,17 @@ function submitOptionsForTeamDay(team, dateStr){
     if((team.sectors||[]).includes("חיפה")) opts.push("friday_night");
     return opts;
   }
+  // מוקד בשבת: גם "ערב" (20:00-23:00, תקן אחמ"ש) - כדי שאפשר יהיה לחסום רק אותו בלי כל המוצ"ש (2026-10-07)
+  if(isMokedTeam(team)) return ["evening","motzash"];
   return ["motzash"];
+}
+/* תווית לבחירת משמרת בטופס - בשבת "ערב" מציג את השעות מתוך התקן של המוקד */
+function submitOptionLabel(ot, dateStr){
+  if(ot==="evening" && dayTypeForDate(dateStr)==="saturday"){
+    const q = (S.quotas||[]).find(x=>x.sector==="מוקד" && x.day_type==="saturday" && x.shift_type==="evening");
+    if(q) return `ערב (${q.start_time.slice(0,5)}-${q.end_time.slice(0,5)})`;
+  }
+  return SHIFT_LABELS[ot];
 }
 function blockingEntryTypes(quotaShiftType){
   if(quotaShiftType==="combined") return ["morning","evening","combined"];
@@ -480,7 +490,7 @@ function renderSubmitPeriod(){
     <div class="day-card">
       <h4>${fmtDateHeb(d)}</h4>
       <div class="chip-opts">
-        ${opts.map(ot=>`<div class="chip ${sel.types.includes(ot)?"on":""} ${positiveChips?"positive":""}" data-action="toggle-shift" data-date="${d}" data-type="${ot}">${SHIFT_LABELS[ot]}</div>`).join("")}
+        ${opts.map(ot=>`<div class="chip ${sel.types.includes(ot)?"on":""} ${positiveChips?"positive":""}" data-action="toggle-shift" data-date="${d}" data-type="${ot}">${submitOptionLabel(ot, d)}</div>`).join("")}
         <div class="chip ${sel.customOn?"on":""} ${positiveChips?"positive":""}" data-action="toggle-custom" data-date="${d}">שעות מותאמות</div>
       </div>
       ${sel.customOn? `
