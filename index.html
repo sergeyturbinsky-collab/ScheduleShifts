@@ -750,7 +750,14 @@ function renderWorkloadSummary(team, dates, ui){
   const countInRange = (rangeDates)=>{
     const set = new Set(rangeDates);
     const counts = {}; workers.forEach(w=>counts[w.id]=0);
-    (ui.assignments||[]).forEach(a=>{ if(set.has(a.entry_date) && counts.hasOwnProperty(a.worker_id)) counts[a.worker_id]++; });
+    // משמרת בשעות מותאמות שחוצה 2 בלוקים נשמרת כ-2 שורות עם אותן שעות - נספרת כמשמרת אחת בלבד (2026-10-07)
+    const seen = new Set();
+    (ui.assignments||[]).forEach(a=>{
+      if(!set.has(a.entry_date) || !counts.hasOwnProperty(a.worker_id)) return;
+      const key = (a.custom_start && a.custom_end) ? `${a.worker_id}|${a.entry_date}|${a.custom_start}|${a.custom_end}` : null;
+      if(key){ if(seen.has(key)) return; seen.add(key); }
+      counts[a.worker_id]++;
+    });
     return counts;
   };
   if(team.cadence==="biweekly"){
@@ -2104,6 +2111,14 @@ function renderManualBuild(team){
     <h3>${manualIsMoked?"אילוצים שהוגשו":"זמינות שהוגשה"} (כולל הערות העובדים)</h3>
     ${renderPivot(dates, ui.workers||[], ui.entriesByWorker||{}, ui.submittedWorkerIds||new Set(), ui.exceptionWorkerIds, ui.periodStart, ui.workerNotes)}
   </div>`;
+  // --- סיכום משמרות לעובד לפי שבוע, בתחתית מסך השיבוץ הידני. מתעדכן אוטומטית אחרי כל שיבוץ/ניקוי,
+  //     כי כל פעולת שיבוץ טוענת מחדש את ui.assignments (loadAggregateData) ומרנדרת. לבקשת סרגיי (2026-10-07) ---
+  const workloadCard = `
+  <div class="card">
+    <h3>כמה משמרות לכל עובד${manualIsMoked?" (לפי שבוע)":""}</h3>
+    <p class="muted" style="margin-top:-6px;">מתעדכן אוטומטית אחרי כל שיבוץ.</p>
+    ${renderWorkloadSummary(team, dates, ui)}
+  </div>`;
 
   if(group.citySectors[0]!=="מוקד"){
     return `
@@ -2117,6 +2132,7 @@ function renderManualBuild(team){
       <button class="btn secondary small" data-action="open-print" style="margin-top:8px;">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
     </div>
     ${submittedCard}
+    ${workloadCard}
     ${renderTmplCellOverlay()}`;
   }
 
@@ -2131,6 +2147,7 @@ function renderManualBuild(team){
     <button class="btn secondary small" data-action="open-print" style="margin-top:8px;">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
   </div>
   ${submittedCard}
+  ${workloadCard}
   ${renderMokedCellOverlay()}`;
 }
 
