@@ -88,6 +88,9 @@
   /* חוסר 8 שעות מנוחה בין משמרות עוקבות של אותו עובד (ידני/אוטומטי כאחד) - לבקשת סרגיי, 2026-09-28 */
   .tmpl-restwarn{background:var(--danger-bg)!important;color:var(--danger)!important;font-weight:800;box-shadow:inset 0 0 0 2px var(--danger);}
   .tmpl-resttight{background:#fff3a6!important;}
+  /* בפלט הסידור (מסך התצוגה להדפסה + ההדפסה עצמה) לא מוצגים סימוני מגבלות - לא אדום ולא צהוב (2026-10-07) */
+  #printArea .tmpl-restwarn, #printArea .tmpl-resttight{background:transparent!important;color:inherit!important;box-shadow:none!important;font-weight:inherit!important;}
+  #printArea .tmpl-restwarn-note{display:none!important;}
   .tmpl-restwarn-note{display:block;font-size:.8em;font-weight:700;color:var(--danger);}
   .slot-editor{background:#f6fbff;border-top:2px solid var(--primary);}
   .backlink{cursor:pointer;color:var(--primary);font-size:13px;margin-bottom:10px;display:inline-block;}
