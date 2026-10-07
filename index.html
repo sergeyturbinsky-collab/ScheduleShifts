@@ -84,6 +84,7 @@
   .tmpl-cell:hover{background:#eef6ff;}
   /* חוסר 8 שעות מנוחה בין משמרות עוקבות של אותו עובד (ידני/אוטומטי כאחד) - לבקשת סרגיי, 2026-09-28 */
   .tmpl-restwarn{background:var(--danger-bg)!important;color:var(--danger)!important;font-weight:800;box-shadow:inset 0 0 0 2px var(--danger);}
+  .tmpl-resttight{background:#fff3a6!important;}
   .tmpl-restwarn-note{display:block;font-size:.8em;font-weight:700;color:var(--danger);}
   .slot-editor{background:#f6fbff;border-top:2px solid var(--primary);}
   .backlink{cursor:pointer;color:var(--primary);font-size:13px;margin-bottom:10px;display:inline-block;}
@@ -105,6 +106,8 @@
   .no-print{display:none!important;}
   /* משבצות "לא נדרש" (בלי תקן, אף אחד לא אמור להיות משובץ) - כחול כהה בפלט ההדפסה/PDF, לבקשת סרגיי (2026-10-05) */
   .tmpl-na{background:#0b2545!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  /* סימון צהוב של "בדיוק 8 שעות מנוחה" - מוצג רק על המסך, לא בפלט (לבקשת סרגיי, 2026-10-07) */
+  .tmpl-resttight{background:transparent!important;}
 }
 </style>
 </head>
@@ -747,6 +750,25 @@ function renderAvailabilityByDay(dates, group, ui){
    מוקד (תקופה דו-שבועית) מוצג בשתי עמודות נפרדות לפי שבוע, לפי בקשת סרגיי. */
 function renderWorkloadSummary(team, dates, ui){
   const workers = ui.workers;
+  /* כמה משמרות כל עובד יכול לעבוד בטווח (לפי ההגשה שלו), מוצג בסוגריים ליד מספר המשמרות ששובצו.
+     נספר כל צירוף ייחודי של תאריך+סוג משמרת שבו העובד זמין (אותה בדיקת זמינות כמו בכל המערכת, בלי
+     לסנן מי שכבר משובץ). אחמ"ש במוקד נחשב זמין גם למשמרת שיש בה רק תקן מוקדן, כי הוא יכול למלא אותו.
+     לבקשת סרגיי (2026-10-07), בכל הגזרות. */
+  const group = sectorGroupForTeam(team);
+  const availInRange = (rangeDates)=>{
+    const sets = {}; workers.forEach(w=>sets[w.id]=new Set());
+    if(!group.citySectors.length) return null;
+    buildSlots(rangeDates, group, S.quotas).forEach(slot=>{
+      const key = slot.date+"|"+slot.shiftType;
+      availableForSlot(slot, workers, ui.entriesByWorker||{}, {}, null, false, true).forEach(w=>sets[w.id].add(key));
+      if(slot.roleCounts && slot.roleCounts["מוקדן"]){
+        availableForSlot(slot, workers.filter(w=>w.role==='אחמ"ש'), ui.entriesByWorker||{}, {}, null, true, true).forEach(w=>sets[w.id].add(key));
+      }
+    });
+    const out = {}; Object.keys(sets).forEach(id=>out[id]=sets[id].size);
+    return out;
+  };
+  const fmt = (assigned, avail, id)=> avail ? `${assigned} <span class="muted">(${avail[id]||0})</span>` : `${assigned}`;
   const countInRange = (rangeDates)=>{
     const set = new Set(rangeDates);
     const counts = {}; workers.forEach(w=>counts[w.id]=0);
@@ -763,12 +785,17 @@ function renderWorkloadSummary(team, dates, ui){
   if(team.cadence==="biweekly"){
     const week1 = dates.slice(0,7), week2 = dates.slice(7,14);
     const c1 = countInRange(week1), c2 = countInRange(week2);
-    const rows = workers.map(w=>`<tr><td style="text-align:right;">${escapeHtml(w.name)}</td><td>${c1[w.id]||0}</td><td>${c2[w.id]||0}</td><td><b>${(c1[w.id]||0)+(c2[w.id]||0)}</b></td></tr>`).join("");
-    return `<div style="overflow-x:auto;"><table><thead><tr><th>עובד</th><th>שבוע 1</th><th>שבוע 2</th><th>סה"כ</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">אין עובדים</td></tr>'}</tbody></table></div>`;
+    const a1 = availInRange(week1), a2 = availInRange(week2);
+    const aTot = a1 && a2 ? (()=>{ const o={}; workers.forEach(w=>o[w.id]=(a1[w.id]||0)+(a2[w.id]||0)); return o; })() : null;
+    const rows = workers.map(w=>`<tr><td style="text-align:right;">${escapeHtml(w.name)}</td><td>${fmt(c1[w.id]||0,a1,w.id)}</td><td>${fmt(c2[w.id]||0,a2,w.id)}</td><td><b>${fmt((c1[w.id]||0)+(c2[w.id]||0),aTot,w.id)}</b></td></tr>`).join("");
+    return `<div style="overflow-x:auto;"><table><thead><tr><th>עובד</th><th>שבוע 1</th><th>שבוע 2</th><th>סה"כ</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">אין עובדים</td></tr>'}</tbody></table></div>
+    ${a1?'<p class="muted" style="font-size:.85em;">המספר בסוגריים = כמה משמרות העובד יכול לעבוד באותו שבוע לפי ההגשה שלו.</p>':''}`;
   }
   const c = countInRange(dates);
-  const rows = workers.map(w=>`<tr><td style="text-align:right;">${escapeHtml(w.name)}</td><td>${c[w.id]||0}</td></tr>`).join("");
-  return `<div style="overflow-x:auto;"><table><thead><tr><th>עובד</th><th>משמרות</th></tr></thead><tbody>${rows || '<tr><td colspan="2" class="muted">אין עובדים</td></tr>'}</tbody></table></div>`;
+  const av = availInRange(dates);
+  const rows = workers.map(w=>`<tr><td style="text-align:right;">${escapeHtml(w.name)}</td><td>${fmt(c[w.id]||0,av,w.id)}</td></tr>`).join("");
+  return `<div style="overflow-x:auto;"><table><thead><tr><th>עובד</th><th>משמרות</th></tr></thead><tbody>${rows || '<tr><td colspan="2" class="muted">אין עובדים</td></tr>'}</tbody></table></div>
+  ${av?'<p class="muted" style="font-size:.85em;">המספר בסוגריים = כמה משמרות העובד יכול לעבוד בשבוע לפי ההגשה שלו.</p>':''}`;
 }
 
 /* --------- פילוח חודשי: הגישו מול שובצו, לכל עובד, לחודש קלנדרי נבחר (חוצה תקופות הגשה אם צריך) --------- */
@@ -1088,11 +1115,23 @@ function computeRestViolations(assignments){
     (byWorker[a.worker_id] = byWorker[a.worker_id]||[]).push({a, iv});
   });
   const bad = new Set();
+  // bad.tight: שיבוצים שלפניהם בדיוק 8 שעות מנוחה (לא פחות - זה כבר אדום) - מסומנים בצהוב במסך בלבד,
+  // לא בפלט ההדפסה. לבקשת סרגיי (2026-10-07).
+  bad.tight = new Set();
   Object.values(byWorker).forEach(list=>{
     list.sort((x,y)=> x.iv.start - y.iv.start);
-    for(let i=1;i<list.length;i++){
-      const gapHours = (list[i].iv.start - list[i-1].iv.end) / 3600000;
-      if(gapHours < REST_HOURS_REQUIRED) bad.add(restKey(list[i].a));
+    // משמרת בשעות מותאמות שחוצה 2 בלוקים נשמרת כ-2 שורות עם אותן שעות בדיוק - זו אותה משמרת, לא שתיים
+    // (בלי זה היא סומנה בטעות כ"פחות מ-8 שעות מנוחה" מול עצמה). התיקון: מדלגים על מרווח זהה. (2026-10-07)
+    const uniq = [];
+    list.forEach(x=>{
+      const prev = uniq[uniq.length-1];
+      if(prev && +prev.iv.start===+x.iv.start && +prev.iv.end===+x.iv.end){ (prev.dups = prev.dups||[]).push(x.a); return; }
+      uniq.push(x);
+    });
+    for(let i=1;i<uniq.length;i++){
+      const gapHours = (uniq[i].iv.start - uniq[i-1].iv.end) / 3600000;
+      const target = gapHours < REST_HOURS_REQUIRED ? bad : (Math.abs(gapHours-REST_HOURS_REQUIRED) < 0.01 ? bad.tight : null);
+      if(target){ target.add(restKey(uniq[i].a)); (uniq[i].dups||[]).forEach(d=>target.add(restKey(d))); }
     }
   });
   return bad;
@@ -1328,8 +1367,9 @@ function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDa
         ? `(מ-${tmplHourNum(cs)})`
         : `${tmplHourNum(q?q.start_time:cq.start_time)}-${tmplHourNum(ce)}`;
       const restBad = restViolations.has(restKey(a));
+      const restTight = !restBad && restViolations.tight && restViolations.tight.has(restKey(a));
       const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
-      return `<td class="${restBad?'tmpl-restwarn':''}" style="opacity:.8;font-style:italic;">${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
+      return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}" style="opacity:.8;font-style:italic;">${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
     }).join("");
     return `<tr class="tmpl-mirror-row"><td class="tmpl-pos">סייר ${pos}<br><span class="muted" style="font-size:.75em;font-weight:400;">(מתואמת)</span></td>${cells}</tr>`;
   }).join("");
@@ -1358,13 +1398,14 @@ function renderTemplateGrid(group, dates, ui, mode){
           const w = a ? (workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id]) : null;
           const hoursTxt = a ? tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate) : `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
           const restBad = a && restViolations.has(restKey(a));
+          const restTight = a && !restBad && restViolations.tight.has(restKey(a));
           const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
           if(mode==="manual"){
-            const cls = "tmpl-cell" + (w? (restBad?" tmpl-restwarn":"") : " tmpl-missing");
+            const cls = "tmpl-cell" + (w? (restBad?" tmpl-restwarn":(restTight?" tmpl-resttight":"")) : " tmpl-missing");
             const label = w? `${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}` : "חוסר";
             return `<td class="${cls}" data-action="tmpl-cell" data-sector="${escapeHtml(secData.sector)}" data-date="${d}" data-type="${q.shift_type}" data-pos="${pos}">${label}</td>`;
           }
-          if(w) return `<td class="${restBad?'tmpl-restwarn':''}">${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
+          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}">${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
           return `<td class="tmpl-missing">חוסר</td>`;
         }).join("");
         return `<tr><td class="tmpl-pos">סייר ${pos}</td>${cells}</tr>`;
@@ -1419,12 +1460,13 @@ function renderMokedTemplateGrid(group, dates, ui, mode){
             const candidates = tmplRoleAssignedListWithOverride(assignmentsByDate, d, secData.sector, q.shift_type, role, workersById, q.role_counts);
             const picked = pickedForRoleCell(candidates, ridx, roleRowsCount);
             const anyRestBad = picked.some(a=>restViolations.has(restKey(a)));
+            const anyRestTight = !anyRestBad && picked.some(a=>restViolations.tight.has(restKey(a)));
             if(mode==="manual"){
-              const cls = "tmpl-cell" + (picked.length? (anyRestBad?" tmpl-restwarn":"") : " tmpl-missing");
+              const cls = "tmpl-cell" + (picked.length? (anyRestBad?" tmpl-restwarn":(anyRestTight?" tmpl-resttight":"")) : " tmpl-missing");
               const label = picked.length ? cellText(picked, q, secData.sector, d) : "חוסר";
               return `<td class="${cls}" data-action="tmpl-cell" data-sector="${escapeHtml(secData.sector)}" data-date="${d}" data-type="${q.shift_type}" data-role="${escapeHtml(role)}" data-ridx="${ridx}">${label}</td>`;
             }
-            if(picked.length) return `<td>${cellText(picked, q, secData.sector, d)}</td>`;
+            if(picked.length) return `<td class="${anyRestTight?'tmpl-resttight':''}">${cellText(picked, q, secData.sector, d)}</td>`;
             return `<td class="tmpl-missing">חוסר</td>`;
           }).join("");
           return `<tr><td class="tmpl-pos">${escapeHtml(role)}${roleRowsCount>1?` ${ridx}`:""}</td>${cells}</tr>`;
