@@ -1762,7 +1762,7 @@ function renderMokedCellOverlay(){
   <div class="overlay" data-action="tmpl-cell-bg">
     <div class="card" data-action="noop">
       <h3>${escapeHtml(c.sector)} · ${fmtDateHeb(c.date)} · ${escapeHtml(c.role)}</h3>
-      ${currentNames? `<p class="muted">משובץ כרגע: ${escapeHtml(currentNames)}</p>`:""}
+      ${candidates.length? `<p class="muted">משובץ כרגע: ${candidates.map(a=>{ const w=workersById[a.worker_id]; return `${escapeHtml(w?w.name:"?")} <button class="btn small secondary" data-action="tmpl-remove-worker" data-worker="${a.worker_id}" title="מוריד רק את העובד הזה מהמשמרת">הסר</button>`; }).join(" ")}</p>`:""}
       ${tmplShadowInfoHtml(c)}
       <div class="avail-list">
         <button class="btn small ${!currentNames?"secondary":""}" data-action="tmpl-pick" data-worker="">חוסר / נקה</button>
@@ -1922,8 +1922,12 @@ async function assignRoleAtPosition(sector, date, shiftType, role, ridx, workerI
   const assignmentsByDate = {};
   (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
   const fullList = tmplAssignedList(assignmentsByDate, date, sector, shiftType).map(a=>a.worker_id);
-  const otherRoleIds = fullList.filter(id=>{ const w=workersById[id]; return !w || w.role!==role; });
-  let roleIds = fullList.filter(id=>{ const w=workersById[id]; return w && w.role===role; });
+  // רשימת התפקיד = בדיוק מה שמוצג בשורה (כולל אחמ"ש שממלא תקן מוקדן ביום שאין בו תקן אחמ"ש - ראו
+  // tmplRoleAssignedListWithOverride). קודם נלקחו רק עובדים שהתפקיד שלהם הוא בדיוק התפקיד של השורה, ולכן
+  // אי אפשר היה להוריד אחמ"ש כזה מהמשבצת ("חוסר/נקה" לא עשה כלום). תוקן 2026-10-07 (דוד קורן, 14/10 לילה).
+  const qDay = bucket ? bucket.perDate[date] : null;
+  let roleIds = tmplRoleAssignedListWithOverride(assignmentsByDate, date, sector, shiftType, role, workersById, qDay ? qDay.role_counts : null).map(a=>a.worker_id);
+  const otherRoleIds = fullList.filter(id=>!roleIds.includes(id) && id!==workerId);
   if(workerId) roleIds = roleIds.filter(id=>id!==workerId);
 
   if(ridx>=roleRowsCount){
@@ -2757,6 +2761,22 @@ function onAppClick(e){
     const host = tmplCellHost(c);
     if(!host){ ui.tmplCellMsg = "אין עובד משובץ בתא הזה"; return render(); }
     return tmplSaveShadowChange(c, {addShadow:{workerId:ui.tmplPickedWorker, hostId:host.worker_id, cs:host.custom_start||null, ce:host.custom_end||null}});
+  }
+  // הורדת עובד מסוים מהמשמרת (בלי לגעת באחרים באותו תא/משבצת) - 2026-10-07
+  if(a==="tmpl-remove-worker"){
+    const c = ui.tmplCell; if(!c) return;
+    const wid = el.dataset.worker;
+    const assignmentsByDate = {};
+    (ui.assignments||[]).forEach(x=>{ (assignmentsByDate[x.entry_date] = assignmentsByDate[x.entry_date]||[]).push(x); });
+    const list = tmplAssignedList(assignmentsByDate, c.date, c.sector, c.type).map(x=>x.worker_id).filter(id=>id!==wid);
+    return (async()=>{
+      try{
+        await setAssignmentListPreservingHours(c.sector, c.date, c.type, list, "manual", null, null, null, {dropShadowIds:[wid]});
+        ui.tmplCell = null; ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCellMsg=null; ui.tmplShowOtherSectors=false; ui.tmplRoleOverride=null;
+        ui.loaded = false;
+        await loadAggregateData(teamById(ui.teamId));
+      }catch(e){ ui.tmplCellMsg = "שגיאה בשמירה: " + e.message; render(); }
+    })();
   }
   if(a==="tmpl-remove-shadow"){
     const c = ui.tmplCell; if(!c) return;
