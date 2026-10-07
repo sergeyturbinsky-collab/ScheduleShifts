@@ -709,9 +709,15 @@ function renderPrintView(team){
   const group = sectorGroupForTeam(team);
   const dates = periodDates(ui.periodStart, team);
   const isMoked = group.citySectors[0]==="מוקד";
-  const grid = group.citySectors.length
-    ? (isMoked ? renderMokedTemplateGrid(group, dates, ui, "view") : renderTemplateGrid(group, dates, ui, "view"))
-    : `<p class="muted">אין נתוני התקנים להצגה.</p>`;
+  // מוקד (תקופה דו-שבועית) - כל שבוע מוצג בנפרד, וכל שבוע מתחיל בעמוד חדש בהדפסה. לבקשת סרגיי (2026-10-07)
+  const weeks = (isMoked && dates.length>7) ? [dates.slice(0,7), dates.slice(7)] : [dates];
+  const grid = !group.citySectors.length ? `<p class="muted">אין נתוני התקנים להצגה.</p>`
+    : weeks.map((wk,i)=>{
+        const g = isMoked ? renderMokedTemplateGrid(group, wk, ui, "view") : renderTemplateGrid(group, wk, ui, "view");
+        if(weeks.length===1) return g;
+        return `<div class="print-week"${i>0?' style="break-before:page;page-break-before:always;margin-top:18px;"':''}>
+          <h3 style="margin:0 0 8px;">שבוע ${i+1}: ${fmtDateHeb(wk[0])} — ${fmtDateHeb(wk[wk.length-1])}</h3>${g}</div>`;
+      }).join("");
   return `
   <div class="row no-print" style="margin-bottom:10px;">
     <button class="btn ok" data-action="do-print">🖨️ הדפס / שמור כ-PDF</button>
