@@ -2102,6 +2102,14 @@ function renderManualBuild(team){
   const ui = S.ui;
   const group = sectorGroupForTeam(team);
   const dates = periodDates(ui.periodStart, team);
+  // --- טבלת האילוצים/זמינות שהוגשו (כולל עמודת "הערה" של כל עובד) - מוצגת גם במסך השיבוץ הידני,
+  //     כדי לראות את ההגשות וההערות תוך כדי שיבוץ, בלי לחזור לטבלה המרוכזת. לבקשת סרגיי (2026-10-07) ---
+  const manualIsMoked = group.citySectors[0]==="מוקד";
+  const submittedCard = `
+  <div class="card">
+    <h3>${manualIsMoked?"אילוצים שהוגשו":"זמינות שהוגשה"} (כולל הערות העובדים)</h3>
+    ${renderPivot(dates, ui.workers||[], ui.entriesByWorker||{}, ui.submittedWorkerIds||new Set(), ui.exceptionWorkerIds, ui.periodStart, ui.workerNotes)}
+  </div>`;
 
   if(group.citySectors[0]!=="מוקד"){
     return `
@@ -2114,6 +2122,7 @@ function renderManualBuild(team){
       <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
       <button class="btn secondary small" data-action="open-print" style="margin-top:8px;">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
     </div>
+    ${submittedCard}
     ${renderTmplCellOverlay()}`;
   }
 
@@ -2127,6 +2136,7 @@ function renderManualBuild(team){
     <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
     <button class="btn secondary small" data-action="open-print" style="margin-top:8px;">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
   </div>
+  ${submittedCard}
   ${renderMokedCellOverlay()}`;
 }
 
