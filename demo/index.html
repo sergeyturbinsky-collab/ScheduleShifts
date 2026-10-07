@@ -874,7 +874,7 @@ async function loadAggregateData(team){
     const teamFilter = group.teamIds.length>1 ? `in.(${group.teamIds.join(",")})` : `eq.${group.teamIds[0]}`;
     // auto_assign_exempt נוסף כאן ב-2026-10-06 אחרי שה-SQL של migration_auto_assign_exempt_demo רץ בהצלחה
     // (מוסיף את העמודה ל-roster_workers) - נדרש כדי ש-runAutoAssign יוכל לסנן עובדים מוחרגים.
-    const workers = await apiGet("roster_workers", `select=id,team_id,name,role,city_sectors,auto_assign_exempt,shadow_trainee&team_id=${teamFilter}&order=name`);
+    const workers = await apiGet("roster_workers", `select=id,team_id,name,role,city_sectors,auto_assign_exempt,shadow_trainee,shabbat_observer&team_id=${teamFilter}&order=name`);
     workers.forEach(w=>{ w.cities = computeWorkerCities(w); });
     ui.workers = workers;
 
@@ -883,7 +883,7 @@ async function loadAggregateData(team){
     // אף שדה קיים - ui.workers/ui.entriesByWorker/ui.assignments (למטה) נשארים בדיוק כמו קודם, כדי
     // שלא לשנות שום התנהגות קיימת (כולל הוגנות השיבוץ האוטומטי). לבקשת סרגיי, 2026-09-28. ---
     try{
-      const allWorkersRaw = await apiGet("roster_workers", `select=id,team_id,name,role,city_sectors,shadow_trainee&order=name`);
+      const allWorkersRaw = await apiGet("roster_workers", `select=id,team_id,name,role,city_sectors,shadow_trainee,shabbat_observer&order=name`);
       allWorkersRaw.forEach(w=>{ w.cities = computeWorkerCities(w); });
       ui.allWorkers = allWorkersRaw;
       ui.allWorkersById = {}; allWorkersRaw.forEach(w=>{ ui.allWorkersById[w.id]=w; });
@@ -1059,11 +1059,21 @@ function roleCountsText(rc){ if(!rc) return ""; return Object.keys(rc).map(r=>`$
    אחרות") - עובדי מוקד שנבדקו מול משבצת של צוות מאבטחים פורשו לפי המודל ההפוך (היתר, לא חסימה),
    וכמעט תמיד "נעלמו" כי אין להם סימון מפורש לרוב הימים/המשמרות (המודל שלהם הוא "ברירת מחדל זמין").
    בשימוש הרגיל (workers מאותו צוות כמו ה-slot) זה לא משנה שום התנהגות קיימת - התוצאה זהה. */
+/* "שומר שבת" (roster_workers.shabbat_observer, מסומן בניהול עובדים) - לא זמין ולא מוצג כאפשרות לשיבוץ
+   בשישי ערב, שישי לילה ושבת ערב. לבקשת סרגיי (2026-10-07). */
+function isShabbatBlockedSlot(date, shiftType){
+  const dt = dayTypeForDate(date);
+  if(dt==="friday") return ["evening","night","friday_night"].includes(shiftType);
+  if(dt==="saturday") return shiftType==="evening";
+  return false;
+}
+function shabbatBlocked(w, date, shiftType){ return !!(w && w.shabbat_observer) && isShabbatBlockedSlot(date, shiftType); }
 function availableForSlot(slot, workers, entriesByWorker, assignmentsByDate, excludeSlotKey, ignoreRole, skipAlreadyCheck){
   // בשבת טופס ההגשה מציע רק "מוצ"ש" - סימון כזה חל גם על משמרות שבת אחרות (כמו ערב מוצ"ש 20:00-23:00
   // במוקד, נוסף 2026-10-07), כי כולן בתוך חלון המוצ"ש.
   const blocking = blockingEntryTypes(slot.shiftType).concat(dayTypeForDate(slot.date)==="saturday" && slot.shiftType!=="motzash" ? ["motzash"] : []);
   return workers.filter(w=>{
+    if(shabbatBlocked(w, slot.date, slot.shiftType)) return false;
     if(!ignoreRole && slot.roleCounts && !(w.role && slot.roleCounts[w.role])) return false;
     // שיוך עיר (רלוונטי רק לארבע הערים בבריכה המשותפת של אורי שגיא - ראו computeWorkerCities)
     if(POOLED_CITY_SECTORS.includes(slot.sector)){
@@ -1586,7 +1596,7 @@ function renderTmplCellOverlay(){
   const slot = slots.find(s=>s.sector===c.sector && s.date===c.date && s.shiftType===c.type);
   const assignmentsByDate = {};
   (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
-  const workers = ui.workers;
+  const workers = ui.workers.filter(w=>!shabbatBlocked(w, c.date, c.type)); // שומרי שבת לא מוצגים בשישי ערב/לילה ושבת ערב
   const currentList = tmplAssignedList(assignmentsByDate, c.date, c.sector, c.type);
   const currentIds = new Set(currentList.map(a=>a.worker_id));
   const avail = slot ? availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(c.sector,c.type)) : [];
@@ -1597,7 +1607,7 @@ function renderTmplCellOverlay(){
   const currentWorker = currentList[c.pos-1] ? (workers.find(w=>w.id===currentList[c.pos-1].worker_id) || (ui.allWorkersById||{})[currentList[c.pos-1].worker_id]) : null;
 
   // --- "הצג זמינים מגזרות אחרות": רק עובדים שסימנו בעצמם זמינות ליום/משמרת הזו, מכל גזרה אחרת - לבקשת סרגיי (2026-09-28) ---
-  const otherWorkers = ui.otherWorkers || [];
+  const otherWorkers = (ui.otherWorkers || []).filter(w=>!shabbatBlocked(w, c.date, c.type));
   const allAssignmentsByDate = {};
   (ui.allAssignments||[]).forEach(a=>{ (allAssignmentsByDate[a.entry_date] = allAssignmentsByDate[a.entry_date]||[]).push(a); });
   const otherAvail = slot ? availableForSlot(slot, otherWorkers, ui.otherEntriesByWorker||{}, allAssignmentsByDate, slotKey(c.sector,c.type)) : [];
@@ -1706,8 +1716,8 @@ function renderMokedCellOverlay(){
   const slot = slots.find(s=>s.sector===c.sector && s.date===c.date && s.shiftType===c.type);
   const assignmentsByDate = {};
   (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
-  const workers = ui.workers;
-  const workersById = ui.allWorkersById && Object.keys(ui.allWorkersById).length ? ui.allWorkersById : (()=>{ const m={}; workers.forEach(w=>m[w.id]=w); return m; })();
+  const workers = ui.workers.filter(w=>!shabbatBlocked(w, c.date, c.type)); // שומרי שבת לא מוצגים בשישי ערב/לילה ושבת ערב
+  const workersById = ui.allWorkersById && Object.keys(ui.allWorkersById).length ? ui.allWorkersById : (()=>{ const m={}; ui.workers.forEach(w=>m[w.id]=w); return m; })();
   const candidates = tmplRoleAssignedListWithOverride(assignmentsByDate, c.date, c.sector, c.type, c.role, workersById, slot?slot.roleCounts:null);
   const currentIds = new Set(candidates.map(a=>a.worker_id));
   const avail = slot ? availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(c.sector,c.type)) : [];
@@ -1737,7 +1747,7 @@ function renderMokedCellOverlay(){
     : [];
 
   // --- "הצג זמינים מגזרות אחרות": עובדים מצוותים אחרים באותו תפקיד, שסימנו בעצמם זמינות - לבקשת סרגיי (2026-09-28) ---
-  const otherWorkers = (ui.otherWorkers||[]).filter(w=>w.role===c.role);
+  const otherWorkers = (ui.otherWorkers||[]).filter(w=>w.role===c.role && !shabbatBlocked(w, c.date, c.type));
   const allAssignmentsByDate = {};
   (ui.allAssignments||[]).forEach(a=>{ (allAssignmentsByDate[a.entry_date] = allAssignmentsByDate[a.entry_date]||[]).push(a); });
   const otherAvail = slot ? availableForSlot(slot, otherWorkers, ui.otherEntriesByWorker||{}, allAssignmentsByDate, slotKey(c.sector,c.type)) : [];
@@ -2483,7 +2493,7 @@ function renderAdmin(){
     ${ui.teamCodeMsg? `<p>${escapeHtml(ui.teamCodeMsg)}</p>`:""}
     ${isLockActive(ui.teamCodeLockedUntil)? `<p class="shortage">🔒 קוד הקב"ט נעול כרגע (יותר מדי ניסיונות שגויים) — ייפתח אוטומטית בעוד כ-${lockMinutesLeft(ui.teamCodeLockedUntil)} דק'. <button class="btn small" data-action="admin-unlock-team">פתח נעילה עכשיו</button></p>`:""}
     <table>
-      <thead><tr><th>שם</th><th title="עובד בהכשרה - אפשר לשבץ אותו בחפיפה, באותה קוביה עם עובד שכבר משובץ">חפיפה</th><th>קוד אישי</th>${merged?"<th>גזרה</th>":""}${avihaiTeam?"<th>עיר</th>":""}${anyMoked?"<th>תפקיד</th>":""}<th title="כשמסומן, העובד לעולם לא ייבחר ב&quot;שיבוץ אוטומטי&quot; - עדיין אפשר לשבץ אותו ידנית">לא לשבץ אוטומטית</th><th></th></tr></thead>
+      <thead><tr><th>שם</th><th title="עובד בהכשרה - אפשר לשבץ אותו בחפיפה, באותה קוביה עם עובד שכבר משובץ">חפיפה</th><th title="לא יוצג כאפשרות לשיבוץ בשישי ערב, שישי לילה ושבת ערב">שומר שבת</th><th>קוד אישי</th>${merged?"<th>גזרה</th>":""}${avihaiTeam?"<th>עיר</th>":""}${anyMoked?"<th>תפקיד</th>":""}<th title="כשמסומן, העובד לעולם לא ייבחר ב&quot;שיבוץ אוטומטי&quot; - עדיין אפשר לשבץ אותו ידנית">לא לשבץ אוטומטית</th><th></th></tr></thead>
       <tbody>
         ${ui.workers.map(w=>{
           const workerIsMoked = isMokedTeam(teamById(w.team_id));
@@ -2494,8 +2504,9 @@ function renderAdmin(){
             </select></td>`);
           const exemptCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-auto-exempt" data-id="${w.id}" ${w.auto_assign_exempt?"checked":""}></td>`;
           const shadowCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-shadow" data-id="${w.id}" ${w.shadow_trainee?"checked":""}></td>`;
-          return `<tr><td>${escapeHtml(w.name)}</td>${shadowCell}<td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${w.team_id===avihaiTeam.id ? escapeHtml((w.city_sectors&&w.city_sectors.length)?w.city_sectors.join("/"):"כל האזור") : "-"}</td>`:""}${roleCell}${exemptCell}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>`;
-        }).join("") || `<tr><td colspan="${1+1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1+1}" class="muted">אין עדיין עובדים</td></tr>`}
+          const shabbatCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-shabbat" data-id="${w.id}" ${w.shabbat_observer?"checked":""}></td>`;
+          return `<tr><td>${escapeHtml(w.name)}</td>${shadowCell}${shabbatCell}<td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${w.team_id===avihaiTeam.id ? escapeHtml((w.city_sectors&&w.city_sectors.length)?w.city_sectors.join("/"):"כל האזור") : "-"}</td>`:""}${roleCell}${exemptCell}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>`;
+        }).join("") || `<tr><td colspan="${1+1+1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1+1}" class="muted">אין עדיין עובדים</td></tr>`}
       </tbody>
     </table>
     <h3>הוספה / עדכון</h3>
@@ -2546,10 +2557,10 @@ async function loadAdminWorkers(){
     ui.workers = workerLists.flat().sort((a,b)=>a.name.localeCompare(b.name,"he"));
     // סימון "חפיפה" נטען ישירות מהטבלה (admin_list_workers לא מחזירה אותו) - 2026-10-07
     try{
-      const flags = await apiGet("roster_workers", `select=id,shadow_trainee&team_id=in.(${ui.teamIds.join(",")})`);
-      const fm = {}; flags.forEach(r=>fm[r.id]=r.shadow_trainee);
-      ui.workers.forEach(w=>{ w.shadow_trainee = !!fm[w.id]; });
-    }catch(e){ ui.workers.forEach(w=>{ w.shadow_trainee = !!w.shadow_trainee; }); }
+      const flags = await apiGet("roster_workers", `select=id,shadow_trainee,shabbat_observer&team_id=in.(${ui.teamIds.join(",")})`);
+      const fm = {}; flags.forEach(r=>fm[r.id]=r);
+      ui.workers.forEach(w=>{ w.shadow_trainee = !!(fm[w.id]&&fm[w.id].shadow_trainee); w.shabbat_observer = !!(fm[w.id]&&fm[w.id].shabbat_observer); });
+    }catch(e){ ui.workers.forEach(w=>{ w.shadow_trainee = !!w.shadow_trainee; w.shabbat_observer = !!w.shabbat_observer; }); }
     ui.teamCode = teamCode;
     ui.codeTeamId = codeTeamId;
     ui.teamCodeLockedUntil = teamLock;
@@ -2587,6 +2598,15 @@ function onAppChange(e){
   // "לא לשבץ אוטומטית" - לבקשת סרגיי (2026-10-06): תיבת סימון לכל עובד, נשמרת מיידית; רק מדירה
   // משיבוץ אוטומטי (runAutoAssign) - לא משפיעה על זמינות/שיבוץ ידני.
   // "חפיפה" - עובד בהכשרה שאפשר לשבץ באותה קוביה עם עובד שכבר משובץ (2026-10-07)
+  // "שומר שבת" - לא מוצג/משובץ בשישי ערב, שישי לילה ושבת ערב (2026-10-07)
+  if(t.dataset.action==="admin-toggle-shabbat"){
+    const id = t.dataset.id, val = t.checked;
+    const ui = S.ui;
+    (async()=>{
+      try{ await apiRpc("admin_update_worker_shabbat_observer",{p_pin:S.pin,p_worker_id:id,p_value:val}); ui.adminMsg="עודכן."; ui.workers=null; render(); }
+      catch(err){ ui.adminMsg="שגיאה: "+err.message; render(); }
+    })();
+  }
   if(t.dataset.action==="admin-toggle-shadow"){
     const id = t.dataset.id, val = t.checked;
     const ui = S.ui;
