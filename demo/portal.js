@@ -142,10 +142,9 @@ function renderWorkerHome(App, session){
     </div>
     <div class="grid-teams" style="margin-top:12px;">
       ${tile("portal-go-submit", "הגשת משמרות", "הגשת אילוצים לתקופה הבאה")}
-      ${tile("portal-soon", "הדרכה", "בקרוב", true)}
-      ${tile("portal-soon", "לוגיסטי", "בקרוב", true)}
+      ${tile("portal-go-training", "הדרכה", "בקרוב", true)}
+      ${tile("portal-go-logistics", "לוגיסטי", "בקרוב", true)}
     </div>
-    ${P.soonMsg? `<p class="muted">${esc(P.soonMsg)}</p>`:""}
   </div>
   <div class="card">
     <h3>המשמרות שלי</h3>
@@ -154,6 +153,16 @@ function renderWorkerHome(App, session){
   <div class="card">
     <h3>משימות פתוחות</h3>
     <p class="muted">אין משימות פתוחות כרגע.</p>
+  </div>`;
+}
+
+/* מסכי "הדרכה" ו"לוגיסטי" - בינתיים מסך "בקרוב" (התוכן יוגדר בהמשך עם סרגיי) */
+function renderSection(App, view){
+  const title = view==="training" ? "הדרכה" : "לוגיסטי";
+  return `<div class="card">
+    <span class="backlink" data-action="go-home">◀ חזרה לאיזור האישי</span>
+    <h2>${title}</h2>
+    <p class="muted">החלק הזה עוד בבנייה.</p>
   </div>`;
 }
 
@@ -208,10 +217,11 @@ function onClick(App, a, el){
   if(a==="portal-logout"){
     const s = loadSession(App);
     if(s) App.apiRpc("worker_logout", {p_token: s.token}).catch(()=>{});
-    saveSession(App, null); P.shifts = null; P.checkedSession = false; P.soonMsg = null;
+    saveSession(App, null); P.shifts = null; P.checkedSession = false;
     return App.render();
   }
-  if(a==="portal-soon"){ P.soonMsg = "החלק הזה עוד בבנייה."; return App.render(); }
+  if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; return App.render(); }
+  if(a==="portal-go-logistics"){ S.view = "logistics"; S.ui = {}; return App.render(); }
   if(a==="portal-go-submit"){
     const s = loadSession(App);
     if(!s) return App.render();
@@ -235,5 +245,5 @@ function onClick(App, a, el){
   (document.head||document.documentElement).appendChild(st);
 })();
 
-window.Portal = { renderHome, onClick, onInput, onKey, resetState(){ P.shifts=null; P.checkedSession=false; } };
+window.Portal = { renderHome, renderSection, onClick, onInput, onKey, resetState(){ P.shifts=null; P.checkedSession=false; } };
 })();
