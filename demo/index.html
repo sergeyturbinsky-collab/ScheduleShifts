@@ -1722,6 +1722,12 @@ function renderMokedCellOverlay(){
   const slotAssignedIds = new Set(tmplAssignedList(assignmentsByDate, c.date, c.sector, c.type).map(a=>a.worker_id));
   const roleOverrideAvail = (c.role==="מוקדן" && slot) ? availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(c.sector,c.type), true) : [];
   const roleOverrideOptions = roleOverrideAvail.filter(w=> w.role==='אחמ"ש' && !slotAssignedIds.has(w.id));
+  // אחמ"שים שזמינים למשמרת הזו אך כבר משובצים היום במשמרת אחרת - מוצגים באותו מדור עם הערה, ואפשר לשבץ
+  // אותם בכל זאת (כמו "זמינים, אך כבר משובצים" הרגיל). לבקשת סרגיי (2026-10-07, קארינה ב-23/10 ערב).
+  const roleOverrideBusy = (c.role==="מוקדן" && slot)
+    ? availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(c.sector,c.type), true, true)
+        .filter(w=> w.role==='אחמ"ש' && !slotAssignedIds.has(w.id) && !roleOverrideOptions.some(o=>o.id===w.id))
+    : [];
 
   // --- "הצג זמינים מגזרות אחרות": עובדים מצוותים אחרים באותו תפקיד, שסימנו בעצמם זמינות - לבקשת סרגיי (2026-09-28) ---
   const otherWorkers = (ui.otherWorkers||[]).filter(w=>w.role===c.role);
@@ -1799,10 +1805,11 @@ function renderMokedCellOverlay(){
       <div class="avail-list">
         ${unavailOptions.map(pickBtn).join("")}
       </div>` : ""}
-      ${roleOverrideOptions.length? `
+      ${(roleOverrideOptions.length || roleOverrideBusy.length)? `
       <p class="muted" style="margin:8px 0 2px;font-weight:600;">אחמ"שים זמינים (יכולים למלא גם תקן מוקדן)</p>
       <div class="avail-list">
         ${roleOverrideOptions.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)}</button>`).join("")}
+        ${roleOverrideBusy.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`).join("")}
       </div>` : ""}
       <div class="row" style="margin-top:8px;">
         <button class="btn small secondary" data-action="tmpl-other-sectors-toggle">${ui.tmplShowOtherSectors?"הסתר זמינים מגזרות אחרות":"הצג זמינים מגזרות אחרות"}</button>
