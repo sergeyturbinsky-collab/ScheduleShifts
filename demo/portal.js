@@ -143,7 +143,7 @@ function renderWorkerHome(App, session){
     <div class="grid-teams" style="margin-top:12px;">
       ${tile("portal-go-submit", "הגשת משמרות", "הגשת אילוצים לתקופה הבאה")}
       ${tile("portal-go-training", "הדרכה", "בקרוב", true)}
-      ${tile("portal-go-logistics", "לוגיסטי", "בקרוב", true)}
+      ${isMokedWorker(App, session) ? "" : tile("portal-go-logistics", "לוגיסטי", "הציוד שלי ובקשת ציוד")}
     </div>
   </div>
   <div class="card">
@@ -156,13 +156,130 @@ function renderWorkerHome(App, session){
   </div>`;
 }
 
-/* מסכי "הדרכה" ו"לוגיסטי" - בינתיים מסך "בקרוב" (התוכן יוגדר בהמשך עם סרגיי) */
+/* ================================================================
+   לוגיסטי (למאבטחים בגזרות, לא למוקד) - לבקשת סרגיי (2026-10-07):
+   בפעם הראשונה העובד ממלא את כל הציוד שברשותו (כמות + מידה). אחר כך רואה טבלה של מה שיש לו,
+   ויכול לבקש פריטים נוספים - הבקשה נשמרת לקב"ט של הצוות שלו (הממשק של הקב"ט/סרגיי יוגדר בהמשך).
+   ================================================================ */
+const L = { items:null, data:null, error:null, msg:null, editing:false, busy:false };
+const REQ_STATUS = { pending:"ממתין לקב\"ט", approved:"אושר", delivered:"נמסר", rejected:"נדחה" };
+
+function isMokedWorker(App, session){
+  const t = App.teamById(session.team_id);
+  return !t || !(t.sectors||[]).length;
+}
+
+async function loadLogistics(App, session){
+  try{
+    const [items, data] = await Promise.all([
+      App.apiGet("logistics_items", "select=id,name,has_size,sort_order&order=sort_order"),
+      App.apiRpc("worker_equipment_get", {p_token: session.token})
+    ]);
+    L.items = items; L.data = data; L.error = null;
+  }catch(e){
+    if(/session/i.test(e.message)){ saveSession(App, null); App.S.view = "home"; }
+    L.items = L.items || []; L.data = L.data || {equipment:[], requests:[]}; L.error = "שגיאה בטעינת הנתונים";
+  }
+  App.render();
+}
+
+function renderLogistics(App, session){
+  const esc = App.escapeHtml;
+  if(isMokedWorker(App, session)) return `<p class="muted">החלק הלוגיסטי מיועד למאבטחים בגזרות.</p>`;
+  if(!L.items || !L.data){ loadLogistics(App, session); return `<p class="muted">טוען...</p>`; }
+  const eqById = {}; (L.data.equipment||[]).forEach(e=>eqById[e.item_id]=e);
+  const itemName = id=>{ const it=L.items.find(x=>x.id===id); return it?it.name:"?"; };
+  const msgs = `${L.error?`<p class="shortage">${esc(L.error)}</p>`:""}${L.msg?`<p class="ok-msg" style="color:#1b7f3b;font-weight:600;">${esc(L.msg)}</p>`:""}`;
+
+  // --- טופס ציוד (פעם ראשונה, או עדכון) ---
+  if(!L.data.submitted_at || L.editing){
+    return `
+    <p>${L.data.submitted_at ? "עדכון רשימת הציוד שברשותך." : "בפעם הראשונה, מלא/י את כל הציוד שנמצא ברשותך באופן קבוע: כמה יש לך מכל פריט, ומידה אם רלוונטי. פריט שאין לך - השאר/י 0."}</p>
+    <div style="overflow-x:auto;"><table>
+      <thead><tr><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th></tr></thead>
+      <tbody>${L.items.map(it=>{
+        const cur = eqById[it.id] || {};
+        return `<tr><td style="text-align:right;">${esc(it.name)}</td>
+          <td><input type="number" min="0" max="50" data-log-qty="${it.id}" value="${cur.quantity!=null?cur.quantity:0}" style="width:70px;"></td>
+          <td>${it.has_size ? `<input type="text" maxlength="20" data-log-size="${it.id}" value="${esc(cur.size||"")}" placeholder="מידה" style="width:90px;">` : `<span class="muted">-</span>`}</td></tr>`;
+      }).join("")}</tbody>
+    </table></div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn ok" data-action="portal-log-save" ${L.busy?"disabled":""}>${L.data.submitted_at?"שמור":"שמור ושלח"}</button>
+      ${L.editing? `<button class="btn secondary" data-action="portal-log-cancel">ביטול</button>`:""}
+    </div>
+    ${msgs}`;
+  }
+
+  // --- אחרי שמולא: הציוד שברשותי + בקשת ציוד נוסף + הבקשות שלי ---
+  const owned = L.items.filter(it=> eqById[it.id] && eqById[it.id].quantity>0);
+  const reqs = L.data.requests || [];
+  return `
+    ${msgs}
+    <h3 style="margin-top:0;">הציוד שברשותי</h3>
+    ${owned.length? `<div style="overflow-x:auto;"><table>
+      <thead><tr><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th></tr></thead>
+      <tbody>${owned.map(it=>`<tr><td style="text-align:right;">${esc(it.name)}</td><td>${eqById[it.id].quantity}</td><td>${esc(eqById[it.id].size||"-")}</td></tr>`).join("")}</tbody>
+    </table></div>` : `<p class="muted">לא רשום ציוד.</p>`}
+    <p style="margin-top:6px;"><span class="backlink" data-action="portal-log-edit">עדכון הרשימה</span></p>
+
+    <h3>בקשת ציוד נוסף</h3>
+    <div class="row">
+      <div class="field"><label>פריט</label>
+        <select id="logReqItem">${L.items.map(it=>`<option value="${it.id}">${esc(it.name)}</option>`).join("")}</select>
+      </div>
+      <div class="field"><label>כמות</label><input type="number" id="logReqQty" min="1" max="20" value="1" style="width:70px;"></div>
+      <div class="field"><label>מידה</label><input type="text" id="logReqSize" maxlength="20" placeholder="אם רלוונטי" style="width:100px;"></div>
+    </div>
+    <div class="field"><label>הערה (לא חובה)</label><input type="text" id="logReqNote" maxlength="300" placeholder="למשל: המכנס הישן נקרע"></div>
+    <button class="btn" data-action="portal-log-request" ${L.busy?"disabled":""}>שלח בקשה לקב"ט</button>
+
+    <h3>הבקשות שלי</h3>
+    ${reqs.length? `<div style="overflow-x:auto;"><table>
+      <thead><tr><th>תאריך</th><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th><th>סטטוס</th></tr></thead>
+      <tbody>${reqs.map(r=>`<tr><td>${App.fmtDateHeb(String(r.created_at).slice(0,10))}</td><td style="text-align:right;">${esc(itemName(r.item_id))}${r.note?`<br><span class="muted" style="font-size:.85em;">${esc(r.note)}</span>`:""}</td><td>${r.quantity}</td><td>${esc(r.size||"-")}</td><td>${esc(REQ_STATUS[r.status]||r.status)}</td></tr>`).join("")}</tbody>
+    </table></div>` : `<p class="muted">עוד לא שלחת בקשות.</p>`}`;
+}
+
+async function saveLogistics(App){
+  const session = loadSession(App); if(!session) return App.render();
+  const items = (L.items||[]).map(it=>{
+    const q = document.querySelector(`[data-log-qty="${it.id}"]`);
+    const sz = document.querySelector(`[data-log-size="${it.id}"]`);
+    return {item_id: it.id, quantity: Math.max(0, Math.min(50, parseInt(q&&q.value,10)||0)), size: sz ? sz.value : null};
+  });
+  L.busy = true; L.msg = null; L.error = null; App.render();
+  try{
+    await App.apiRpc("worker_equipment_save", {p_token: session.token, p_items: items});
+    L.busy = false; L.editing = false; L.msg = "רשימת הציוד נשמרה ונשלחה.";
+    L.data = null; App.render();
+  }catch(e){ L.busy = false; L.error = "שגיאה בשמירה: " + e.message; App.render(); }
+}
+
+async function sendRequest(App){
+  const session = loadSession(App); if(!session) return App.render();
+  const itemId = parseInt(document.getElementById("logReqItem").value, 10);
+  const qty = parseInt(document.getElementById("logReqQty").value, 10) || 1;
+  const size = document.getElementById("logReqSize").value;
+  const note = document.getElementById("logReqNote").value;
+  L.busy = true; L.msg = null; L.error = null; App.render();
+  try{
+    await App.apiRpc("worker_equipment_request", {p_token: session.token, p_item_id: itemId, p_quantity: qty, p_size: size, p_note: note});
+    L.busy = false; L.msg = "הבקשה נשלחה לקב\"ט.";
+    L.data = null; App.render();
+  }catch(e){ L.busy = false; L.error = "שגיאה בשליחה: " + e.message; App.render(); }
+}
+
+/* מסכי "הדרכה" (בינתיים "בקרוב") ו"לוגיסטי" */
 function renderSection(App, view){
+  const session = loadSession(App);
+  if(!session){ App.S.view = "home"; return renderHome(App); }
   const title = view==="training" ? "הדרכה" : "לוגיסטי";
+  const body = view==="logistics" ? renderLogistics(App, session) : `<p class="muted">החלק הזה עוד בבנייה.</p>`;
   return `<div class="card">
     <span class="backlink" data-action="go-home">◀ חזרה לאיזור האישי</span>
     <h2>${title}</h2>
-    <p class="muted">החלק הזה עוד בבנייה.</p>
+    ${body}
   </div>`;
 }
 
@@ -217,11 +334,15 @@ function onClick(App, a, el){
   if(a==="portal-logout"){
     const s = loadSession(App);
     if(s) App.apiRpc("worker_logout", {p_token: s.token}).catch(()=>{});
-    saveSession(App, null); P.shifts = null; P.checkedSession = false;
+    saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null;
     return App.render();
   }
   if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; return App.render(); }
-  if(a==="portal-go-logistics"){ S.view = "logistics"; S.ui = {}; return App.render(); }
+  if(a==="portal-go-logistics"){ S.view = "logistics"; S.ui = {}; L.data = null; L.msg = null; L.error = null; L.editing = false; return App.render(); }
+  if(a==="portal-log-save") return saveLogistics(App);
+  if(a==="portal-log-edit"){ L.editing = true; L.msg = null; return App.render(); }
+  if(a==="portal-log-cancel"){ L.editing = false; return App.render(); }
+  if(a==="portal-log-request") return sendRequest(App);
   if(a==="portal-go-submit"){
     const s = loadSession(App);
     if(!s) return App.render();

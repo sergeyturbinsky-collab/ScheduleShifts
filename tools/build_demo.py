@@ -28,7 +28,7 @@ assert "wcbnkrtxdzfygyyanasx" in s and "hcejwcxsqhpiufaakalj" not in s
 # ---- portal + publish patches ----
 rep("""<script>
 (function(){
-"use strict";""","""<script src="portal.js?v=5"></script>
+"use strict";""","""<script src="portal.js?v=6"></script>
 <script>
 (function(){
 "use strict";""")
