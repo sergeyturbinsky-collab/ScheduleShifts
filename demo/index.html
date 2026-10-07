@@ -1358,10 +1358,13 @@ function tmplShadowText(shadows, q, nameOf){
   return shadows.map(sh=>` + ${nameOf(sh.worker_id)} (ח) ${tmplHoursTxt(q, sh)}`).join("");
 }
 /* כנ"ל, אך מסונן לתפקיד נתון (למוקד: אחמ"ש/מוקדן) - התפקיד נלקח מהעובד עצמו (roster_workers.role), לא מהשיבוץ */
+/* התפקיד שהשיבוץ ממלא בפועל: filled_role אם הוגדר (למשל אחמ"ש ששובץ לתקן מוקדן - 2026-10-07), אחרת התפקיד של העובד */
+function assignmentRole(a, workersById){
+  if(a.filled_role) return a.filled_role;
+  const w = workersById[a.worker_id]; return w ? w.role : null;
+}
 function tmplRoleAssignedList(assignmentsByDate, date, sector, shiftType, role, workersById){
-  return tmplAssignedList(assignmentsByDate, date, sector, shiftType).filter(a=>{
-    const w = workersById[a.worker_id]; return w && w.role===role;
-  });
+  return tmplAssignedList(assignmentsByDate, date, sector, shiftType).filter(a=> assignmentRole(a, workersById)===role);
 }
 /* כנ"ל, אך עבור שורת "מוקדן" כולל גם שיבוצי אחמ"ש שמילאו את התקן כ"מילוי" (ראו assignRoleOverrideWorker,
    2026-10-06) - בלעדי זה שיבוץ כזה נשאר בלתי-נראה לגמרי: אין לו שורת-תפקיד משלו באותו תאריך (roleCounts
@@ -1373,9 +1376,9 @@ function tmplRoleAssignedListWithOverride(assignmentsByDate, date, sector, shift
   const list = tmplRoleAssignedList(assignmentsByDate, date, sector, shiftType, role, workersById);
   if(role !== "מוקדן") return list;
   const orphans = tmplAssignedList(assignmentsByDate, date, sector, shiftType).filter(a=>{
-    const w = workersById[a.worker_id];
-    if(!w || w.role==="מוקדן") return false; // כבר נספר למעלה
-    return !roleCounts || !roleCounts[w.role]; // אין לתפקיד האמיתי שלו שום שורה באותו תאריך
+    const r = assignmentRole(a, workersById);
+    if(!r || r==="מוקדן") return false; // כבר נספר למעלה
+    return !roleCounts || !roleCounts[r]; // אין לתפקיד שלו שום שורה באותו תאריך
   });
   return list.concat(orphans);
 }
@@ -1862,8 +1865,10 @@ async function setAssignmentListPreservingHours(sector, date, shiftType, list, m
   opts = opts || {};
   const ui = S.ui;
   const slotRows = (ui.assignments||[]).filter(a=>a.entry_date===date && a.sector===sector && a.shift_type===shiftType);
-  const prevHours = {};
-  slotRows.forEach(a=>{ if(a.custom_start || a.custom_end) prevHours[a.worker_id] = {cs:a.custom_start, ce:a.custom_end}; });
+  const prevHours = {}, prevRole = {};
+  slotRows.forEach(a=>{ if(a.custom_start || a.custom_end) prevHours[a.worker_id] = {cs:a.custom_start, ce:a.custom_end}; if(a.filled_role) prevRole[a.worker_id] = a.filled_role; });
+  // opts.setRole = {workerId, role} - קובע איזה תקן העובד ממלא (null = התפקיד שלו)
+  if(opts.setRole) prevRole[opts.setRole.workerId] = opts.setRole.role || null;
   const drop = opts.dropShadowIds || [];
   const addId = opts.addShadow ? opts.addShadow.workerId : null;
   const shadowEntries = slotRows.filter(a=>a.shadow_of && !list.includes(a.worker_id) && !drop.includes(a.worker_id) && a.worker_id!==addId)
@@ -1877,6 +1882,9 @@ async function setAssignmentListPreservingHours(sector, date, shiftType, list, m
   for(const wid of list){
     if(wid===justSetWorkerId) continue;
     if(prevHours[wid]) await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:wid, p_custom_start:prevHours[wid].cs, p_custom_end:prevHours[wid].ce});
+  }
+  for(const wid of list){
+    if(prevRole[wid]) await apiRpc("rpc_assignment_set_role", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:wid, p_role:prevRole[wid]});
   }
   for(const sh of shadowEntries){
     await apiRpc("rpc_assignment_set_shadow", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:sh.workerId, p_shadow_of:sh.hostId});
@@ -1954,6 +1962,8 @@ async function assignAtPosition(sector, date, shiftType, pos, workerId, customSt
    באותה שורה) מתאפסת לעובד יחיד (או מתרוקנת) בעריכה ידנית - זה הגיוני כי עריכה ידנית של תא היא בחירה
    מפורשת, וחפיפה נוצרת מחדש דרך "שעות מותאמות" בדיוק כמו בתחילה. */
 async function assignRoleAtPosition(sector, date, shiftType, role, ridx, workerId, customStart, customEnd){
+  // עובד שתפקידו שונה מהשורה (אחמ"ש בשורת מוקדן) נשמר עם filled_role = תפקיד השורה, כדי שיוצג וייספר
+  // שם ולא "יקפוץ" לשורת האחמ"ש. לבקשת סרגיי (2026-10-07).
   const ui = S.ui;
   const team = teamById(ui.teamId);
   const group = sectorGroupForTeam(team);
@@ -1985,8 +1995,10 @@ async function assignRoleAtPosition(sector, date, shiftType, role, ridx, workerI
     roleIds.push(workerId);
   }
   const list = otherRoleIds.concat(roleIds);
+  const pickedW = workerId ? workersById[workerId] : null;
+  const setRole = workerId ? {workerId, role: (pickedW && pickedW.role===role) ? null : role} : null;
   try{
-    await setAssignmentListPreservingHours(sector, date, shiftType, list, "manual", workerId, customStart, customEnd);
+    await setAssignmentListPreservingHours(sector, date, shiftType, list, "manual", workerId, customStart, customEnd, setRole?{setRole}:{});
     ui.tmplCell = null; ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCustomStart=null; ui.tmplCustomEnd=null; ui.tmplCellMsg = null; ui.tmplShowOtherSectors=false; ui.tmplRoleOverride=null;
     ui.loaded = false;
     await loadAggregateData(team);
@@ -2077,8 +2089,10 @@ async function confirmMokedCustomHours(){
       const assignmentsByDate = {};
       (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
       const fullList = tmplAssignedList(assignmentsByDate, c.date, c.sector, shiftType).map(a=>a.worker_id);
-      const otherRoleIds = fullList.filter(id=> id!==workerId && (!workersById[id] || workersById[id].role!==role));
-      let roleIds = fullList.filter(id=> id!==workerId && workersById[id] && workersById[id].role===role);
+      const slotRowsHere = tmplAssignedList(assignmentsByDate, c.date, c.sector, shiftType);
+      const effRoleOf = id=>{ const a = slotRowsHere.find(x=>x.worker_id===id); return a ? assignmentRole(a, workersById) : (workersById[id]||{}).role; };
+      const otherRoleIds = fullList.filter(id=> id!==workerId && effRoleOf(id)!==role);
+      let roleIds = fullList.filter(id=> id!==workerId && effRoleOf(id)===role);
       if(shiftType===c.type){
         const roleRowsCount = hit.bucket.roleMax[role]||1;
         if(c.ridx>=roleRowsCount) roleIds = roleIds.slice(0, c.ridx-1);
@@ -2201,6 +2215,7 @@ async function runAutoAssign(){
   let filled=0, short=0, restForced=0;
   for(const slot of slots){
     const alreadyAll = (assignmentsByDate[slot.date]||[]).filter(a=>a.sector===slot.sector && a.shift_type===slot.shiftType);
+    let fallbackFillers = [];
     const already = alreadyAll.filter(a=>!a.shadow_of); // חפיפות לא נספרות כמילוי תקן
     const need = slot.required - already.length;
     if(need<=0) continue;
@@ -2220,10 +2235,11 @@ async function runAutoAssign(){
       // אחמ"ש). גם כאן שומרים על החלוקה ההוגנת (byFairness, אותו מנגנון כמו שאר השיבוץ) כך שכיסוי מוקדן
       // ע"י אחמ"ש יתחלק הוגן בין האחמ"שים הפנויים, ולא יפול תמיד על אותו אדם.
       const alreadyByRole = {};
-      already.forEach(a=>{ const w=workers.find(x=>x.id===a.worker_id); if(w&&w.role) alreadyByRole[w.role]=(alreadyByRole[w.role]||0)+1; });
+      already.forEach(a=>{ const w=workers.find(x=>x.id===a.worker_id); const r = a.filled_role || (w&&w.role); if(r) alreadyByRole[r]=(alreadyByRole[r]||0)+1; });
       const roleKeysOrdered = MOKED_ROLE_ORDER.filter(r=>slot.roleCounts[r]!=null)
         .concat(Object.keys(slot.roleCounts).filter(r=>!MOKED_ROLE_ORDER.includes(r)));
-      let availAnyRole = null; // availableForSlot בלי סינון תפקיד - מחושב לכל היותר פעם אחת לכל משבצת, רק אם צריך fallback
+      let availAnyRole = null;
+      fallbackFillers = []; // availableForSlot בלי סינון תפקיד - מחושב לכל היותר פעם אחת לכל משבצת, רק אם צריך fallback
       roleKeysOrdered.forEach(role=>{
         const needRole = slot.roleCounts[role] - (alreadyByRole[role]||0);
         if(needRole<=0) return;
@@ -2250,6 +2266,7 @@ async function runAutoAssign(){
             pickedFallback = pickedFallback.concat(fbMore);
           }
           pickedRole = pickedRole.concat(pickedFallback);
+          pickedFallback.forEach(w=>fallbackFillers.push(w.id)); // יסומנו filled_role="מוקדן" אחרי השמירה
         }
         chosen = chosen.concat(pickedRole);
       });
@@ -2270,6 +2287,10 @@ async function runAutoAssign(){
       for(const a of alreadyAll.filter(x=>x.id)){
         if(a.shadow_of) await apiRpc("rpc_assignment_set_shadow", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:a.worker_id, p_shadow_of:a.shadow_of});
         if(a.custom_start || a.custom_end) await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:a.worker_id, p_custom_start:a.custom_start, p_custom_end:a.custom_end});
+        if(a.filled_role) await apiRpc("rpc_assignment_set_role", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:a.worker_id, p_role:a.filled_role});
+      }
+      for(const wid of fallbackFillers){
+        await apiRpc("rpc_assignment_set_role", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:wid, p_role:"מוקדן"});
       }
       filled++;
       chosen.forEach(w=>{ assignCount[w.id]++; recordChosenInterval(w.id, newInterval); (assignmentsByDate[slot.date]=assignmentsByDate[slot.date]||[]).push({sector:slot.sector, shift_type:slot.shiftType, worker_id:w.id, entry_date:slot.date}); });
@@ -2804,7 +2825,7 @@ function onAppClick(e){
   if(a==="tmpl-hours-back"){ ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCellMsg=null; ui.tmplRoleOverride=null; return render(); }
   if(a==="tmpl-hours-standard"){
     const c = ui.tmplCell; if(!c) return;
-    if(ui.tmplRoleOverride) return assignRoleOverrideWorker(c.sector, c.date, c.type, ui.tmplPickedWorker, null, null);
+    if(ui.tmplRoleOverride) return assignRoleAtPosition(c.sector, c.date, c.type, c.role, c.ridx, ui.tmplPickedWorker, null, null);
     return c.role ? assignRoleAtPosition(c.sector, c.date, c.type, c.role, c.ridx, ui.tmplPickedWorker, null, null) : assignAtPosition(c.sector, c.date, c.type, c.pos, ui.tmplPickedWorker, null, null);
   }
   if(a==="tmpl-hours-custom"){ ui.tmplHoursMode = "custom"; return render(); }
@@ -2840,7 +2861,7 @@ function onAppClick(e){
     if(ui.tmplRoleOverride){
       const cs = document.getElementById("tmplCustomStart").value;
       const ce = document.getElementById("tmplCustomEnd").value;
-      return assignRoleOverrideWorker(c.sector, c.date, c.type, ui.tmplPickedWorker, cs, ce);
+      return assignRoleAtPosition(c.sector, c.date, c.type, c.role, c.ridx, ui.tmplPickedWorker, cs, ce);
     }
     return c.role ? confirmMokedCustomHours() : confirmTmplCustomHours();
   }
