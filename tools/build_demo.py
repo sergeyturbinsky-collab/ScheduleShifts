@@ -28,7 +28,7 @@ assert "wcbnkrtxdzfygyyanasx" in s and "hcejwcxsqhpiufaakalj" not in s
 # ---- portal + publish patches ----
 rep("""<script>
 (function(){
-"use strict";""","""<script src="portal.js?v=6"></script>
+"use strict";""","""<script src="portal.js?v=7"></script>
 <script>
 (function(){
 "use strict";""")
@@ -63,7 +63,7 @@ rep("""  app.onchange = onAppChange;""","""  app.onchange = onAppChange;
   app.onkeydown = e=>{ if(window.Portal) window.Portal.onKey(App, e); };""")
 rep("""init();
 })();""","""/* מה שהפורטל (portal.js) צריך מהקוד הראשי */
-const App = { S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON };
+const App = { S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam };
 
 init();
 })();""")
@@ -112,7 +112,12 @@ rep("""  document.getElementById("headerSub").textContent =
     S.view==="training" ? "הדרכה" :
     S.view==="logistics" ? "לוגיסטי" :""")
 rep("""  else if(S.view==="managers") html = renderManagerMenu();""","""  else if(S.view==="managers") html = renderManagerMenu();
-  else if((S.view==="training" || S.view==="logistics") && window.Portal) html = window.Portal.renderSection(App, S.view);""")
+  else if((S.view==="training" || S.view==="logistics") && window.Portal) html = window.Portal.renderSection(App, S.view);
+  else if(S.view==="equipreq" && window.Portal) html = window.Portal.renderManagerRequests(App);""")
+rep("""    S.view==="training" ? "הדרכה" :""","""    S.view==="equipreq" ? "בקשות ציוד" :
+    S.view==="training" ? "הדרכה" :""")
+rep("""      <button class="btn secondary" data-action="go-admin">ניהול עובדים ומורשי גישה</button>""","""      <button class="btn secondary" data-action="go-admin">ניהול עובדים ומורשי גישה</button>
+      ${window.Portal? `<button class="btn secondary" data-action="portal-mgr-open">בקשות ציוד (לוגיסטי)</button>`:""}""")
 # ---- מפתחות localStorage נפרדים לדמו (הדמו והחי באותו origin) ----
 for k in ["identity","pin","team_access"]:
     s = s.replace('"cst_%s"' % k, '"cstdemo_%s"' % k)

@@ -161,8 +161,8 @@ function renderWorkerHome(App, session){
    בפעם הראשונה העובד ממלא את כל הציוד שברשותו (כמות + מידה). אחר כך רואה טבלה של מה שיש לו,
    ויכול לבקש פריטים נוספים - הבקשה נשמרת לקב"ט של הצוות שלו (הממשק של הקב"ט/סרגיי יוגדר בהמשך).
    ================================================================ */
-const L = { items:null, data:null, error:null, msg:null, editing:false, busy:false };
-const REQ_STATUS = { pending:"ממתין לקב\"ט", approved:"אושר", delivered:"נמסר", rejected:"נדחה" };
+const L = { items:null, data:null, error:null, msg:null, busy:false };
+const REQ_STATUS = { pending:"ממתין למנהל", replaced:"הוחלף", issued:"נופק", rejected:"נדחה" };
 
 function isMokedWorker(App, session){
   const t = App.teamById(session.team_id);
@@ -191,10 +191,10 @@ function renderLogistics(App, session){
   const itemName = id=>{ const it=L.items.find(x=>x.id===id); return it?it.name:"?"; };
   const msgs = `${L.error?`<p class="shortage">${esc(L.error)}</p>`:""}${L.msg?`<p class="ok-msg" style="color:#1b7f3b;font-weight:600;">${esc(L.msg)}</p>`:""}`;
 
-  // --- טופס ציוד (פעם ראשונה, או עדכון) ---
-  if(!L.data.submitted_at || L.editing){
+  // --- טופס ציוד - פעם אחת בלבד. אחר כך הרשימה מתעדכנת רק דרך בקשות שהמנהל מטפל בהן ---
+  if(!L.data.submitted_at){
     return `
-    <p>${L.data.submitted_at ? "עדכון רשימת הציוד שברשותך." : "בפעם הראשונה, מלא/י את כל הציוד שנמצא ברשותך באופן קבוע: כמה יש לך מכל פריט, ומידה אם רלוונטי. פריט שאין לך - השאר/י 0."}</p>
+    <p>בפעם הראשונה, מלא/י את כל הציוד שנמצא ברשותך באופן קבוע: כמה יש לך מכל פריט, ומידה אם רלוונטי. פריט שאין לך - השאר/י 0. אחרי השליחה הרשימה מתעדכנת רק דרך בקשות ציוד שהמנהל מאשר.</p>
     <div style="overflow-x:auto;"><table>
       <thead><tr><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th></tr></thead>
       <tbody>${L.items.map(it=>{
@@ -205,8 +205,7 @@ function renderLogistics(App, session){
       }).join("")}</tbody>
     </table></div>
     <div class="row" style="margin-top:10px;">
-      <button class="btn ok" data-action="portal-log-save" ${L.busy?"disabled":""}>${L.data.submitted_at?"שמור":"שמור ושלח"}</button>
-      ${L.editing? `<button class="btn secondary" data-action="portal-log-cancel">ביטול</button>`:""}
+      <button class="btn ok" data-action="portal-log-save" ${L.busy?"disabled":""}>שמור ושלח</button>
     </div>
     ${msgs}`;
   }
@@ -221,9 +220,9 @@ function renderLogistics(App, session){
       <thead><tr><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th></tr></thead>
       <tbody>${owned.map(it=>`<tr><td style="text-align:right;">${esc(it.name)}</td><td>${eqById[it.id].quantity}</td><td>${esc(eqById[it.id].size||"-")}</td></tr>`).join("")}</tbody>
     </table></div>` : `<p class="muted">לא רשום ציוד.</p>`}
-    <p style="margin-top:6px;"><span class="backlink" data-action="portal-log-edit">עדכון הרשימה</span></p>
 
-    <h3>בקשת ציוד נוסף</h3>
+    <h3>בקשת החלפה / ציוד נוסף</h3>
+    <p class="muted" style="margin-top:-6px;">הבקשה נשלחת למנהל שלך. הוא מסמן אם הפריט הוחלף או שנופק לך פריט נוסף, והרשימה שלך מתעדכנת לבד.</p>
     <div class="row">
       <div class="field"><label>פריט</label>
         <select id="logReqItem">${L.items.map(it=>`<option value="${it.id}">${esc(it.name)}</option>`).join("")}</select>
@@ -232,7 +231,7 @@ function renderLogistics(App, session){
       <div class="field"><label>מידה</label><input type="text" id="logReqSize" maxlength="20" placeholder="אם רלוונטי" style="width:100px;"></div>
     </div>
     <div class="field"><label>הערה (לא חובה)</label><input type="text" id="logReqNote" maxlength="300" placeholder="למשל: המכנס הישן נקרע"></div>
-    <button class="btn" data-action="portal-log-request" ${L.busy?"disabled":""}>שלח בקשה לקב"ט</button>
+    <button class="btn" data-action="portal-log-request" ${L.busy?"disabled":""}>שלח בקשה למנהל</button>
 
     <h3>הבקשות שלי</h3>
     ${reqs.length? `<div style="overflow-x:auto;"><table>
@@ -251,7 +250,7 @@ async function saveLogistics(App){
   L.busy = true; L.msg = null; L.error = null; App.render();
   try{
     await App.apiRpc("worker_equipment_save", {p_token: session.token, p_items: items});
-    L.busy = false; L.editing = false; L.msg = "רשימת הציוד נשמרה ונשלחה.";
+    L.busy = false; L.msg = "רשימת הציוד נשמרה ונשלחה.";
     L.data = null; App.render();
   }catch(e){ L.busy = false; L.error = "שגיאה בשמירה: " + e.message; App.render(); }
 }
@@ -265,9 +264,94 @@ async function sendRequest(App){
   L.busy = true; L.msg = null; L.error = null; App.render();
   try{
     await App.apiRpc("worker_equipment_request", {p_token: session.token, p_item_id: itemId, p_quantity: qty, p_size: size, p_note: note});
-    L.busy = false; L.msg = "הבקשה נשלחה לקב\"ט.";
+    L.busy = false; L.msg = "הבקשה נשלחה למנהל.";
     L.data = null; App.render();
   }catch(e){ L.busy = false; L.error = "שגיאה בשליחה: " + e.message; App.render(); }
+}
+
+/* ================================================================
+   מנהל: בקשות ציוד של העובדים שלו (דמו, 2026-10-07). נכנסים מתפריט המנהלים, בוחרים קב"ט,
+   מזינים קוד קב"ט, ולכל בקשה ממתינה בוחרים: "הוחלף" (הכמות לא משתנה) / "נופק בנוסף" (הכמות עולה)
+   / "דחה". קוד הקב"ט נשמר רק בזיכרון של הדף (לא בדפדפן) לצורך הפעולות.
+   ================================================================ */
+const M = { tile:null, code:null, list:null, error:null, msg:null, busy:false };
+const MGR_STATUS = { pending:"ממתין", replaced:"הוחלף", issued:"נופק בנוסף", rejected:"נדחה" };
+
+function mgrScope(App){
+  const team = App.teamById(M.tile);
+  const group = App.sectorGroupForTeam(team);
+  return { codeTeamId: M.tile, teamIds: group.teamIds, label: group.pooledNote ? group.label : team.name };
+}
+async function mgrLoad(App){
+  const sc = mgrScope(App);
+  try{
+    M.list = await App.apiRpc("manager_equipment_requests", {p_code_team_id: sc.codeTeamId, p_code: M.code, p_team_ids: sc.teamIds});
+    M.error = null;
+  }catch(e){
+    M.list = null;
+    if(/invalid code/i.test(e.message)){ M.code = null; M.error = "קוד שגוי"; }
+    else M.error = e.message;
+  }
+  App.render();
+}
+function renderManagerRequests(App){
+  const esc = App.escapeHtml;
+  if(!M.tile){
+    const tiles = App.pickerTiles().filter(t=>{ const tm = App.teamById(t.repId); return tm && !App.isMokedTeam(tm); });
+    return `<div class="card">
+      <span class="backlink" data-action="go-home">◀ חזרה לתפריט המנהלים</span>
+      <h2>בקשות ציוד — בחר/י קב"ט</h2>
+      <div class="grid-teams">${tiles.map(t=>`<div class="team-tile" data-action="portal-mgr-tile" data-id="${t.repId}">${esc(t.label)}</div>`).join("")}</div>
+    </div>`;
+  }
+  const sc = mgrScope(App);
+  if(!M.code){
+    return `<div class="card">
+      <span class="backlink" data-action="portal-mgr-back">◀ קב"ט אחר</span>
+      <h2>בקשות ציוד — ${esc(sc.label)}</h2>
+      <div class="field"><label>קוד קב"ט</label><input type="password" id="mgrCode" placeholder="קוד"></div>
+      <button class="btn" data-action="portal-mgr-login">כניסה</button>
+      ${M.error? `<p class="shortage">${esc(M.error)}</p>`:""}
+    </div>`;
+  }
+  if(M.list===null && !M.error){ mgrLoad(App); return `<div class="card"><p>טוען...</p></div>`; }
+  const list = M.list || [];
+  const pending = list.filter(r=>r.status==="pending");
+  const done = list.filter(r=>r.status!=="pending");
+  const row = (r, actions)=>`<tr>
+      <td>${App.fmtDateHeb(String(r.created_at).slice(0,10))}</td>
+      <td style="text-align:right;">${esc(r.worker_name)}</td>
+      <td style="text-align:right;">${esc(r.item_name)}${r.note?`<br><span class="muted" style="font-size:.85em;">${esc(r.note)}</span>`:""}</td>
+      <td>${r.quantity}</td><td>${esc(r.size||"-")}</td><td>${r.current_quantity}</td>
+      <td>${actions}</td></tr>`;
+  return `<div class="card">
+    <span class="backlink" data-action="portal-mgr-back">◀ קב"ט אחר</span>
+    <h2>בקשות ציוד — ${esc(sc.label)}</h2>
+    ${M.error? `<p class="shortage">${esc(M.error)}</p>`:""}
+    ${M.msg? `<p style="color:#1b7f3b;font-weight:600;">${esc(M.msg)}</p>`:""}
+    <h3>ממתינות לטיפול (${pending.length})</h3>
+    ${pending.length? `<div style="overflow-x:auto;"><table>
+      <thead><tr><th>תאריך</th><th style="text-align:right;">עובד</th><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th><th>יש לו כרגע</th><th></th></tr></thead>
+      <tbody>${pending.map(r=>row(r, `
+        <button class="btn small" data-action="portal-mgr-resolve" data-id="${r.id}" data-res="replaced" ${M.busy?"disabled":""} title="הכמות שלו לא משתנה">הוחלף</button>
+        <button class="btn small ok" data-action="portal-mgr-resolve" data-id="${r.id}" data-res="issued" ${M.busy?"disabled":""} title="הכמות שלו עולה בכמות שבבקשה">נופק בנוסף</button>
+        <button class="btn small secondary" data-action="portal-mgr-resolve" data-id="${r.id}" data-res="rejected" ${M.busy?"disabled":""}>דחה</button>`)).join("")}</tbody>
+    </table></div>` : `<p class="muted">אין בקשות ממתינות.</p>`}
+    <h3>טופלו</h3>
+    ${done.length? `<div style="overflow-x:auto;"><table>
+      <thead><tr><th>תאריך</th><th style="text-align:right;">עובד</th><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th><th>יש לו כרגע</th><th>טיפול</th></tr></thead>
+      <tbody>${done.map(r=>row(r, esc(MGR_STATUS[r.status]||r.status))).join("")}</tbody>
+    </table></div>` : `<p class="muted">עוד לא טופלו בקשות.</p>`}
+  </div>`;
+}
+async function mgrResolve(App, id, res){
+  const sc = mgrScope(App);
+  M.busy = true; M.msg = null; M.error = null; App.render();
+  try{
+    await App.apiRpc("manager_resolve_equipment_request", {p_code_team_id: sc.codeTeamId, p_code: M.code, p_team_ids: sc.teamIds, p_request_id: id, p_resolution: res});
+    M.busy = false; M.msg = res==="issued" ? "סומן: נופק בנוסף — הכמות של העובד עודכנה." : res==="replaced" ? "סומן: הוחלף — הכמות של העובד לא השתנתה." : "הבקשה נדחתה.";
+    M.list = null; App.render();
+  }catch(e){ M.busy = false; M.error = e.message; App.render(); }
 }
 
 /* מסכי "הדרכה" (בינתיים "בקרוב") ו"לוגיסטי" */
@@ -338,11 +422,18 @@ function onClick(App, a, el){
     return App.render();
   }
   if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; return App.render(); }
-  if(a==="portal-go-logistics"){ S.view = "logistics"; S.ui = {}; L.data = null; L.msg = null; L.error = null; L.editing = false; return App.render(); }
+  if(a==="portal-go-logistics"){ S.view = "logistics"; S.ui = {}; L.data = null; L.msg = null; L.error = null; return App.render(); }
   if(a==="portal-log-save") return saveLogistics(App);
-  if(a==="portal-log-edit"){ L.editing = true; L.msg = null; return App.render(); }
-  if(a==="portal-log-cancel"){ L.editing = false; return App.render(); }
   if(a==="portal-log-request") return sendRequest(App);
+  if(a==="portal-mgr-open"){ S.view = "equipreq"; S.ui = {}; M.tile=null; M.code=null; M.list=null; M.error=null; M.msg=null; return App.render(); }
+  if(a==="portal-mgr-tile"){ M.tile = el.dataset.id; M.code=null; M.list=null; M.error=null; M.msg=null; return App.render(); }
+  if(a==="portal-mgr-back"){ M.tile=null; M.code=null; M.list=null; M.error=null; M.msg=null; return App.render(); }
+  if(a==="portal-mgr-login"){
+    const v = (document.getElementById("mgrCode")||{}).value;
+    if(!v){ M.error = "יש להזין קוד"; return App.render(); }
+    M.code = v; M.list = null; M.error = null; return mgrLoad(App);
+  }
+  if(a==="portal-mgr-resolve") return mgrResolve(App, el.dataset.id, el.dataset.res);
   if(a==="portal-go-submit"){
     const s = loadSession(App);
     if(!s) return App.render();
@@ -366,5 +457,5 @@ function onClick(App, a, el){
   (document.head||document.documentElement).appendChild(st);
 })();
 
-window.Portal = { renderHome, renderSection, onClick, onInput, onKey, resetState(){ P.shifts=null; P.checkedSession=false; } };
+window.Portal = { renderHome, renderSection, renderManagerRequests, onClick, onInput, onKey, resetState(){ P.shifts=null; P.checkedSession=false; } };
 })();
