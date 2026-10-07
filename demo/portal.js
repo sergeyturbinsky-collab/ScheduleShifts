@@ -163,6 +163,7 @@ function renderWorkerHome(App, session){
    ================================================================ */
 const L = { items:null, data:null, error:null, msg:null, busy:false };
 const REQ_STATUS = { pending:"ממתין למנהל", replaced:"הוחלף", issued:"נופק", rejected:"נדחה" };
+const REQ_REASON = { lost:"אבד", worn:"בלאי", need_more:"יש צורך ביותר" };
 
 function isMokedWorker(App, session){
   const t = App.teamById(session.team_id);
@@ -229,14 +230,17 @@ function renderLogistics(App, session){
       </div>
       <div class="field"><label>כמות</label><input type="number" id="logReqQty" min="1" max="20" value="1" style="width:70px;"></div>
       <div class="field"><label>מידה</label><input type="text" id="logReqSize" maxlength="20" placeholder="אם רלוונטי" style="width:100px;"></div>
+      <div class="field"><label>סיבה</label>
+        <select id="logReqReason"><option value="">בחר/י...</option>${Object.keys(REQ_REASON).map(k=>`<option value="${k}">${REQ_REASON[k]}</option>`).join("")}</select>
+      </div>
     </div>
     <div class="field"><label>הערה (לא חובה)</label><input type="text" id="logReqNote" maxlength="300" placeholder="למשל: המכנס הישן נקרע"></div>
     <button class="btn" data-action="portal-log-request" ${L.busy?"disabled":""}>שלח בקשה למנהל</button>
 
     <h3>הבקשות שלי</h3>
     ${reqs.length? `<div style="overflow-x:auto;"><table>
-      <thead><tr><th>תאריך</th><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th><th>סטטוס</th></tr></thead>
-      <tbody>${reqs.map(r=>`<tr><td>${App.fmtDateHeb(String(r.created_at).slice(0,10))}</td><td style="text-align:right;">${esc(itemName(r.item_id))}${r.note?`<br><span class="muted" style="font-size:.85em;">${esc(r.note)}</span>`:""}</td><td>${r.quantity}</td><td>${esc(r.size||"-")}</td><td>${esc(REQ_STATUS[r.status]||r.status)}</td></tr>`).join("")}</tbody>
+      <thead><tr><th>תאריך</th><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th><th>סיבה</th><th>סטטוס</th></tr></thead>
+      <tbody>${reqs.map(r=>`<tr><td>${App.fmtDateHeb(String(r.created_at).slice(0,10))}</td><td style="text-align:right;">${esc(itemName(r.item_id))}${r.note?`<br><span class="muted" style="font-size:.85em;">${esc(r.note)}</span>`:""}</td><td>${r.quantity}</td><td>${esc(r.size||"-")}</td><td>${esc(REQ_REASON[r.reason]||"-")}</td><td>${esc(REQ_STATUS[r.status]||r.status)}</td></tr>`).join("")}</tbody>
     </table></div>` : `<p class="muted">עוד לא שלחת בקשות.</p>`}`;
 }
 
@@ -261,9 +265,11 @@ async function sendRequest(App){
   const qty = parseInt(document.getElementById("logReqQty").value, 10) || 1;
   const size = document.getElementById("logReqSize").value;
   const note = document.getElementById("logReqNote").value;
+  const reason = document.getElementById("logReqReason").value;
+  if(!reason){ L.error = "יש לבחור סיבה לבקשה"; L.msg = null; return App.render(); }
   L.busy = true; L.msg = null; L.error = null; App.render();
   try{
-    await App.apiRpc("worker_equipment_request", {p_token: session.token, p_item_id: itemId, p_quantity: qty, p_size: size, p_note: note});
+    await App.apiRpc("worker_equipment_request2", {p_token: session.token, p_item_id: itemId, p_quantity: qty, p_size: size, p_note: note, p_reason: reason});
     L.busy = false; L.msg = "הבקשה נשלחה למנהל.";
     L.data = null; App.render();
   }catch(e){ L.busy = false; L.error = "שגיאה בשליחה: " + e.message; App.render(); }
@@ -277,10 +283,11 @@ async function sendRequest(App){
 const M = { tile:null, code:null, list:null, error:null, msg:null, busy:false };
 const MGR_STATUS = { pending:"ממתין", replaced:"הוחלף", issued:"נופק בנוסף", rejected:"נדחה" };
 
+/* בקשות לוגיסטיות עוברות לקב"ט הגזרתי של העובד - כל צוות בנפרד, בלי איחוד "מאיר אזרואל":
+   ירושלים -> דניאל כתב; בית שמש / ביתר עילית / מודיעין עילית -> אביחי קדוש. לבקשת סרגיי (2026-10-07) */
 function mgrScope(App){
   const team = App.teamById(M.tile);
-  const group = App.sectorGroupForTeam(team);
-  return { codeTeamId: M.tile, teamIds: group.teamIds, label: group.pooledNote ? group.label : team.name };
+  return { codeTeamId: M.tile, teamIds: [team.id], label: team.name };
 }
 async function mgrLoad(App){
   const sc = mgrScope(App);
@@ -297,7 +304,7 @@ async function mgrLoad(App){
 function renderManagerRequests(App){
   const esc = App.escapeHtml;
   if(!M.tile){
-    const tiles = App.pickerTiles().filter(t=>{ const tm = App.teamById(t.repId); return tm && !App.isMokedTeam(tm); });
+    const tiles = (App.S.teams||[]).filter(tm=>!App.isMokedTeam(tm)).slice().sort((a,b)=>(a.sort_order||0)-(b.sort_order||0)).map(tm=>({repId:tm.id, label:tm.name}));
     return `<div class="card">
       <span class="backlink" data-action="go-home">◀ חזרה לתפריט המנהלים</span>
       <h2>בקשות ציוד — בחר/י קב"ט</h2>
@@ -322,7 +329,7 @@ function renderManagerRequests(App){
       <td>${App.fmtDateHeb(String(r.created_at).slice(0,10))}</td>
       <td style="text-align:right;">${esc(r.worker_name)}</td>
       <td style="text-align:right;">${esc(r.item_name)}${r.note?`<br><span class="muted" style="font-size:.85em;">${esc(r.note)}</span>`:""}</td>
-      <td>${r.quantity}</td><td>${esc(r.size||"-")}</td><td>${r.current_quantity}</td>
+      <td>${r.quantity}</td><td>${esc(r.size||"-")}</td><td>${esc(REQ_REASON[r.reason]||"-")}</td><td>${r.current_quantity}</td>
       <td>${actions}</td></tr>`;
   return `<div class="card">
     <span class="backlink" data-action="portal-mgr-back">◀ קב"ט אחר</span>
@@ -331,7 +338,7 @@ function renderManagerRequests(App){
     ${M.msg? `<p style="color:#1b7f3b;font-weight:600;">${esc(M.msg)}</p>`:""}
     <h3>ממתינות לטיפול (${pending.length})</h3>
     ${pending.length? `<div style="overflow-x:auto;"><table>
-      <thead><tr><th>תאריך</th><th style="text-align:right;">עובד</th><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th><th>יש לו כרגע</th><th></th></tr></thead>
+      <thead><tr><th>תאריך</th><th style="text-align:right;">עובד</th><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th><th>סיבה</th><th>יש לו כרגע</th><th></th></tr></thead>
       <tbody>${pending.map(r=>row(r, `
         <button class="btn small" data-action="portal-mgr-resolve" data-id="${r.id}" data-res="replaced" ${M.busy?"disabled":""} title="הכמות שלו לא משתנה">הוחלף</button>
         <button class="btn small ok" data-action="portal-mgr-resolve" data-id="${r.id}" data-res="issued" ${M.busy?"disabled":""} title="הכמות שלו עולה בכמות שבבקשה">נופק בנוסף</button>
@@ -339,7 +346,7 @@ function renderManagerRequests(App){
     </table></div>` : `<p class="muted">אין בקשות ממתינות.</p>`}
     <h3>טופלו</h3>
     ${done.length? `<div style="overflow-x:auto;"><table>
-      <thead><tr><th>תאריך</th><th style="text-align:right;">עובד</th><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th><th>יש לו כרגע</th><th>טיפול</th></tr></thead>
+      <thead><tr><th>תאריך</th><th style="text-align:right;">עובד</th><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th><th>סיבה</th><th>יש לו כרגע</th><th>טיפול</th></tr></thead>
       <tbody>${done.map(r=>row(r, esc(MGR_STATUS[r.status]||r.status))).join("")}</tbody>
     </table></div>` : `<p class="muted">עוד לא טופלו בקשות.</p>`}
   </div>`;
