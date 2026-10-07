@@ -133,7 +133,7 @@
 <main id="app"></main>
 <footer>מערכת פנימית · חברת אבטחה · סביבת דמו</footer>
 
-<script src="portal.js?v=3"></script>
+<script src="portal.js?v=4"></script>
 <script>
 (function(){
 "use strict";
@@ -262,9 +262,9 @@ function blockingEntryTypes(quotaShiftType){
 const S = {
   view:"home",
   teams:[], quotas:[],
-  identity: loadJSON("cst_identity"),
-  pin: localStorage.getItem("cst_pin") || null,
-  teamAccess: loadJSON("cst_team_access") || {}, // {teamId: true} - קב"ט שאימת את קוד הצוות שלו במכשיר הזה
+  identity: loadJSON("cstdemo_identity"),
+  pin: localStorage.getItem("cstdemo_pin") || null,
+  teamAccess: loadJSON("cstdemo_team_access") || {}, // {teamId: true} - קב"ט שאימת את קוד הצוות שלו במכשיר הזה
   ui:{}
 };
 function loadJSON(k){ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):null; }catch(e){ return null; } }
@@ -2163,7 +2163,7 @@ async function confirmPin(){
   try{
     const ok = await apiRpc("verify_edit_pin", {p_pin: pin});
     if(!ok){ ui.pinError = "קוד שגוי"; render(); return; }
-    S.pin = pin; localStorage.setItem("cst_pin", pin);
+    S.pin = pin; localStorage.setItem("cstdemo_pin", pin);
     const next = ui.pinPromptFor;
     const workerId = ui.pinPromptWorkerId, period = ui.pinPromptPeriod;
     ui.pinPromptFor = null; ui.pinPromptWorkerId=null; ui.pinPromptPeriod=null;
@@ -2729,11 +2729,11 @@ function onAppClick(e){
     const pend = ui.pendingIdentity;
     if(!pend) return render();
     S.identity = {teamId: el.dataset.id, workerId: pend.workerId, name: pend.name, recipientLabel: el.dataset.label};
-    saveJSON("cst_identity", S.identity);
+    saveJSON("cstdemo_identity", S.identity);
     S.ui = {step:"period"};
     return render();
   }
-  if(a==="reset-identity"){ S.identity=null; localStorage.removeItem("cst_identity"); S.ui={step:"identify"}; return render(); }
+  if(a==="reset-identity"){ S.identity=null; localStorage.removeItem("cstdemo_identity"); S.ui={step:"identify"}; return render(); }
 
   // ---- submit period ----
   if(a==="period-prev" || a==="period-next"){
@@ -2779,7 +2779,7 @@ function onAppClick(e){
         const ok = await apiRpc("verify_team_code", {p_team_id: ui.teamId, p_code: code});
         if(!ok){ ui.teamCodeError = "קוד שגוי"; return render(); }
         S.teamAccess[ui.teamId] = true;
-        saveJSON("cst_team_access", S.teamAccess);
+        saveJSON("cstdemo_team_access", S.teamAccess);
         ui.teamCodeError = null; ui.teamCodeValue = null;
         render();
       }catch(err){ ui.teamCodeError = "שגיאה: "+err.message; render(); }
@@ -2934,7 +2934,7 @@ function onAppClick(e){
       try{
         const ok = await apiRpc("verify_edit_pin",{p_pin:pin});
         if(!ok){ ui.adminError="קוד שגוי"; return render(); }
-        S.pin = pin; localStorage.setItem("cst_pin", pin); ui.pinOk = true; ui.adminError=null;
+        S.pin = pin; localStorage.setItem("cstdemo_pin", pin); ui.pinOk = true; ui.adminError=null;
         render();
       }catch(err){ ui.adminError="שגיאה: "+err.message; render(); }
     })();

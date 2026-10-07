@@ -8,7 +8,7 @@
 (function(){
 "use strict";
 
-const SESSION_KEY = "cst_worker_session";
+const SESSION_KEY = "cstdemo_worker_session";
 const P = { workers:null, query:"", selectedId:null, code:"", error:null, busy:false,
             shifts:null, shiftsError:null, checkedSession:false };
 
