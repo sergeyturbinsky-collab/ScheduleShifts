@@ -211,12 +211,12 @@ function renderWorkerHome(App, session){
     </div>
   </div>
   <div class="card">
-    <h3>המשמרות שלי</h3>
-    ${renderMyShifts(App, session)}
-  </div>
-  <div class="card">
     <h3>משימות פתוחות</h3>
     ${renderTasks(App, session)}
+  </div>
+  <div class="card">
+    <h3>המשמרות שלי</h3>
+    ${renderMyShifts(App, session)}
   </div>`;
 }
 
