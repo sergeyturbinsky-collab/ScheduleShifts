@@ -634,6 +634,8 @@ const PV = { page:null, args:{}, stack:[], data:null, form:{}, msg:null, error:n
 
 function fmtD(App, s){ return s ? App.fmtDateHeb(String(s).slice(0,10)) : ""; }
 function pct(n, d){ return d ? Math.round(n*100/d) : 0; }
+/* הקב"ט של העובד = שם הצוות שלו (דניאל כתב, אביחי קדוש, אלירן חמו, עידן בסעד) */
+function workerKabat(App, w){ const t = App.teamById(w.team_id); return t ? `קב"ט ${t.name}` : "ללא קב\"ט"; }
 function workerSector(App, w){
   if(w.city_sectors && w.city_sectors.length) return w.city_sectors.join(" / ");
   const t = App.teamById(w.team_id);
@@ -898,10 +900,10 @@ function pvLoad(App, fn, args){
   App.apiRpc(fn, args).then(r=>{ PV.data = {r}; App.render(); })
     .catch(e=>{ PV.data = {error: e.message}; App.render(); });
 }
-function groupedBySector(App, workers, isDone, rowHtml, doneLabel, notLabel){
+function groupedBySector(App, workers, isDone, rowHtml, doneLabel, notLabel, keyFn){
   const esc = App.escapeHtml;
   const groups = {};
-  workers.forEach(w=>{ const s = workerSector(App, w) || "ללא גזרה"; (groups[s] = groups[s]||[]).push(w); });
+  workers.forEach(w=>{ const s = (keyFn ? keyFn(w) : workerSector(App, w)) || "ללא גזרה"; (groups[s] = groups[s]||[]).push(w); });
   return Object.keys(groups).sort((a,b)=>a.localeCompare(b,"he")).map(sec=>{
     const ws = groups[sec], done = ws.filter(isDone), not = ws.filter(w=>!isDone(w));
     return `<div class="portal-group">
@@ -957,7 +959,7 @@ function renderPView(App){
     return wrap(`<h2>${esc(r.program?r.program.name:"")}</h2>
       <p class="muted">${pct(done, ws.length)}% מהמאבטחים ביצעו (${done}/${ws.length}). דו"חות הסיכום נשמרים אצלך בלבד — לעובד אין גישה אליהם.</p>
       ${msgs}${PV.busy?'<p class="muted">מעלה...</p>':""}
-      ${groupedBySector(App, ws, w=>w.done, row, "ביצעו", "לא ביצעו")}`);
+      ${groupedBySector(App, ws, w=>w.done, row, "ביצעו", "לא ביצעו", w=>workerKabat(App, w))}`);
   }
   if(pg==="trn-reports"){
     if(needLoad("trn_report_list", {p_token:tok, p_program_id:Number(a.program), p_worker_id:a.id})) return loading();
