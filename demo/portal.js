@@ -225,7 +225,7 @@ async function swReg(){
 }
 async function saveSub(App, session, sub){
   const j = sub.toJSON();
-  await App.apiRpc("worker_push_subscribe", {p_token:session.token, p_endpoint:j.endpoint, p_p256dh:j.keys.p256dh, p_auth:j.keys.auth, p_ua:String(navigator.userAgent).slice(0,200)});
+  await App.apiRpc("worker_push_subscribe", {p_token:session.token, p_endpoint:j.endpoint, p_p256dh:j.keys.p256dh, p_auth:j.keys.auth, p_ua:""});
 }
 async function checkPush(App, session){
   if(N.checking) return; N.checking = true;
@@ -294,7 +294,8 @@ function pushGate(App, session){
   else body = `<p>כדי להשתמש באיזור האישי צריך להפעיל התראות לטלפון. כך תדע מיד על סידור שפורסם, בקרה, לומדה או הודעה חדשה.</p>
       <button class="btn ok" data-action="portal-push-enable" ${N.busy?"disabled":""} style="font-size:1.1em;padding:12px 22px;">${N.busy?"מפעיל...":"🔔 הפעלת התראות"}</button>
       ${N.error?`<p class="shortage" style="margin-top:8px;">${esc(N.error)}</p>`:""}
-      <p class="muted" style="font-size:.85em;margin-top:10px;">כשהטלפון שואל — לבחור <b>"אפשר"</b>.</p>`;
+      <p style="margin-top:10px;font-weight:800;">המערכת לא אוספת מהטלפון מידע אישי או מיקום</p>
+      <p class="muted" style="font-size:.85em;margin-top:4px;">כשהטלפון שואל — לבחור <b>"אפשר"</b>.</p>`;
   return head + `<div class="card" style="border:2px solid #0c3a6e;"><h3 style="margin-top:0;">📲 חובה להפעיל התראות לטלפון</h3>${body}</div>`;
 }
 
