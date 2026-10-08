@@ -260,28 +260,47 @@ async function enablePush(App, session){
   }catch(e){ N.error = "לא הצלחנו להפעיל התראות: " + e.message; }
   N.busy = false; App.render();
 }
-function renderPushCard(App, session){
-  if(N.state===null){ checkPush(App, session); return ""; }
-  if(N.state==="on") return "";
-  if(N.state==="unsupported") return "";
+/* חובה (לבקשת סרגיי, 2026-10-08): עד שההתראות מופעלות במכשיר, המאבטח רואה רק את מסך ההפעלה */
+function pushGate(App, session){
+  if(N.state==="on") return null;
+  const esc = App.escapeHtml;
+  const head = `<div class="card">
+    <div class="flexbar" style="justify-content:space-between;">
+      <h2 style="margin:0;">שלום, ${esc(session.name)}</h2>
+      <button class="btn small secondary" data-action="portal-logout">יציאה</button>
+    </div></div>`;
+  if(N.state===null || N.checking){ if(N.state===null) checkPush(App, session); return head + `<div class="card"><p class="muted">בודק התראות במכשיר...</p></div>`; }
   let body;
-  if(N.state==="ios-install") body = `<p style="margin:6px 0;">כדי לקבל התראות באייפון צריך קודם להוסיף את האיזור האישי למסך הבית:</p>
-      <ol style="margin:6px 0;padding-inline-start:20px;line-height:1.9;">
+  if(N.state==="ios-install") body = `<p>באייפון ההתראות עובדות רק כשהאיזור האישי מותקן במסך הבית:</p>
+      <ol style="padding-inline-start:20px;line-height:2;">
         <li>לוחצים על כפתור השיתוף <b>⬆️</b> בתחתית ספארי</li>
         <li>בוחרים <b>"הוסף למסך הבית"</b> ואז <b>"הוסף"</b></li>
-        <li>פותחים את האיזור האישי מהאייקון החדש במסך הבית ונכנסים שוב</li>
+        <li>פותחים את האיזור האישי <b>מהאייקון החדש</b> במסך הבית, נכנסים שוב ומפעילים התראות</li>
       </ol>
-      <p class="muted" style="font-size:.85em;margin:4px 0 0;">נדרש iOS 16.4 ומעלה.</p>`;
-  else if(N.state==="denied") body = `<p style="margin:6px 0;">ההתראות חסומות במכשיר הזה. כדי לפתוח: הגדרות הדפדפן (או הגדרות הטלפון ← התראות) ← לאפשר התראות לאיזור האישי, ואז לרענן את הדף.</p>`;
-  else body = `<p style="margin:6px 0;">כדאי להפעיל התראות כדי לדעת מיד כשיש משהו חדש: סידור שפורסם, בקרה, לומדה או תוכן חדש. פעם ביומיים תגיע גם תזכורת על משימות שלא בוצעו.</p>
-      <button class="btn ok" data-action="portal-push-enable" ${N.busy?"disabled":""}>${N.busy?"מפעיל...":"🔔 הפעלת התראות"}</button>
-      ${N.error?`<p class="shortage" style="margin-top:6px;">${App.escapeHtml(N.error)}</p>`:""}
-      ${!isStandalone() && !isIOS() ? `<p class="muted" style="font-size:.85em;margin:8px 0 0;">טיפ: באנדרואיד אפשר להוסיף את האיזור האישי למסך הבית מתפריט הדפדפן ⋮ ← "הוספה למסך הבית" / "התקנת אפליקציה".</p>`:""}`;
-  return `<div class="card" style="border-color:#0c3a6e;"><h3 style="margin-top:0;">📲 התראות לטלפון</h3>${body}</div>`;
+      <p class="muted" style="font-size:.85em;">נדרש iOS 16.4 ומעלה. אם אין "הוסף למסך הבית" — לפתוח את הקישור בספארי (לא מתוך וואטסאפ).</p>`;
+  else if(N.state==="unsupported") body = `<p>הדפדפן הזה לא תומך בהתראות.</p>
+      <ul style="padding-inline-start:20px;line-height:2;">
+        <li><b>אנדרואיד:</b> לפתוח את הקישור בכרום</li>
+        <li><b>אייפון:</b> לפתוח את הקישור בספארי ולהוסיף למסך הבית</li>
+        <li>אם הקישור נפתח מתוך וואטסאפ או אפליקציה אחרת — לבחור "פתח בדפדפן"</li>
+      </ul>`;
+  else if(N.state==="denied") body = `<p>ההתראות חסומות במכשיר הזה. כדי לפתוח:</p>
+      <ul style="padding-inline-start:20px;line-height:2;">
+        <li><b>אנדרואיד (כרום):</b> לוחצים על סמל המנעול ליד הכתובת ← הרשאות ← התראות ← אפשר</li>
+        <li><b>אייפון:</b> הגדרות ← התראות ← איזור אישי ← אפשר התראות</li>
+      </ul>
+      <p>אחרי השינוי — לרענן את הדף.</p>
+      <button class="btn secondary" data-action="portal-push-recheck">בדיקה חוזרת</button>`;
+  else body = `<p>כדי להשתמש באיזור האישי צריך להפעיל התראות לטלפון. כך תדע מיד על סידור שפורסם, בקרה, לומדה או הודעה חדשה.</p>
+      <button class="btn ok" data-action="portal-push-enable" ${N.busy?"disabled":""} style="font-size:1.1em;padding:12px 22px;">${N.busy?"מפעיל...":"🔔 הפעלת התראות"}</button>
+      ${N.error?`<p class="shortage" style="margin-top:8px;">${esc(N.error)}</p>`:""}
+      <p class="muted" style="font-size:.85em;margin-top:10px;">כשהטלפון שואל — לבחור <b>"אפשר"</b>.</p>`;
+  return head + `<div class="card" style="border:2px solid #0c3a6e;"><h3 style="margin-top:0;">📲 חובה להפעיל התראות לטלפון</h3>${body}</div>`;
 }
 
 function renderWorkerHome(App, session){
   const esc = App.escapeHtml;
+  const gate = pushGate(App, session); if(gate) return gate;
   if(!P.checkedSession){
     P.checkedSession = true;
     App.apiRpc("worker_session_info", {p_token: session.token}).then(info=>{
@@ -305,9 +324,7 @@ function renderWorkerHome(App, session){
       ${tile("portal-go-training", "הדרכה", "לומדות, בקרות ותכנים")}
       ${isMokedWorker(App, session) ? "" : tile("portal-go-logistics", "לוגיסטי", "הציוד שלי ובקשת ציוד")}
     </div>
-    ${N.state==="on" ? `<p class="muted" style="margin:10px 0 0;font-size:.85em;">🔔 התראות פעילות במכשיר הזה</p>` : ""}
   </div>
-  ${renderPushCard(App, session)}
   <div class="portal-cols">
     <div class="portal-col-main">
       <div class="card">
@@ -1176,6 +1193,7 @@ async function onChangeTraining(App, e){
 function renderSection(App, view){
   const session = loadSession(App);
   if(!session){ App.S.view = "home"; return renderHome(App); }
+  if(N.state!=="on"){ App.S.view = "home"; return renderHome(App); }
   const title = view==="training" ? "הדרכה" : "לוגיסטי";
   if(view==="training" && T.controlOpen) return `<div class="card">${renderControlDoc(App, session)}</div>`;
   if((view==="training" || view==="updates") && T.postOpen) return `<div class="card">${renderPostDoc(App)}</div>`;
@@ -1330,6 +1348,7 @@ function onClick(App, a, el){
   if(a==="portal-pick"){ P.selectedId = el.dataset.id; P.code=""; P.error=null; return App.render(); }
   if(a==="portal-unpick"){ P.selectedId = null; P.code=""; P.error=null; return App.render(); }
   if(a==="portal-login") return doLogin(App);
+  if(a==="portal-push-recheck"){ N.state = null; return App.render(); }
   if(a==="portal-push-enable"){ const ss = loadSession(App); if(ss && !N.busy) enablePush(App, ss); return; }
   if(a==="portal-managers"){ S.view = "managers"; S.ui = {}; return App.render(); }
   if(a==="portal-logout"){

@@ -100,6 +100,11 @@
   /* בפלט הסידור (מסך התצוגה להדפסה + ההדפסה עצמה) לא מוצגים סימוני מגבלות - לא אדום ולא צהוב (2026-10-07) */
   #printArea .tmpl-restwarn, #printArea .tmpl-resttight{background:transparent!important;color:inherit!important;box-shadow:none!important;font-weight:inherit!important;}
   #printArea .tmpl-restwarn-note{display:none!important;}
+  /* בפלט הסידור כל המשבצות באותו גודל: עמודות ימים ברוחב שווה (גם בין הטבלאות של בוקר/ערב/לילה) וגובה אחיד.
+     לבקשת סרגיי (2026-10-08) */
+  #printArea .tmpl-table{table-layout:fixed;width:100%;}
+  #printArea .tmpl-table th:first-child, #printArea .tmpl-table td.tmpl-pos{width:72px;}
+  #printArea .tmpl-table td{height:46px;vertical-align:middle;white-space:normal;overflow-wrap:anywhere;line-height:1.25;}
   .tmpl-restwarn-note{display:block;font-size:.8em;font-weight:700;color:var(--danger);}
   .slot-editor{background:#f6fbff;border-top:2px solid var(--primary);}
   .backlink{cursor:pointer;color:var(--primary);font-size:13px;margin-bottom:10px;display:inline-block;}
@@ -142,7 +147,7 @@
 <main id="app"></main>
 <footer>מערכת פנימית · חברת אבטחה · סביבת דמו</footer>
 
-<script src="portal.js?v=16"></script>
+<script src="portal.js?v=17"></script>
 <script>
 (function(){
 "use strict";
