@@ -2289,9 +2289,56 @@ async function runAutoAssign(){
     (workerIntervals[workerId] = workerIntervals[workerId]||[]).push(newInterval);
   }
 
+  /* עדיפות ערים אצל "מאיר אזרואל" (לבקשת סרגיי, 2026-10-08): לכל עובד רשימת ערים לפי סדר עדיפות
+     (roster_workers.city_sectors, ראו computeWorkerCities). משבצות של אותו תאריך ואותו סוג משמרת בכל
+     הערים משובצות יחד, בסבבים: קודם מי שרשום לעיר אחת בלבד (בעיר שלו), אחר כך כל אחד בעיר הראשונה
+     ברשימה שלו, אחר כך בשנייה וכן הלאה - כך שעובד "בית שמש/ירושלים" ישובץ בבית שמש אם יש שם מקום,
+     ורק אם אין - בירושלים. בכל סבב - לפי ההוגנות הרגילה (byFairness), ומי שפוגע במנוחה רק בסוף. */
+  function cityRank(w, sector){
+    const c = w.cities!==undefined ? w.cities : computeWorkerCities(w);
+    if(!c || !c.length) return 99;
+    if(c.length===1) return c[0]===sector ? 0 : 99;
+    const i = c.indexOf(sector);
+    return i<0 ? 99 : i+1;
+  }
+  const units = []; const unitByKey = new Map();
+  slots.forEach(slot=>{
+    if(POOLED_CITY_SECTORS.includes(slot.sector) && !slot.roleCounts){
+      const k = slot.date+"|"+slot.shiftType;
+      if(unitByKey.has(k)){ unitByKey.get(k).push(slot); return; }
+      const u = [slot]; unitByKey.set(k, u); units.push(u);
+    } else units.push([slot]);
+  });
+  const plannedBySlot = new Map(); // slot -> {chosen, newInterval}
+  function planPooledUnit(unit){
+    const st = unit.map(slot=>{
+      const alreadyAll = (assignmentsByDate[slot.date]||[]).filter(a=>a.sector===slot.sector && a.shift_type===slot.shiftType);
+      const need = slot.required - alreadyAll.filter(a=>!a.shadow_of).length;
+      const avail = availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType)).filter(w=>!w.auto_assign_exempt);
+      const {ok, bad, newInterval} = splitByRest(avail, slot);
+      return {slot, need, ok, bad, newInterval, chosen:[]};
+    });
+    const taken = new Set();
+    const ranks = Array.from(new Set(st.flatMap(x=>x.ok.concat(x.bad).map(w=>cityRank(w, x.slot.sector))))).sort((a,b)=>a-b);
+    ["ok","bad"].forEach(phase=>{
+      ranks.forEach(r=>{
+        st.forEach(x=>{
+          const room = x.need - x.chosen.length;
+          if(room<=0) return;
+          const picks = x[phase].filter(w=>!taken.has(w.id) && cityRank(w, x.slot.sector)===r).slice().sort(byFairness).slice(0, room);
+          picks.forEach(w=>{ taken.add(w.id); x.chosen.push(w); });
+          if(phase==="bad") restForced += picks.length;
+        });
+      });
+    });
+    st.forEach(x=>plannedBySlot.set(x.slot, {chosen:x.chosen, newInterval:x.newInterval}));
+  }
+
   ui.buildMsg = "מבצע שיבוץ אוטומטי...";
   let filled=0, short=0, restForced=0;
-  for(const slot of slots){
+  for(const unit of units){
+  if(unit.length>1 || (POOLED_CITY_SECTORS.includes(unit[0].sector) && !unit[0].roleCounts)) planPooledUnit(unit);
+  for(const slot of unit){
     const alreadyAll = (assignmentsByDate[slot.date]||[]).filter(a=>a.sector===slot.sector && a.shift_type===slot.shiftType);
     let fallbackFillers = [];
     const already = alreadyAll.filter(a=>!a.shadow_of); // חפיפות לא נספרות כמילוי תקן
@@ -2302,8 +2349,11 @@ async function runAutoAssign(){
     // (כולל בורר השיבוץ הידני, ששם אפשר עדיין לבחור בו ידנית בכוונה).
     const avail = availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType)).filter(w=>!w.auto_assign_exempt);
     let chosen = [];
-    const {ok: restOk, bad: restBad, newInterval} = splitByRest(avail, slot);
-    if(slot.roleCounts){
+    const planned = plannedBySlot.get(slot);
+    const {ok: restOk, bad: restBad, newInterval} = planned ? {ok:[], bad:[], newInterval:planned.newInterval} : splitByRest(avail, slot);
+    if(planned){
+      chosen = planned.chosen.slice(0, need);
+    } else if(slot.roleCounts){
       // משבצת עם דרישת תפקידים (כמו במוקד: אחמ"ש/מוקדן) - ממלאים כל תפקיד בנפרד, לפי מה שכבר משובץ מאותו תפקיד.
       // סדר עיבוד התפקידים קבוע לפי MOKED_ROLE_ORDER (אחמ"ש לפני מוקדן) - לבקשת סרגיי (2026-10-05):
       // 1) אחמ"שים ממלאים קודם את תקני האחמ"ש שלהם, 2) מוקדנים ממלאים את תקני המוקדן, 3) אם נשאר חוסר
@@ -2373,6 +2423,7 @@ async function runAutoAssign(){
       filled++;
       chosen.forEach(w=>{ assignCount[w.id]++; recordChosenInterval(w.id, newInterval); (assignmentsByDate[slot.date]=assignmentsByDate[slot.date]||[]).push({sector:slot.sector, shift_type:slot.shiftType, worker_id:w.id, entry_date:slot.date}); });
     }catch(e){ ui.buildMsg = "שגיאה בשמירת שיבוץ: " + e.message; render(); return; }
+  }
   }
   ui.buildMsg = `השיבוץ האוטומטי הושלם: עודכנו ${filled} משבצות.${short?` שימו לב — ב-${short} משבצות אין מספיק עובדים זמינים כדי למלא את כל התקן (יופיעו כ"חוסר").`:""}${restForced?` שימו לב — ב-${restForced} שיבוצים לא נמצא עובד עם 8 שעות מנוחה, ושובץ עובד עם פחות (כעדיפות אחרונה, מסומן באדום בטבלה).`:""}`;
   ui.loaded = false; // רענון מלא של נתוני השיבוצים
@@ -2592,7 +2643,7 @@ function renderAdmin(){
     ${ui.teamCodeMsg? `<p>${escapeHtml(ui.teamCodeMsg)}</p>`:""}
     ${isLockActive(ui.teamCodeLockedUntil)? `<p class="shortage">🔒 קוד הקב"ט נעול כרגע (יותר מדי ניסיונות שגויים) — ייפתח אוטומטית בעוד כ-${lockMinutesLeft(ui.teamCodeLockedUntil)} דק'. <button class="btn small" data-action="admin-unlock-team">פתח נעילה עכשיו</button></p>`:""}
     <table>
-      <thead><tr><th>שם</th><th title="עובד בהכשרה - אפשר לשבץ אותו בחפיפה, באותה קוביה עם עובד שכבר משובץ">חפיפה</th><th title="לא יוצג כאפשרות לשיבוץ בשישי ערב, שישי לילה ושבת ערב">שומר שבת</th><th>קוד אישי</th>${merged?"<th>גזרה</th>":""}${avihaiTeam?"<th>עיר</th>":""}${anyMoked?"<th>תפקיד</th>":""}<th title="כשמסומן, העובד לעולם לא ייבחר ב&quot;שיבוץ אוטומטי&quot; - עדיין אפשר לשבץ אותו ידנית">לא לשבץ אוטומטית</th><th></th></tr></thead>
+      <thead><tr><th>שם</th><th title="עובד בהכשרה - אפשר לשבץ אותו בחפיפה, באותה קוביה עם עובד שכבר משובץ">חפיפה</th><th title="לא יוצג כאפשרות לשיבוץ בשישי ערב, שישי לילה ושבת ערב">שומר שבת</th><th>קוד אישי</th>${merged?"<th>גזרה</th>":""}${avihaiTeam?"<th title=\"סדר העדיפות לשיבוץ האוטומטי, מימין לשמאל\">ערים (לפי עדיפות)</th>":""}${anyMoked?"<th>תפקיד</th>":""}<th title="כשמסומן, העובד לעולם לא ייבחר ב&quot;שיבוץ אוטומטי&quot; - עדיין אפשר לשבץ אותו ידנית">לא לשבץ אוטומטית</th><th></th></tr></thead>
       <tbody>
         ${ui.workers.map(w=>{
           const workerIsMoked = isMokedTeam(teamById(w.team_id));
@@ -2604,7 +2655,7 @@ function renderAdmin(){
           const exemptCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-auto-exempt" data-id="${w.id}" ${w.auto_assign_exempt?"checked":""}></td>`;
           const shadowCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-shadow" data-id="${w.id}" ${w.shadow_trainee?"checked":""}></td>`;
           const shabbatCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-shabbat" data-id="${w.id}" ${w.shabbat_observer?"checked":""}></td>`;
-          return `<tr><td>${escapeHtml(w.name)}</td>${shadowCell}${shabbatCell}<td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${w.team_id===avihaiTeam.id ? escapeHtml((w.city_sectors&&w.city_sectors.length)?w.city_sectors.join("/"):"כל האזור") : "-"}</td>`:""}${roleCell}${exemptCell}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>`;
+          return `<tr><td>${escapeHtml(w.name)}</td>${shadowCell}${shabbatCell}<td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${(w.city_sectors&&w.city_sectors.length) ? escapeHtml(w.city_sectors.join(" ← ")) : (w.team_id===avihaiTeam.id ? "כל סובב ירושלים" : "-")}</td>`:""}${roleCell}${exemptCell}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>`;
         }).join("") || `<tr><td colspan="${1+1+1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1+1}" class="muted">אין עדיין עובדים</td></tr>`}
       </tbody>
     </table>
@@ -3008,6 +3059,13 @@ function onAppClick(e){
     if(targetTeam && (targetTeam.sectors||[]).includes("סובב ירושלים")){
       const vals = Array.from(document.querySelectorAll('input[name="adminNewCity"]:checked')).map(b=>b.value);
       citySectors = vals.length ? vals : null;
+    }
+    /* עדכון עובד קיים לא מוחק את רשימת עדיפות הערים שלו (סדר העדיפות לא נשמר בתיבות הסימון) -
+       אם לא נבחרו ערים, או שנבחרו בדיוק אותן ערים, נשמרת הרשימה הקיימת עם הסדר שלה. (2026-10-08) */
+    const existing = (ui.workers||[]).find(w=>w.team_id===targetTeamId && w.name===name.trim());
+    if(existing && existing.city_sectors && existing.city_sectors.length){
+      const same = citySectors && citySectors.length===existing.city_sectors.length && citySectors.every(c=>existing.city_sectors.includes(c));
+      if(!citySectors || same) citySectors = existing.city_sectors;
     }
     if(!name||!code){ ui.adminMsg = "יש למלא שם וקוד"; return render(); }
     return (async()=>{
