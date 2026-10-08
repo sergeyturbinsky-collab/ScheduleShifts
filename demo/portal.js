@@ -790,57 +790,55 @@ function renderIsraelDashboard(App, ms){
   if(I.data.error) return `<div class="card"><p class="shortage">${esc(I.data.error)}</p></div>`;
   const {ov, onb, ctrls, posts} = I.data;
   const trs = ov.trainings||[];
-  const shown = I.showAll ? trs : trs.slice(0,5);
+  const progs = ov.programs||[];
   const notDoneOnb = onb.filter(w=>onbDone(w)<ONB_KEYS.length).length;
-  const postSection = (kind, title, sub)=>{
-    const ps = posts.filter(p=>p.kind===kind);
-    return `<div class="card">
-      <div class="flexbar" style="justify-content:space-between;"><h3 style="margin:0;">${title}</h3>
-        <button class="btn small" data-action="portal-pv" data-page="trn-post-new" data-kind="${kind}">+ פרסום חדש</button></div>
-      <p class="muted" style="margin:4px 0 8px;">${sub}</p>
-      ${ps.length ? `<table><thead><tr><th style="text-align:right;">כותרת</th><th>תאריך</th><th>קראו</th></tr></thead><tbody>
-        ${ps.slice(0,5).map(p=>`<tr class="portal-click" data-action="portal-pv" data-page="post" data-id="${p.id}" data-from="i"><td style="text-align:right;">${esc(p.title)}${youtubeId(p.link_url)?' <span class="muted">(סרטון)</span>':""}</td><td>${fmtD(App,p.created_at)}</td><td>${p.reads}/${p.audience}</td></tr>`).join("")}
-      </tbody></table>${ps.length>5?`<p><span class="backlink" data-action="portal-pv" data-page="trn-posts" data-kind="${kind}">לכל הפרסומים (${ps.length})</span></p>`:""}` : `<p class="muted">עדיין אין פרסומים.</p>`}
-    </div>`;
-  };
+  const waitTraining = onb.filter(w=>!(w.items||[]).some(i=>i.key==="training" && i.done)).length;
+  /* משימות פתוחות של ישראל (2026-10-08): התחנה שלו בקליטת עובד חדש, והדרכות שעוד לא כל המאבטחים עברו.
+     משימה שהושלמה נשארת עם ✔ (כמו אצל המאבטחים). */
+  const tasks = [];
+  tasks.push({done: waitTraining===0, page:"trn-onboarding", open:true,
+    label:"הדרכה לעובדים חדשים (תחנת הדרכה בקליטה)", sub: waitTraining ? `${waitTraining} עובדים ממתינים` : "כולם עברו"});
+  progs.forEach(p=>tasks.push({done: p.eligible>0 && p.done>=p.eligible, page:"trn-program", id:p.id,
+    label:`השלמת ${p.name}`, sub: p.done>=p.eligible ? "כולם ביצעו" : `נותרו ${p.eligible-p.done} מאבטחים`}));
+  const shown = I.showAll ? trs : trs.slice(0,3);
+  const tile = (page, kind, title, big, sub)=>`<div class="portal-dtile" data-action="portal-pv" data-page="${page}"${kind?` data-kind="${kind}"`:""}>
+      <div class="portal-dtile-t">${title}</div><div class="portal-dtile-n">${big}</div><div class="portal-dtile-s">${sub}</div></div>`;
+  const sumDone = progs.reduce((x,p)=>x+p.done,0), sumElig = progs.reduce((x,p)=>x+p.eligible,0);
+  const unreadCtl = ctrls.filter(c=>!c.read_at).length;
+  const cnt = k=>posts.filter(p=>p.kind===k).length;
   return `
   <div class="card">
+    <h3>משימות פתוחות</h3>
+    <div class="portal-tasks">${tasks.map(t=>`
+      <div class="portal-task" data-action="portal-pv" data-page="${t.page}"${t.id?` data-id="${t.id}"`:""}${t.open?` data-open="1"`:""}>
+        <span class="portal-task-icon ${t.done?"done":""}" title="${t.done?"בוצע":"טרם בוצע"}">${t.done?"✔":"🕒"}</span>
+        <span><span style="font-weight:600;">${esc(t.label)}</span> <span class="muted" style="font-size:.85em;">${esc(t.sub)}</span></span>
+      </div>`).join("")}</div>
+  </div>
+  <div class="card">
     <h3>לומדות ובחנים</h3>
-    ${trs.length ? `<table><thead><tr><th style="text-align:right;">לומדה</th><th>פורסמה</th><th>ביצוע</th></tr></thead><tbody>
-      ${shown.map(t=>`<tr class="portal-click" data-action="portal-pv" data-page="trn-training" data-id="${t.id}"><td style="text-align:right;">${esc(t.title)}</td><td>${fmtD(App,t.published_at)}</td><td><b>${pct(t.passed,t.eligible)}%</b> <span class="muted">(${t.passed}/${t.eligible})</span></td></tr>`).join("")}
-    </tbody></table>
-    ${trs.length>5 ? `<button class="btn small secondary" data-action="portal-trn-more" style="margin-top:8px;">${I.showAll?"הצג פחות":"עוד"}</button>`:""}`
-    : `<p class="muted">עדיין לא הועלו לומדות. העלאת לומדות ובחנים תיבנה כשנגדיר איך נראית לומדה.</p>`}
+    ${trs.length ? `<div class="portal-grid3">${shown.map(t=>`<div class="portal-dtile" data-action="portal-pv" data-page="trn-training" data-id="${t.id}">
+        <div class="portal-dtile-t">${esc(t.title)}</div><div class="portal-dtile-n">${pct(t.passed,t.eligible)}%</div>
+        <div class="portal-dtile-s">${t.passed}/${t.eligible} · ${fmtD(App,t.published_at)}</div></div>`).join("")}</div>
+      ${trs.length>3 ? `<button class="btn small secondary" data-action="portal-trn-more" style="margin-top:8px;">${I.showAll?"הצג פחות":`עוד (${trs.length-3})`}</button>`:""}`
+    : `<p class="muted" style="margin:0;">עדיין לא הועלו לומדות. כשיהיו — כאן יופיעו אחוזי הביצוע של כל לומדה.</p>`}
   </div>
   <div class="card">
-    <h3>סטטוס הדרכות</h3>
-    <div class="grid-teams">${(ov.programs||[]).map(p=>`<div class="team-tile" data-action="portal-pv" data-page="trn-program" data-id="${p.id}">
-      <div style="font-weight:700;">${esc(p.name)}</div>
-      <div style="font-size:1.4em;font-weight:800;margin-top:4px;">${pct(p.done,p.eligible)}%</div>
-      <div class="muted" style="font-size:.85em;">${p.done} מתוך ${p.eligible} מאבטחים</div></div>`).join("")}</div>
-  </div>
-  <div class="card">
-    <h3>קליטת עובד חדש</h3>
-    <p class="muted" style="margin-top:-6px;">${notDoneOnb} מאבטחים עוד לא השלימו את כל תחנות הקליטה (מתוך ${onb.length}).</p>
-    <button class="btn" data-action="portal-pv" data-page="trn-onboarding">פתח רשימה / תיאום</button>
-  </div>
-  <div class="card">
-    <div class="flexbar" style="justify-content:space-between;"><h3 style="margin:0;">סיכומי תרגילים</h3>
-      <button class="btn small" data-action="portal-pv" data-page="trn-control-new">+ סיכום בקרה חדש</button></div>
-    <p class="muted" style="margin:4px 0 8px;">הסיכום מגיע לאיזור האישי של המאבטח ושל הקב"ט שלו.</p>
-    ${ctrls.length ? `<table><thead><tr><th>תאריך</th><th style="text-align:right;">מאבטח</th><th style="text-align:right;">כותרת</th><th>נקרא</th></tr></thead><tbody>
-      ${ctrls.slice(0,5).map(c=>`<tr class="portal-click" data-action="portal-pv" data-page="control" data-id="${c.id}" data-from="i"><td>${fmtD(App,c.exercise_date)}</td><td style="text-align:right;">${esc(c.worker_name)}</td><td style="text-align:right;">${esc(c.title)}</td><td>${c.read_at?'<span class="portal-task-icon done">✔</span>':'🕒'}</td></tr>`).join("")}
-    </tbody></table>${ctrls.length>5?`<p><span class="backlink" data-action="portal-pv" data-page="trn-controls">לכל הסיכומים (${ctrls.length})</span></p>`:""}` : `<p class="muted">עדיין אין סיכומים.</p>`}
-  </div>
-  ${postSection("content", "תכנים וסרטונים", "לכלל המאבטחים והקב\"טים.")}
-  ${postSection("kabat", "הודעות לקב\"טים", "רק הקב\"טים רואים.")}
-  ${postSection("all", "הודעות לכלל המאבטחים והקב\"טים", "כל המאבטחים והקב\"טים שלהם.")}`;
+    <div class="portal-grid3">
+      ${tile("trn-programs", "", "סטטוס הדרכות", `${pct(sumDone,sumElig)}%`, `${progs.length} הדרכות`)}
+      ${tile("trn-onboarding", "", "קליטת עובד חדש", notDoneOnb, `לא השלימו את כל התחנות`)}
+      ${tile("trn-controls", "", "סיכומי תרגילים", ctrls.length, unreadCtl ? `${unreadCtl} טרם נקראו` : "סיכומים")}
+      ${tile("trn-posts", "content", "תכנים וסרטונים", cnt("content"), "לכלל המאבטחים והקב\"טים")}
+      ${tile("trn-posts", "kabat", "הודעות לקב\"טים", cnt("kabat"), "רק הקב\"טים רואים")}
+      ${tile("trn-posts", "all", "הודעות לכלל המאבטחים", cnt("all"), "וגם הקב\"טים שלהם")}
+    </div>
+  </div>`;
 }
 
 /* ---------- עמודי משנה (view "pview") ---------- */
 const PV_TITLES = { "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
-  "trn-post-new":"פרסום חדש", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום" };
+  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
 function pvGo(App, page, args, push){
   if(push !== false && App.S.view==="pview" && PV.page) PV.stack.push({page:PV.page, args:PV.args});
@@ -983,11 +981,21 @@ function renderPView(App){
       <div class="field"><label>סיכום</label><textarea id="ctlSummary" rows="10" style="width:100%;">${esc(f.summary||"")}</textarea></div>
       <button class="btn ok" data-action="portal-ctl-send" ${PV.busy?"disabled":""}>שלח למאבטח ולקב"ט שלו</button>`);
   }
+  if(pg==="trn-programs"){
+    if(needLoad("trn_overview", {p_token:tok})) return loading();
+    const progs = (PV.data.r && PV.data.r.programs) || [];
+    return wrap(`<h2>סטטוס הדרכות</h2>
+      ${progs.length ? `<div class="portal-grid3">${progs.map(p=>`<div class="portal-dtile" data-action="portal-pv" data-page="trn-program" data-id="${p.id}">
+        <div class="portal-dtile-t">${esc(p.name)}</div><div class="portal-dtile-n">${pct(p.done,p.eligible)}%</div>
+        <div class="portal-dtile-s">${p.done} מתוך ${p.eligible} מאבטחים</div></div>`).join("")}</div>` : `<p class="muted">אין הדרכות.</p>`}`);
+  }
   if(pg==="trn-posts" || pg==="k-feed"){
     const fn = pg==="k-feed" ? "kabat_feed" : "trn_posts_list";
     if(needLoad(fn, {p_token:tok})) return loading();
     let ps = pg==="k-feed" ? (PV.data.r.posts||[]) : (PV.data.r||[]).filter(p=>p.kind===a.kind);
-    return wrap(`<h2>${pg==="k-feed"?"תכנים והודעות":esc(POST_KIND[a.kind]||"")}</h2>
+    return wrap(`<div class="flexbar" style="justify-content:space-between;"><h2 style="margin:0;">${pg==="k-feed"?"תכנים והודעות":esc(POST_KIND[a.kind]||"")}</h2>
+      ${pg==="trn-posts"?`<button class="btn small" data-action="portal-pv" data-page="trn-post-new" data-kind="${a.kind}">+ פרסום חדש</button>`:""}</div>
+      <div style="height:10px;"></div>
       ${ps.length ? `<div class="portal-tasks">${ps.map(p=>`<div class="portal-task" data-action="portal-pv" data-page="post" data-id="${p.id}" data-from="${pg==="k-feed"?"k":"i"}">
         <span class="portal-task-icon">${pg==="k-feed"?(p.read?"📄":"🔔"):"📄"}</span>
         <span><span style="font-weight:600;">${esc(p.title)}</span> <span class="muted" style="font-size:.85em;">${esc(POST_KIND[p.kind]||"")} · ${fmtD(App,p.created_at)}${pg==="trn-posts"?` · קראו ${p.reads}/${p.audience}`:""}</span></span></div>`).join("")}</div>`
@@ -1336,6 +1344,7 @@ function onClick(App, a, el){
   if(a==="portal-k-open-post") return pvGo(App, "post", {id:el.dataset.id, from:"k"});
   if(a==="portal-pv"){
     const d = el.dataset;
+    if(d.page==="trn-onboarding" && d.open==="1") PV.onlyOpen = true;
     if(d.page==="k-controls"){ const ms = loadMgr(App); if(ms) App.apiRpc("kabat_controls_seen", {p_token:ms.token}).catch(()=>{}); K.data = null; }
     return pvGo(App, d.page, {id:d.id, kind:d.kind, from:d.from, name:d.name, program:d.program});
   }
@@ -1385,7 +1394,14 @@ function onClick(App, a, el){
     .portal-sub{font-weight:700;margin:8px 0 2px;color:#8a5a00;} .portal-sub.done{color:#1b7f3b;}
     .portal-doc{background:#fff;border:1px solid #e3e9f0;border-radius:10px;padding:16px;margin-top:10px;}
     .portal-drop{border:2px dashed #9fb3c8;border-radius:10px;padding:18px;text-align:center;background:#f8fbff;}
-    .portal-drop.over{border-color:#0c3a6e;background:#e8f1fb;}`;
+    .portal-drop.over{border-color:#0c3a6e;background:#e8f1fb;}
+    .portal-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;}
+    .portal-dtile{background:var(--primary-light);border:1px solid var(--border);border-radius:10px;padding:12px 8px;text-align:center;cursor:pointer;min-width:0;}
+    .portal-dtile:hover{background:#d7e9fc;}
+    .portal-dtile-t{font-weight:700;line-height:1.3;overflow-wrap:anywhere;}
+    .portal-dtile-n{font-size:1.6em;font-weight:800;margin:4px 0 2px;color:var(--primary-dark);}
+    .portal-dtile-s{font-size:.8em;color:var(--muted);line-height:1.3;overflow-wrap:anywhere;}
+    @media (max-width:520px){ .portal-grid3{gap:6px;} .portal-dtile{padding:10px 4px;} .portal-dtile-t{font-size:.85em;} .portal-dtile-n{font-size:1.3em;} .portal-dtile-s{font-size:.72em;} }`;
   (document.head||document.documentElement).appendChild(st);
 })();
 
