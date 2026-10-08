@@ -332,10 +332,14 @@ function sectorGroupForTeam(team){
    אין צורך למלא את העמודה - הגזרה שלהם נגזרת ישירות מהצוות. עובד ב"אביחי קדוש" שעדיין לא הוגדרה
    לו עיר (city_sectors ריק/null) מוחזר כ-null - כלומר ללא הגבלה (ברירת מחדל בטוחה, לא מסתיר עובד
    חדש בטעות עד שיוגדר לו שיוך). */
+/* עדכון (2026-10-08, לבקשת סרגיי): עובד של "אביחי קדוש" (סובב ירושלים) שעדיין לא הוגדרה לו עיר - משובץ
+   רק בערי סובב ירושלים (בית שמש / מודיעין עילית / ביתר עילית), לא בירושלים. עובדי "דניאל כתב" - רק ירושלים. */
+const SOVEV_CITY_SECTORS = ["בית שמש","מודיעין עילית","ביתר עילית"];
 function computeWorkerCities(w){
   if(w.city_sectors && w.city_sectors.length) return w.city_sectors;
   const team = S.teams.find(t=>t.id===w.team_id);
   if(team && team.sectors && team.sectors.length===1 && POOLED_CITY_SECTORS.includes(team.sectors[0])) return [team.sectors[0]];
+  if(team && (team.sectors||[]).includes("סובב ירושלים")) return SOVEV_CITY_SECTORS.slice();
   return null;
 }
 
