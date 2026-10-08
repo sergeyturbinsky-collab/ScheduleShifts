@@ -133,7 +133,7 @@
 <main id="app"></main>
 <footer>מערכת פנימית · חברת אבטחה · סביבת דמו</footer>
 
-<script src="portal.js?v=10"></script>
+<script src="portal.js?v=11"></script>
 <script>
 (function(){
 "use strict";
@@ -381,6 +381,7 @@ function render(){
     S.view==="home" ? "" :
     (portalCtx && S.view==="submit") ? "סידור עבודה" :
     S.view==="equipreq" ? "בקשות ציוד" :
+    S.view==="mgrpw" ? "סיסמאות מנהלים" :
     S.view==="training" ? "הדרכה" :
     S.view==="logistics" ? "לוגיסטי" :
     S.view==="managers" ? "כניסת מנהלים" :
@@ -393,6 +394,7 @@ function render(){
   else if(S.view==="managers") html = renderManagerMenu();
   else if((S.view==="training" || S.view==="logistics") && window.Portal) html = window.Portal.renderSection(App, S.view);
   else if(S.view==="equipreq" && window.Portal) html = window.Portal.renderManagerRequests(App);
+  else if(S.view==="mgrpw" && window.Portal) html = window.Portal.renderManagerPasswords(App);
   else if(S.view==="submit") html = renderSubmit();
   else if(S.view==="aggregate") html = renderAggregate();
   else if(S.view==="admin") html = renderAdmin();
@@ -419,6 +421,7 @@ function renderManagerMenu(){
       <button class="btn secondary" data-action="go-aggregate">טבלה מרוכזת ובניית סידור</button>
       <button class="btn secondary" data-action="go-admin">ניהול עובדים ומורשי גישה</button>
       ${window.Portal? `<button class="btn secondary" data-action="portal-mgr-open">בקשות ציוד (לוגיסטי)</button>`:""}
+      ${window.Portal? `<button class="btn secondary" data-action="go-mgrpw">סיסמאות מנהלים</button>`:""}
     </div>
   </div>`;
 }
@@ -692,7 +695,7 @@ function renderAggregate(){
 
   return `
   <div class="card">
-    <span class="backlink" data-action="agg-back">◀ בחירת צוות אחר</span>
+    <span class="backlink" data-action="agg-back">${(typeof S.pin==="string" && S.pin.startsWith("mgr:")) ? "◀ חזרה" : "◀ בחירת צוות אחר"}</span>
     <h2>טבלה מרוכזת — ${escapeHtml(group.label)}</h2>
     ${group.pooledNote? `<div class="note-box">שים לב: כמה תת-גזרות/קב"טים חולקים כאן את אותה בריכת עובדים זמינים (אין הפרדה בהגשת האילוצים ברמת תת-הגזרה), כך שהזמינות מחושבת עבור כל תת-הגזרות/הצוותים יחד.</div>`:""}
     <div class="flexbar">
@@ -2167,12 +2170,13 @@ function renderPinOverlay(){
 
 async function confirmPin(){
   const ui = S.ui;
-  const pin = document.getElementById("pinInput").value;
+  const isMgr = typeof S.pin==="string" && S.pin.startsWith("mgr:"); // מנהל מחובר: הסשן שלו במקום הקוד
+  const pin = isMgr ? S.pin : document.getElementById("pinInput").value;
   ui.pinError = null;
   try{
     const ok = await apiRpc("verify_edit_pin", {p_pin: pin});
     if(!ok){ ui.pinError = "קוד שגוי"; render(); return; }
-    S.pin = pin; localStorage.setItem("cstdemo_pin", pin);
+    S.pin = pin; if(!isMgr) localStorage.setItem("cstdemo_pin", pin);
     const next = ui.pinPromptFor;
     const workerId = ui.pinPromptWorkerId, period = ui.pinPromptPeriod;
     ui.pinPromptFor = null; ui.pinPromptWorkerId=null; ui.pinPromptPeriod=null;
@@ -2556,7 +2560,7 @@ function renderAdmin(){
   const anyMoked = teams.some(isMokedTeam);
   const avihaiTeam = teams.find(t=>(t.sectors||[]).includes("סובב ירושלים"));
   return `<div class="card">
-    <span class="backlink" data-action="admin-back">◀ נמען אחר</span>
+    <span class="backlink" data-action="admin-back">${(typeof S.pin==="string" && S.pin.startsWith("mgr:")) ? "◀ חזרה" : "◀ נמען אחר"}</span>
     <h2>ניהול עובדים — ${escapeHtml(ui.recipientLabel)}</h2>
     <h3>קוד קב"ט (לצפייה בטבלה המרוכזת ובניית הסידור)</h3>
     <div class="row">
@@ -2712,6 +2716,7 @@ function onAppClick(e){
     if(a==="portal-managers") S.managerMode = true;
     return window.Portal.onClick(App, a, el);
   }
+  if(a==="go-mgrpw" && window.Portal){ window.Portal.resetPasswordsScreen(); S.view="mgrpw"; S.ui={}; return render(); }
   if(a==="managers-back"){ S.managerMode = false; S.view="home"; S.ui={}; return render(); }
   if(a==="go-submit"){ S.view="submit"; S.ui={}; return render(); }
   if(a==="go-aggregate"){ S.view="aggregate"; S.ui={}; return render(); }
@@ -2778,7 +2783,7 @@ function onAppClick(e){
 
   // ---- aggregate ----
   if(a==="agg-pick-team"){ ui.teamId = el.dataset.id; ui.loaded=false; return render(); }
-  if(a==="agg-back"){ S.ui = {}; return render(); }
+  if(a==="agg-back"){ if(typeof S.pin==="string" && S.pin.startsWith("mgr:")) return goHome(); S.ui = {}; return render(); }
   if(a==="agg-team-code-submit"){
     const code = document.getElementById("aggTeamCode").value;
     ui.teamCodeValue = code;
@@ -2813,7 +2818,7 @@ function onAppClick(e){
     return render();
   }
   if(a==="run-monthly") return runMonthlyReport();
-  if(a==="open-pin"){ ui.pinPromptFor = el.dataset.next; ui.pinPromptWorkerId = el.dataset.worker||null; ui.pinPromptPeriod = el.dataset.period||null; ui.pinError=null; return render(); }
+  if(a==="open-pin"){ ui.pinPromptFor = el.dataset.next; ui.pinPromptWorkerId = el.dataset.worker||null; ui.pinPromptPeriod = el.dataset.period||null; ui.pinError=null; if(typeof S.pin==="string" && S.pin.startsWith("mgr:")) return confirmPin(); return render(); }
   if(a==="overlay-bg" || a==="cancel-pin"){ ui.pinPromptFor=null; return render(); }
   if(a==="confirm-pin") return confirmPin();
 
@@ -2955,7 +2960,7 @@ function onAppClick(e){
     ui.recipientLabel = label; ui.teamIds = group.teamIds; ui.workers=null;
     return render();
   }
-  if(a==="admin-back"){ ui.recipientLabel=null; ui.teamIds=null; ui.workers=null; return render(); }
+  if(a==="admin-back"){ if(typeof S.pin==="string" && S.pin.startsWith("mgr:")) return goHome(); ui.recipientLabel=null; ui.teamIds=null; ui.workers=null; return render(); }
   if(a==="admin-set-team-code"){
     const code = document.getElementById("adminTeamCode").value;
     if(!code){ ui.teamCodeMsg = "יש להזין קוד"; return render(); }

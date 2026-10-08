@@ -28,7 +28,7 @@ assert "wcbnkrtxdzfygyyanasx" in s and "hcejwcxsqhpiufaakalj" not in s
 # ---- portal + publish patches ----
 rep("""<script>
 (function(){
-"use strict";""","""<script src="portal.js?v=10"></script>
+"use strict";""","""<script src="portal.js?v=11"></script>
 <script>
 (function(){
 "use strict";""")
@@ -118,6 +118,25 @@ rep("""    S.view==="training" ? "הדרכה" :""","""    S.view==="equipreq" ? 
     S.view==="training" ? "הדרכה" :""")
 rep("""      <button class="btn secondary" data-action="go-admin">ניהול עובדים ומורשי גישה</button>""","""      <button class="btn secondary" data-action="go-admin">ניהול עובדים ומורשי גישה</button>
       ${window.Portal? `<button class="btn secondary" data-action="portal-mgr-open">בקשות ציוד (לוגיסטי)</button>`:""}""")
+# ---- ממשקי מנהלים (2026-10-08): סשן מנהל מחליף את קוד העריכה המשותף ----
+rep("""  const pin = document.getElementById("pinInput").value;""","""  const isMgr = typeof S.pin==="string" && S.pin.startsWith("mgr:"); // מנהל מחובר: הסשן שלו במקום הקוד
+  const pin = isMgr ? S.pin : document.getElementById("pinInput").value;""")
+rep("""    S.pin = pin; localStorage.setItem("cst_pin", pin);
+    const next = ui.pinPromptFor;""","""    S.pin = pin; if(!isMgr) localStorage.setItem("cst_pin", pin);
+    const next = ui.pinPromptFor;""")
+rep("""ui.pinPromptPeriod = el.dataset.period||null; ui.pinError=null; return render(); }""","""ui.pinPromptPeriod = el.dataset.period||null; ui.pinError=null; if(typeof S.pin==="string" && S.pin.startsWith("mgr:")) return confirmPin(); return render(); }""")
+rep("""  if(a==="agg-back"){ S.ui = {}; return render(); }""","""  if(a==="agg-back"){ if(typeof S.pin==="string" && S.pin.startsWith("mgr:")) return goHome(); S.ui = {}; return render(); }""")
+rep("""  if(a==="admin-back"){ ui.recipientLabel=null;""","""  if(a==="admin-back"){ if(typeof S.pin==="string" && S.pin.startsWith("mgr:")) return goHome(); ui.recipientLabel=null;""")
+rep("""    <span class="backlink" data-action="agg-back">◀ בחירת צוות אחר</span>""","""    <span class="backlink" data-action="agg-back">${(typeof S.pin==="string" && S.pin.startsWith("mgr:")) ? "◀ חזרה" : "◀ בחירת צוות אחר"}</span>""")
+rep("""    <span class="backlink" data-action="admin-back">◀ נמען אחר</span>""","""    <span class="backlink" data-action="admin-back">${(typeof S.pin==="string" && S.pin.startsWith("mgr:")) ? "◀ חזרה" : "◀ נמען אחר"}</span>""")
+rep("""  else if(S.view==="equipreq" && window.Portal) html = window.Portal.renderManagerRequests(App);""","""  else if(S.view==="equipreq" && window.Portal) html = window.Portal.renderManagerRequests(App);
+  else if(S.view==="mgrpw" && window.Portal) html = window.Portal.renderManagerPasswords(App);""")
+rep("""    S.view==="equipreq" ? "בקשות ציוד" :""","""    S.view==="equipreq" ? "בקשות ציוד" :
+    S.view==="mgrpw" ? "סיסמאות מנהלים" :""")
+rep("""      ${window.Portal? `<button class="btn secondary" data-action="portal-mgr-open">בקשות ציוד (לוגיסטי)</button>`:""}""","""      ${window.Portal? `<button class="btn secondary" data-action="portal-mgr-open">בקשות ציוד (לוגיסטי)</button>`:""}
+      ${window.Portal? `<button class="btn secondary" data-action="go-mgrpw">סיסמאות מנהלים</button>`:""}""")
+rep("""  if(a==="managers-back"){""","""  if(a==="go-mgrpw" && window.Portal){ window.Portal.resetPasswordsScreen(); S.view="mgrpw"; S.ui={}; return render(); }
+  if(a==="managers-back"){""")
 # ---- מפתחות localStorage נפרדים לדמו (הדמו והחי באותו origin) ----
 for k in ["identity","pin","team_access"]:
     s = s.replace('"cst_%s"' % k, '"cstdemo_%s"' % k)
