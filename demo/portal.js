@@ -204,6 +204,82 @@ function renderTraining(App, session){
   </table></div>` + renderWorkerTrainingExtras(App, session);
 }
 
+/* ================================================================
+   התראות לטלפון (לבקשת סרגיי, 2026-10-08): האתר מותקן כאפליקציה במסך הבית, וכל דבר חדש באיזור האישי
+   (בקרה, תוכן, לומדה, פרסום סידור, טיפול בבקשת ציוד) מקפיץ התראה. פעם ביומיים - תזכורת על משימות שלא בוצעו
+   (לא בין שישי 14:00 לשבת 21:00). השליחה עצמה בשרת (push-send); כאן רק ההרשמה של המכשיר.
+   ================================================================ */
+const N = { state:null, checking:false, busy:false, error:null };
+function isIOS(){ return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1); }
+function isStandalone(){ return (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone===true; }
+function pushSupported(){ return ("serviceWorker" in navigator) && ("PushManager" in window) && ("Notification" in window); }
+function b64ToU8(b64){
+  const pad = "=".repeat((4 - b64.length % 4) % 4);
+  const raw = atob((b64 + pad).replace(/-/g,"+").replace(/_/g,"/"));
+  return Uint8Array.from(raw, c=>c.charCodeAt(0));
+}
+async function swReg(){
+  let reg = await navigator.serviceWorker.getRegistration();
+  if(!reg) reg = await navigator.serviceWorker.register("sw.js");
+  return reg;
+}
+async function saveSub(App, session, sub){
+  const j = sub.toJSON();
+  await App.apiRpc("worker_push_subscribe", {p_token:session.token, p_endpoint:j.endpoint, p_p256dh:j.keys.p256dh, p_auth:j.keys.auth, p_ua:String(navigator.userAgent).slice(0,200)});
+}
+async function checkPush(App, session){
+  if(N.checking) return; N.checking = true;
+  try{
+    if(!pushSupported()) N.state = (isIOS() && !isStandalone()) ? "ios-install" : "unsupported";
+    else if(Notification.permission==="denied") N.state = "denied";
+    else{
+      const reg = await swReg();
+      const sub = await reg.pushManager.getSubscription();
+      if(sub && Notification.permission==="granted"){
+        const known = await App.apiRpc("worker_push_status", {p_token:session.token, p_endpoint:sub.endpoint});
+        if(!known) await saveSub(App, session, sub); // המכשיר רשום אבל לא אצלנו (למשל עובד אחר התחבר קודם) - מעדכנים
+        N.state = "on";
+      } else N.state = "off";
+    }
+  }catch(e){ N.state = "off"; }
+  N.checking = false; App.render();
+}
+async function enablePush(App, session){
+  N.busy = true; N.error = null; App.render();
+  try{
+    const perm = await Notification.requestPermission();
+    if(perm !== "granted"){ N.state = perm==="denied" ? "denied" : "off"; N.busy = false; return App.render(); }
+    const key = await App.apiRpc("push_public_key", {});
+    if(!key) throw new Error("ההתראות עוד לא הוגדרו בשרת");
+    const reg = await swReg();
+    await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if(!sub) sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64ToU8(key)});
+    await saveSub(App, session, sub);
+    N.state = "on";
+  }catch(e){ N.error = "לא הצלחנו להפעיל התראות: " + e.message; }
+  N.busy = false; App.render();
+}
+function renderPushCard(App, session){
+  if(N.state===null){ checkPush(App, session); return ""; }
+  if(N.state==="on") return "";
+  if(N.state==="unsupported") return "";
+  let body;
+  if(N.state==="ios-install") body = `<p style="margin:6px 0;">כדי לקבל התראות באייפון צריך קודם להוסיף את האיזור האישי למסך הבית:</p>
+      <ol style="margin:6px 0;padding-inline-start:20px;line-height:1.9;">
+        <li>לוחצים על כפתור השיתוף <b>⬆️</b> בתחתית ספארי</li>
+        <li>בוחרים <b>"הוסף למסך הבית"</b> ואז <b>"הוסף"</b></li>
+        <li>פותחים את האיזור האישי מהאייקון החדש במסך הבית ונכנסים שוב</li>
+      </ol>
+      <p class="muted" style="font-size:.85em;margin:4px 0 0;">נדרש iOS 16.4 ומעלה.</p>`;
+  else if(N.state==="denied") body = `<p style="margin:6px 0;">ההתראות חסומות במכשיר הזה. כדי לפתוח: הגדרות הדפדפן (או הגדרות הטלפון ← התראות) ← לאפשר התראות לאיזור האישי, ואז לרענן את הדף.</p>`;
+  else body = `<p style="margin:6px 0;">כדאי להפעיל התראות כדי לדעת מיד כשיש משהו חדש: סידור שפורסם, בקרה, לומדה או תוכן חדש. פעם ביומיים תגיע גם תזכורת על משימות שלא בוצעו.</p>
+      <button class="btn ok" data-action="portal-push-enable" ${N.busy?"disabled":""}>${N.busy?"מפעיל...":"🔔 הפעלת התראות"}</button>
+      ${N.error?`<p class="shortage" style="margin-top:6px;">${App.escapeHtml(N.error)}</p>`:""}
+      ${!isStandalone() && !isIOS() ? `<p class="muted" style="font-size:.85em;margin:8px 0 0;">טיפ: באנדרואיד אפשר להוסיף את האיזור האישי למסך הבית מתפריט הדפדפן ⋮ ← "הוספה למסך הבית" / "התקנת אפליקציה".</p>`:""}`;
+  return `<div class="card" style="border-color:#0c3a6e;"><h3 style="margin-top:0;">📲 התראות לטלפון</h3>${body}</div>`;
+}
+
 function renderWorkerHome(App, session){
   const esc = App.escapeHtml;
   if(!P.checkedSession){
@@ -229,7 +305,9 @@ function renderWorkerHome(App, session){
       ${tile("portal-go-training", "הדרכה", "לומדות, בקרות ותכנים")}
       ${isMokedWorker(App, session) ? "" : tile("portal-go-logistics", "לוגיסטי", "הציוד שלי ובקשת ציוד")}
     </div>
+    ${N.state==="on" ? `<p class="muted" style="margin:10px 0 0;font-size:.85em;">🔔 התראות פעילות במכשיר הזה</p>` : ""}
   </div>
+  ${renderPushCard(App, session)}
   <div class="card">
     <h3>🔔 עדכונים</h3>
     ${renderWorkerUpdates(App, session)}
@@ -561,7 +639,17 @@ function compressImage(file){
     fr.readAsDataURL(file);
   });
 }
-function docHtml(App, title, meta, body, link, image){
+function fmtSize(n){ n = Number(n)||0; return n>=1048576 ? (n/1048576).toFixed(1)+" MB" : Math.max(1,Math.round(n/1024))+" KB"; }
+/* קבצים מצורפים לפרסום: נפתחים דרך כתובת זמנית (שעה) שהשרת מנפיק רק למי שמורשה לראות את הפרסום */
+function attachmentsHtml(App, post, who){
+  const esc = App.escapeHtml;
+  const atts = (post && post.attachments) || [];
+  if(!atts.length) return "";
+  return `<div style="margin-top:14px;"><b>קבצים מצורפים</b>${atts.map(a=>`
+    <div class="portal-wrow"><span>📎 ${esc(a.name||"קובץ")}</span> <span class="muted">${fmtSize(a.size)}</span>
+      <button class="btn small secondary" data-action="portal-att-open" data-post="${post.id}" data-path="${esc(a.path)}" data-who="${who}">פתיחה</button></div>`).join("")}</div>`;
+}
+function docHtml(App, title, meta, body, link, image, attHtml){
   const esc = App.escapeHtml;
   const yt = youtubeId(link);
   return `<div class="portal-doc">
@@ -571,6 +659,7 @@ function docHtml(App, title, meta, body, link, image){
     ${yt?`<div style="position:relative;padding-top:56.25%;margin-top:12px;"><iframe src="https://www.youtube.com/embed/${yt}" style="position:absolute;inset:0;width:100%;height:100%;border:0;" allowfullscreen></iframe></div>`
         : (link?`<p style="margin-top:12px;"><a href="${esc(link)}" target="_blank" rel="noopener">פתיחת הקישור ↗</a></p>`:"")}
     ${image?`<img src="${image}" alt="" style="max-width:100%;margin-top:12px;border-radius:8px;">`:""}
+    ${attHtml||""}
   </div>`;
 }
 
@@ -618,8 +707,8 @@ function renderControlDoc(App, session){
 }
 function renderPostDoc(App){
   const p = T.postOpen;
-  return `<span class="backlink" data-action="portal-doc-back">◀ חזרה להדרכה</span>` +
-    docHtml(App, p.title, `${POST_KIND[p.kind]||""} · ${fmtD(App,p.created_at)}`, p.body, p.link_url, p.image_data);
+  return `<span class="backlink" data-action="portal-doc-back">◀ חזרה להדרכה</span>` + (T.attError?`<p class="shortage">${App.escapeHtml(T.attError)}</p>`:"") +
+    docHtml(App, p.title, `${POST_KIND[p.kind]||""} · ${fmtD(App,p.created_at)}`, p.body, p.link_url, p.image_data, attachmentsHtml(App, p, "w"));
 }
 function renderWorkerTrainingExtras(App, session){
   const esc = App.escapeHtml;
@@ -911,8 +1000,7 @@ function renderPView(App){
     const p = list.find(x=>x.id===a.id);
     if(!p) return wrap(`<p class="muted">הפרסום לא נמצא.</p>`);
     if(a.from==="k" && !p.read){ p.read = true; App.apiRpc("kabat_post_read", {p_token:tok, p_post_id:p.id}).catch(()=>{}); K.data = null; }
-    return wrap(docHtml(App, p.title, `${POST_KIND[p.kind]||""} · ${fmtD(App,p.created_at)}${a.from==="i"?` · קראו ${p.reads}/${p.audience}`:""}`, p.body, p.link_url, p.image_data) +
-      (a.from==="i" && p.has_image ? `<p class="muted">(יש תמונה מצורפת — מוצגת לקוראים)</p>`:""));
+    return wrap(docHtml(App, p.title, `${POST_KIND[p.kind]||""} · ${fmtD(App,p.created_at)}${a.from==="i"?` · קראו ${p.reads}/${p.audience}`:""}`, p.body, p.link_url, p.image_data, attachmentsHtml(App, p, "m")));
   }
   if(pg==="trn-post-new"){
     const f = PV.form;
@@ -920,9 +1008,18 @@ function renderPView(App){
       <p class="muted">${a.kind==="kabat"?"יוצג רק לקב\"טים.":"יוצג לכלל המאבטחים ולקב\"טים שלהם."} כולם יקבלו התראה במסך הראשי.</p>${msgs}
       <div class="field"><label>כותרת</label><input type="text" id="postTitle" maxlength="200" value="${esc(f.title||"")}"></div>
       <div class="field"><label>תוכן</label><textarea id="postBody" rows="8" style="width:100%;">${esc(f.body||"")}</textarea></div>
-      ${a.kind==="content"?`<div class="field"><label>קישור לסרטון או לתוכן (YouTube, Google Drive וכו')</label><input type="url" id="postLink" value="${esc(f.link||"")}" placeholder="https://"></div>`:""}
-      <div class="field"><label>תמונה (לא חובה)</label><input type="file" accept="image/*" data-action="portal-post-image">${f.image?` <span class="muted">✔ תמונה צורפה</span>`:""}</div>
-      <button class="btn ok" data-action="portal-post-send" ${PV.busy?"disabled":""}>פרסם</button>`);
+      <div class="field"><label>קישור לסרטון או לתוכן (YouTube, Google Drive וכו') — לא חובה</label><input type="url" id="postLink" value="${esc(f.link||"")}" placeholder="https://"></div>
+      <div class="field"><label>קבצים (לא חובה)</label>
+        <div class="portal-drop" data-drop="post">
+          גררו לכאן קבצים מהמחשב, או
+          <label class="btn small secondary" style="cursor:pointer;margin-inline-start:6px;">בחרו קבצים<input type="file" multiple data-action="portal-post-files" style="display:none;"></label>
+          <div class="muted" style="font-size:.85em;margin-top:4px;">PDF, תמונות, מסמכים, סרטונים קצרים — עד 50MB לקובץ</div>
+        </div>
+        ${(f.files||[]).map((x,i)=>`<div class="portal-wrow">📎 ${esc(x.name)} <span class="muted">${fmtSize(x.size)}</span>
+          <button class="btn small secondary" data-action="portal-post-file-remove" data-idx="${i}" ${PV.busy?"disabled":""}>הסר</button></div>`).join("")}
+      </div>
+      <p class="muted">שום דבר לא עולה ולא נשלח עד הלחיצה על "פרסם".</p>
+      <button class="btn ok" data-action="portal-post-send" ${PV.busy?"disabled":""}>${PV.busy?"מפרסם...":"פרסם"}</button>`);
   }
   return wrap(`<p class="muted">העמוד לא נמצא.</p>`);
 }
@@ -974,13 +1071,59 @@ async function trnAction(App, a, el){
       f.title = document.getElementById("postTitle").value; f.body = document.getElementById("postBody").value;
       const linkEl = document.getElementById("postLink"); f.link = linkEl ? linkEl.value.trim() : "";
       if(!f.title.trim()){ PV.error = "יש למלא כותרת"; PV.msg = null; return App.render(); }
-      PV.busy = true; App.render();
-      await App.apiRpc("trn_post_create", {p_token:tok, p_kind:PV.args.kind, p_title:f.title, p_body:f.body, p_link:f.link||null, p_image:f.image||null});
+      PV.busy = true; PV.error = null; App.render();
+      // הקבצים עולים לאחסון רק עכשיו, בלחיצה על "פרסם"
+      const atts = [];
+      const files = f.files || [];
+      for(let i=0;i<files.length;i++){
+        const file = files[i];
+        PV.msg = `מעלה קבצים... (${i+1}/${files.length})`; App.render();
+        const up = await filesFn(App, {action:"upload-url", token:tok, filename:file.name, size:file.size});
+        const put = await fetch(up.signedUrl, {method:"PUT", headers:{"Content-Type": file.type || "application/octet-stream", "x-upsert":"false"}, body:file});
+        if(!put.ok) throw new Error("העלאת הקובץ " + file.name + " נכשלה");
+        atts.push({path:up.path, name:file.name, size:file.size, type:file.type||""});
+      }
+      await App.apiRpc("trn_post_create2", {p_token:tok, p_kind:PV.args.kind, p_title:f.title, p_body:f.body, p_link:f.link||null, p_image:null, p_attachments:atts});
       PV.busy = false; I.data = null; PV.form = {}; PV.error = null; PV.msg = "פורסם. כולם יראו התראה במסך הראשי.";
       return App.render();
     }
   }catch(e){ PV.busy = false; PV.error = e.message; PV.msg = null; App.render(); }
 }
+async function filesFn(App, body){
+  const res = await fetch(App.SUPABASE_URL + "/functions/v1/portal-files", {method:"POST",
+    headers:{"Content-Type":"application/json", apikey:App.SUPABASE_ANON_KEY, Authorization:"Bearer "+App.SUPABASE_ANON_KEY}, body:JSON.stringify(body)});
+  const j = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(j.error || "שגיאה");
+  return j;
+}
+function savePostFields(){
+  [["postTitle","title"],["postBody","body"],["postLink","link"]].forEach(([id,k])=>{ const el = document.getElementById(id); if(el) PV.form[k] = el.value; });
+}
+function addPostFiles(App, list){
+  const MAX = 50*1024*1024;
+  savePostFields();
+  PV.form.files = PV.form.files || [];
+  Array.from(list||[]).forEach(f=>{ if(f.size > MAX) PV.error = `${f.name}: הקובץ גדול מ-50MB`; else PV.form.files.push(f); });
+  App.render();
+}
+/* גרירת קבצים לאזור "גררו לכאן" בטופס הפרסום */
+function onDrag(App, e){
+  const zone = e.target.closest ? e.target.closest("[data-drop]") : null;
+  if(!zone) return;
+  e.preventDefault();
+  if(e.type==="dragover"){ zone.classList.add("over"); return; }
+  if(e.type==="dragleave"){ zone.classList.remove("over"); return; }
+  if(e.type==="drop"){ zone.classList.remove("over"); if(PV.page==="trn-post-new" && !PV.busy) addPostFiles(App, e.dataTransfer && e.dataTransfer.files); }
+}
+async function openAttachment(App, el){
+  const tok = el.dataset.who==="w" ? (loadSession(App)||{}).token : (loadMgr(App)||{}).token;
+  const win = window.open("", "_blank"); // נפתח מיד (אחרת הדפדפן חוסם), והכתובת נטענת אליו כשמגיעה
+  try{
+    const r = await filesFn(App, {action:"download-url", token:tok, who:el.dataset.who, post_id:el.dataset.post, path:el.dataset.path});
+    if(win) win.location = r.url; else window.location = r.url;
+  }catch(err){ if(win) win.close(); alertMsg(App, err.message); }
+}
+function alertMsg(App, m){ PV.error = m; T.attError = m; App.render(); }
 async function onChangeTraining(App, e){
   const t = e.target, a = t.dataset.action;
   const ms = loadMgr(App); if(!ms) return;
@@ -996,12 +1139,7 @@ async function onChangeTraining(App, e){
     }catch(err){ PV.busy = false; PV.error = err.message; }
     return App.render();
   }
-  if(a==="portal-post-image"){
-    const f = (t.files||[])[0]; if(!f) return;
-    ["postTitle","postBody","postLink"].forEach(id=>{ const el = document.getElementById(id); if(el) PV.form[id==="postTitle"?"title":id==="postBody"?"body":"link"] = el.value; });
-    try{ PV.form.image = await compressImage(f); PV.error = null; }catch(err){ PV.error = err.message; }
-    return App.render();
-  }
+  if(a==="portal-post-files"){ return addPostFiles(App, t.files); }
   if(a==="portal-onb-open"){ PV.onlyOpen = t.checked; const l = document.getElementById("onbList"); if(l) l.innerHTML = onbListHtml(App); }
 }
 
@@ -1098,6 +1236,7 @@ function enterMgrSchedule(App, ms, which){
 }
 
 function renderHome(App){
+  window.__portalApp = App;
   const ms = loadMgr(App);
   if(ms) return renderManagerHome(App, ms);
   const session = loadSession(App);
@@ -1157,11 +1296,12 @@ function onClick(App, a, el){
   if(a==="portal-pick"){ P.selectedId = el.dataset.id; P.code=""; P.error=null; return App.render(); }
   if(a==="portal-unpick"){ P.selectedId = null; P.code=""; P.error=null; return App.render(); }
   if(a==="portal-login") return doLogin(App);
+  if(a==="portal-push-enable"){ const ss = loadSession(App); if(ss && !N.busy) enablePush(App, ss); return; }
   if(a==="portal-managers"){ S.view = "managers"; S.ui = {}; return App.render(); }
   if(a==="portal-logout"){
     const s = loadSession(App);
     if(s) App.apiRpc("worker_logout", {p_token: s.token}).catch(()=>{});
-    saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null; T.data = null; F.data = null;
+    saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null; T.data = null; F.data = null; N.state = null;
     return App.render();
   }
   if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; T.data = null; F.data = null; T.controlOpen = null; T.postOpen = null; return App.render(); }
@@ -1186,7 +1326,7 @@ function onClick(App, a, el){
       .then(()=>{ PV.busy = false; if(T.control) T.control.read_at = new Date().toISOString(); T.data = null; App.render(); })
       .catch(e=>{ PV.busy = false; T.control = {error:e.message}; App.render(); });
   }
-  if(a==="portal-doc-back"){ T.controlOpen = null; T.control = null; T.postOpen = null; return App.render(); }
+  if(a==="portal-doc-back"){ T.attError = null; T.controlOpen = null; T.control = null; T.postOpen = null; return App.render(); }
   if(a==="portal-open-post"){
     const s = loadSession(App); if(!s) return App.render();
     const p = ((F.data&&F.data.posts)||[]).find(x=>x.id===el.dataset.id); if(!p) return App.render();
@@ -1201,6 +1341,8 @@ function onClick(App, a, el){
   }
   if(a==="portal-pv-back") return pvBack(App);
   if(a==="portal-trn-more"){ I.showAll = !I.showAll; return App.render(); }
+  if(a==="portal-att-open") return openAttachment(App, el);
+  if(a==="portal-post-file-remove"){ savePostFields(); (PV.form.files||[]).splice(Number(el.dataset.idx),1); return App.render(); }
   if(a==="portal-prog-set" || a==="portal-onb-save" || a==="portal-ctl-send" || a==="portal-post-send") return trnAction(App, a, el);
   if(a==="portal-pw-load") return pwLoad(App);
   if(a==="portal-pw-save") return pwSave(App, el.dataset.id);
@@ -1241,9 +1383,23 @@ function onClick(App, a, el){
     tr.portal-click{cursor:pointer;} tr.portal-click:hover td{background:#f4f8fc;}
     .portal-wrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 10px;border-bottom:1px solid #eef2f6;}
     .portal-sub{font-weight:700;margin:8px 0 2px;color:#8a5a00;} .portal-sub.done{color:#1b7f3b;}
-    .portal-doc{background:#fff;border:1px solid #e3e9f0;border-radius:10px;padding:16px;margin-top:10px;}`;
+    .portal-doc{background:#fff;border:1px solid #e3e9f0;border-radius:10px;padding:16px;margin-top:10px;}
+    .portal-drop{border:2px dashed #9fb3c8;border-radius:10px;padding:18px;text-align:center;background:#f8fbff;}
+    .portal-drop.over{border-color:#0c3a6e;background:#e8f1fb;}`;
   (document.head||document.documentElement).appendChild(st);
 })();
 
-window.Portal = { renderHome, renderSection, renderManagerRequests, renderManagerPasswords, renderPView, pvTitle, onChange: onChangeTraining, resetPasswordsScreen(){ W.pin=null; W.list=null; W.error=null; W.msg=null; }, onClick, onInput, onKey, resetState(){ P.shifts=null; P.checkedSession=false; } };
+/* כשחוזרים לאפליקציה (למשל מלחיצה על התראה) - טוענים מחדש את העדכונים, המשימות והמשמרות */
+let lastHidden = 0;
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState==="hidden"){ lastHidden = Date.now(); return; }
+  if(!lastHidden || Date.now() - lastHidden < 30000 || !window.__portalApp) return;
+  const App = window.__portalApp;
+  if(App.S.view==="home" && loadSession(App)){ T.data = null; F.data = null; P.shifts = null; App.render(); }
+});
+if("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", ev=>{
+  const App = window.__portalApp;
+  if(ev.data && ev.data.type==="refresh" && App && App.S.view==="home" && loadSession(App)){ T.data = null; F.data = null; P.shifts = null; App.render(); }
+});
+window.Portal = { onDrag, renderHome, renderSection, renderManagerRequests, renderManagerPasswords, renderPView, pvTitle, onChange: onChangeTraining, resetPasswordsScreen(){ W.pin=null; W.list=null; W.error=null; W.msg=null; }, onClick, onInput, onKey, resetState(){ P.shifts=null; P.checkedSession=false; } };
 })();

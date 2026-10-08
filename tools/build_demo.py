@@ -7,7 +7,16 @@ s=src
 def rep(o,n,cnt=1):
     global s
     assert s.count(o)==cnt,(o[:80],s.count(o)); s=s.replace(o,n)
-rep("<title>הגשת אילוצים ובניית סידור עבודה</title>","<title>הגשת אילוצים ובניית סידור עבודה — דמו</title>")
+rep("<title>הגשת אילוצים ובניית סידור עבודה</title>","""<title>הגשת אילוצים ובניית סידור עבודה — דמו</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0c3a6e">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="איזור אישי">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<script>if("serviceWorker" in navigator) window.addEventListener("load", ()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));</script>""")
 rep("<body>\n","""<body>
 <div id="demoBanner" style="direction:rtl;background:#1a1a2e;color:#f3f3f3;padding:10px 14px;font-size:13px;line-height:1.9;text-align:center;">
 <b>🎭 גרסת דמו — עותק של המבנה האמיתי (עובדים, גזרות, תקנים, אילוצים ושיבוצים) עם קודים של דמו. שינויים כאן לא משפיעים על המערכת האמיתית.</b><br>
@@ -28,7 +37,7 @@ assert "wcbnkrtxdzfygyyanasx" in s and "hcejwcxsqhpiufaakalj" not in s
 # ---- portal + publish patches ----
 rep("""<script>
 (function(){
-"use strict";""","""<script src="portal.js?v=12"></script>
+"use strict";""","""<script src="portal.js?v=13"></script>
 <script>
 (function(){
 "use strict";""")
@@ -60,10 +69,11 @@ rep("""  if(a==="go-home") return goHome();""","""  if(a==="go-home") return goH
   if(a==="managers-back"){ S.managerMode = false; S.view="home"; S.ui={}; return render(); }""")
 rep("""  app.onchange = onAppChange;""","""  app.onchange = onAppChange;
   app.oninput = e=>{ if(window.Portal) window.Portal.onInput(App, e); };
-  app.onkeydown = e=>{ if(window.Portal) window.Portal.onKey(App, e); };""")
+  app.onkeydown = e=>{ if(window.Portal) window.Portal.onKey(App, e); };
+  ["dragover","dragleave","drop"].forEach(t=>app.addEventListener(t, e=>{ if(window.Portal && window.Portal.onDrag) window.Portal.onDrag(App, e); }));""")
 rep("""init();
 })();""","""/* מה שהפורטל (portal.js) צריך מהקוד הראשי */
-const App = { S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
+const App = { SUPABASE_URL, SUPABASE_ANON_KEY, S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
 
 init();
 })();""")

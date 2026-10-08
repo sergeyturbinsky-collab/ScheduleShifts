@@ -4,6 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>הגשת אילוצים ובניית סידור עבודה — דמו</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0c3a6e">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="איזור אישי">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<script>if("serviceWorker" in navigator) window.addEventListener("load", ()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));</script>
 <style>
   :root{
     --bg:#eaf4ff; --card:#ffffff; --border:#cfe3f7; --text:#0f2942; --muted:#5c7a99;
@@ -133,7 +142,7 @@
 <main id="app"></main>
 <footer>מערכת פנימית · חברת אבטחה · סביבת דמו</footer>
 
-<script src="portal.js?v=12"></script>
+<script src="portal.js?v=13"></script>
 <script>
 (function(){
 "use strict";
@@ -2663,6 +2672,7 @@ function attachHandlers(){
   app.onchange = e=>{ const act = e.target && e.target.dataset ? String(e.target.dataset.action||"") : ""; if(window.Portal && act.startsWith("portal-")) return window.Portal.onChange(App, e); return onAppChange(e); };
   app.oninput = e=>{ if(window.Portal) window.Portal.onInput(App, e); };
   app.onkeydown = e=>{ if(window.Portal) window.Portal.onKey(App, e); };
+  ["dragover","dragleave","drop"].forEach(t=>app.addEventListener(t, e=>{ if(window.Portal && window.Portal.onDrag) window.Portal.onDrag(App, e); }));
   document.getElementById("headerActions").onclick = onAppClick;
 }
 
@@ -3028,7 +3038,7 @@ document.addEventListener("input", function(e){
 });
 
 /* מה שהפורטל (portal.js) צריך מהקוד הראשי */
-const App = { S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
+const App = { SUPABASE_URL, SUPABASE_ANON_KEY, S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
 
 init();
 })();
