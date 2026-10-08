@@ -37,7 +37,7 @@ assert "wcbnkrtxdzfygyyanasx" in s and "hcejwcxsqhpiufaakalj" not in s
 # ---- portal + publish patches ----
 rep("""<script>
 (function(){
-"use strict";""","""<script src="portal.js?v=15"></script>
+"use strict";""","""<script src="portal.js?v=16"></script>
 <script>
 (function(){
 "use strict";""")
@@ -120,9 +120,10 @@ rep("""  document.getElementById("headerSub").textContent =
     S.view==="home" ? "" :
     (portalCtx && S.view==="submit") ? "סידור עבודה" :
     S.view==="training" ? "הדרכה" :
-    S.view==="logistics" ? "לוגיסטי" :""")
+    S.view==="logistics" ? "לוגיסטי" :
+    S.view==="updates" ? "עדכונים והודעות" :""")
 rep("""  else if(S.view==="managers") html = renderManagerMenu();""","""  else if(S.view==="managers") html = renderManagerMenu();
-  else if((S.view==="training" || S.view==="logistics") && window.Portal) html = window.Portal.renderSection(App, S.view);
+  else if((S.view==="training" || S.view==="logistics" || S.view==="updates") && window.Portal) html = window.Portal.renderSection(App, S.view);
   else if(S.view==="equipreq" && window.Portal) html = window.Portal.renderManagerRequests(App);""")
 rep("""    S.view==="training" ? "הדרכה" :""","""    S.view==="equipreq" ? "בקשות ציוד" :
     S.view==="training" ? "הדרכה" :""")

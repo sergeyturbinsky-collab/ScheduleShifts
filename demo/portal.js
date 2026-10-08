@@ -320,7 +320,7 @@ function renderWorkerHome(App, session){
       </div>
     </div>
     <div class="portal-col-side">
-      <div class="card">
+      <div class="card portal-updates" data-action="portal-go-updates">
         <h3>🔔 עדכונים והודעות</h3>
         ${renderWorkerUpdates(App, session)}
       </div>
@@ -681,17 +681,32 @@ async function loadFeed(App, session){
   catch(e){ F.data = {posts:[], error:"שגיאה בטעינת העדכונים"}; }
   App.render();
 }
-function renderWorkerUpdates(App, session){
+/* "עדכונים והודעות" (2026-10-08): במסך הבית - 3 ההודעות האחרונות; לחיצה על הכרטיס פותחת עמוד עם כל ההודעות */
+function sortedPosts(){ return ((F.data && F.data.posts) || []).slice().sort((x,y)=>String(y.created_at).localeCompare(String(x.created_at))); }
+function postSnippet(p){ const t = String(p.body||"").replace(/\s+/g," ").trim(); return t.length>90 ? t.slice(0,90)+"…" : t; }
+function postRowHtml(App, p, clickable){
   const esc = App.escapeHtml;
+  return `<div class="portal-task${p.read?"":" portal-unread"}"${clickable?` data-action="portal-open-post" data-id="${p.id}"`:""}>
+      <span class="portal-task-icon">${p.read?"📄":"🔔"}</span>
+      <span style="min-width:0;"><span style="font-weight:${p.read?600:800};">${esc(p.title)}</span>
+        <span class="muted" style="font-size:.82em;display:block;">${esc(POST_KIND[p.kind]||"")} · ${fmtD(App,p.created_at)}${youtubeId(p.link_url)?" · סרטון":""}</span>
+        ${postSnippet(p)?`<span class="portal-snip">${esc(postSnippet(p))}</span>`:""}</span>
+    </div>`;
+}
+function renderWorkerUpdates(App, session){
   if(!F.data){ loadFeed(App, session); return `<p class="muted">טוען...</p>`; }
   if(F.data.loading) return `<p class="muted">טוען...</p>`;
-  const unread = (F.data.posts||[]).filter(p=>!p.read);
-  if(!unread.length) return `<p class="muted">אין עדכונים חדשים. <span class="backlink" data-action="portal-go-training">לכל התכנים וההודעות</span></p>`;
-  return `<div class="portal-tasks">${unread.map(p=>`
-    <div class="portal-task" data-action="portal-open-post" data-id="${p.id}">
-      <span class="portal-task-icon">🔔</span>
-      <span><span style="font-weight:600;">${esc(p.title)}</span> <span class="muted" style="font-size:.85em;">${esc(POST_KIND[p.kind]||"")} · ${fmtD(App,p.created_at)}</span></span>
-    </div>`).join("")}</div>`;
+  const ps = sortedPosts();
+  if(!ps.length) return `<p class="muted">אין עדיין הודעות.</p>`;
+  const unread = ps.filter(p=>!p.read).length;
+  return `<div class="portal-tasks">${ps.slice(0,3).map(p=>postRowHtml(App, p, false)).join("")}</div>
+    <div class="portal-more">${unread?`<b>${unread} חדשות</b> · `:""}לכל ההודעות (${ps.length}) ◀</div>`;
+}
+function renderAllUpdates(App, session){
+  if(!F.data){ loadFeed(App, session); return `<p class="muted">טוען...</p>`; }
+  if(F.data.loading) return `<p class="muted">טוען...</p>`;
+  const ps = sortedPosts();
+  return ps.length ? `<div class="portal-tasks">${ps.map(p=>postRowHtml(App, p, true)).join("")}</div>` : `<p class="muted">אין עדיין הודעות.</p>`;
 }
 function renderControlDoc(App, session){
   const esc = App.escapeHtml;
@@ -713,7 +728,7 @@ function renderControlDoc(App, session){
 }
 function renderPostDoc(App){
   const p = T.postOpen;
-  return `<span class="backlink" data-action="portal-doc-back">◀ חזרה להדרכה</span>` + (T.attError?`<p class="shortage">${App.escapeHtml(T.attError)}</p>`:"") +
+  return `<span class="backlink" data-action="portal-doc-back">${App.S.view==="updates"?"◀ חזרה לעדכונים והודעות":"◀ חזרה להדרכה"}</span>` + (T.attError?`<p class="shortage">${App.escapeHtml(T.attError)}</p>`:"") +
     docHtml(App, p.title, `${POST_KIND[p.kind]||""} · ${fmtD(App,p.created_at)}`, p.body, p.link_url, p.image_data, attachmentsHtml(App, p, "w"));
 }
 function renderWorkerTrainingExtras(App, session){
@@ -1163,7 +1178,12 @@ function renderSection(App, view){
   if(!session){ App.S.view = "home"; return renderHome(App); }
   const title = view==="training" ? "הדרכה" : "לוגיסטי";
   if(view==="training" && T.controlOpen) return `<div class="card">${renderControlDoc(App, session)}</div>`;
-  if(view==="training" && T.postOpen) return `<div class="card">${renderPostDoc(App)}</div>`;
+  if((view==="training" || view==="updates") && T.postOpen) return `<div class="card">${renderPostDoc(App)}</div>`;
+  if(view==="updates") return `<div class="card">
+    <span class="backlink" data-action="go-home">◀ חזרה לאיזור האישי</span>
+    <h2>עדכונים והודעות</h2>
+    ${renderAllUpdates(App, session)}
+  </div>`;
   const body = view==="logistics" ? renderLogistics(App, session) : renderTraining(App, session);
   return `<div class="card">
     <span class="backlink" data-action="go-home">◀ חזרה לאיזור האישי</span>
@@ -1318,6 +1338,7 @@ function onClick(App, a, el){
     saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null; T.data = null; F.data = null; N.state = null;
     return App.render();
   }
+  if(a==="portal-go-updates"){ S.view = "updates"; S.ui = {}; F.data = null; T.postOpen = null; T.controlOpen = null; T.attError = null; return App.render(); }
   if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; T.data = null; F.data = null; T.controlOpen = null; T.postOpen = null; return App.render(); }
   if(a==="portal-go-logistics"){ S.view = "logistics"; S.ui = {}; T.data = null; L.data = null; L.msg = null; L.error = null; return App.render(); }
   if(a==="portal-log-save") return saveLogistics(App);
@@ -1345,7 +1366,7 @@ function onClick(App, a, el){
     const s = loadSession(App); if(!s) return App.render();
     const p = ((F.data&&F.data.posts)||[]).find(x=>x.id===el.dataset.id); if(!p) return App.render();
     if(!p.read){ p.read = true; App.apiRpc("worker_post_read", {p_token:s.token, p_post_id:p.id}).catch(()=>{}); }
-    S.view = "training"; S.ui = {}; T.postOpen = p; T.controlOpen = null; return App.render();
+    S.view = S.view==="updates" ? "updates" : "training"; S.ui = {}; T.postOpen = p; T.controlOpen = null; return App.render();
   }
   if(a==="portal-k-open-post") return pvGo(App, "post", {id:el.dataset.id, from:"k"});
   if(a==="portal-pv"){
@@ -1402,7 +1423,14 @@ function onClick(App, a, el){
     .portal-drop{border:2px dashed #9fb3c8;border-radius:10px;padding:18px;text-align:center;background:#f8fbff;}
     .portal-drop.over{border-color:#0c3a6e;background:#e8f1fb;}
     .portal-cols{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:14px;align-items:start;}
-    @media (max-width:760px){ .portal-cols{grid-template-columns:minmax(0,1fr);gap:0;} }
+    .portal-col-side{display:flex;flex-direction:column;align-self:stretch;}
+    .portal-updates{flex:1;cursor:pointer;display:flex;flex-direction:column;}
+    .portal-updates:hover{border-color:var(--primary);}
+    .portal-updates .portal-tasks{flex:1;}
+    .portal-more{margin-top:10px;color:var(--primary);font-weight:600;font-size:.9em;}
+    .portal-snip{display:block;font-size:.85em;color:var(--text);opacity:.8;margin-top:2px;overflow-wrap:anywhere;}
+    .portal-unread{background:#fff8e6;}
+    @media (max-width:760px){ .portal-cols{grid-template-columns:minmax(0,1fr);gap:0;} .portal-updates{flex:none;} }
     .portal-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;}
     .portal-dtile{background:var(--primary-light);border:1px solid var(--border);border-radius:10px;padding:12px 8px;text-align:center;cursor:pointer;min-width:0;}
     .portal-dtile:hover{background:#d7e9fc;}

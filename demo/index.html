@@ -142,7 +142,7 @@
 <main id="app"></main>
 <footer>מערכת פנימית · חברת אבטחה · סביבת דמו</footer>
 
-<script src="portal.js?v=15"></script>
+<script src="portal.js?v=16"></script>
 <script>
 (function(){
 "use strict";
@@ -394,6 +394,7 @@ function render(){
     (S.view==="pview" && window.Portal) ? window.Portal.pvTitle() :
     S.view==="training" ? "הדרכה" :
     S.view==="logistics" ? "לוגיסטי" :
+    S.view==="updates" ? "עדכונים והודעות" :
     S.view==="managers" ? "כניסת מנהלים" :
     S.view==="submit" ? "הגשת אילוצים" :
     S.view==="aggregate" ? "טבלה מרוכזת ובניית סידור" :
@@ -402,7 +403,7 @@ function render(){
   let html = "";
   if(S.view==="home") html = renderHome();
   else if(S.view==="managers") html = renderManagerMenu();
-  else if((S.view==="training" || S.view==="logistics") && window.Portal) html = window.Portal.renderSection(App, S.view);
+  else if((S.view==="training" || S.view==="logistics" || S.view==="updates") && window.Portal) html = window.Portal.renderSection(App, S.view);
   else if(S.view==="equipreq" && window.Portal) html = window.Portal.renderManagerRequests(App);
   else if(S.view==="mgrpw" && window.Portal) html = window.Portal.renderManagerPasswords(App);
   else if(S.view==="pview" && window.Portal) html = window.Portal.renderPView(App);
