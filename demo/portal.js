@@ -308,17 +308,23 @@ function renderWorkerHome(App, session){
     ${N.state==="on" ? `<p class="muted" style="margin:10px 0 0;font-size:.85em;">🔔 התראות פעילות במכשיר הזה</p>` : ""}
   </div>
   ${renderPushCard(App, session)}
-  <div class="card">
-    <h3>🔔 עדכונים</h3>
-    ${renderWorkerUpdates(App, session)}
-  </div>
-  <div class="card">
-    <h3>משימות פתוחות</h3>
-    ${renderTasks(App, session)}
-  </div>
-  <div class="card">
-    <h3>המשמרות שלי</h3>
-    ${renderMyShifts(App, session)}
+  <div class="portal-cols">
+    <div class="portal-col-main">
+      <div class="card">
+        <h3>המשמרות שלי</h3>
+        ${renderMyShifts(App, session)}
+      </div>
+      <div class="card">
+        <h3>משימות פתוחות</h3>
+        ${renderTasks(App, session)}
+      </div>
+    </div>
+    <div class="portal-col-side">
+      <div class="card">
+        <h3>🔔 עדכונים והודעות</h3>
+        ${renderWorkerUpdates(App, session)}
+      </div>
+    </div>
   </div>`;
 }
 
@@ -1395,6 +1401,8 @@ function onClick(App, a, el){
     .portal-doc{background:#fff;border:1px solid #e3e9f0;border-radius:10px;padding:16px;margin-top:10px;}
     .portal-drop{border:2px dashed #9fb3c8;border-radius:10px;padding:18px;text-align:center;background:#f8fbff;}
     .portal-drop.over{border-color:#0c3a6e;background:#e8f1fb;}
+    .portal-cols{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:14px;align-items:start;}
+    @media (max-width:760px){ .portal-cols{grid-template-columns:minmax(0,1fr);gap:0;} }
     .portal-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;}
     .portal-dtile{background:var(--primary-light);border:1px solid var(--border);border-radius:10px;padding:12px 8px;text-align:center;cursor:pointer;min-width:0;}
     .portal-dtile:hover{background:#d7e9fc;}
