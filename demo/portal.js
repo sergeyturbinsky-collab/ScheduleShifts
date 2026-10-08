@@ -1341,7 +1341,12 @@ async function doLogin(App){
     saveSession(App, res);
     P.selectedId = null; P.code = ""; P.query = ""; P.shifts = null; P.checkedSession = true; T.data = null; F.data = null;
     App.render();
-  }catch(err){ P.busy = false; P.error = err.message; App.render(); }
+  }catch(err){
+    P.busy = false;
+    // "Failed to fetch" = הבקשה לא הגיעה לשרת (אין אינטרנט / רשת חוסמת) - הודעה ברורה בעברית
+    P.error = /failed to fetch|networkerror|load failed/i.test(err.message) ? "אין חיבור לשרת. בדקו את החיבור לאינטרנט ונסו שוב." : err.message;
+    App.render();
+  }
 }
 
 function onClick(App, a, el){
