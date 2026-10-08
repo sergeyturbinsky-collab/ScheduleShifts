@@ -636,6 +636,15 @@ function fmtD(App, s){ return s ? App.fmtDateHeb(String(s).slice(0,10)) : ""; }
 function pct(n, d){ return d ? Math.round(n*100/d) : 0; }
 /* הקב"ט של העובד = שם הצוות שלו (דניאל כתב, אביחי קדוש, אלירן חמו, עידן בסעד) */
 function workerKabat(App, w){ const t = App.teamById(w.team_id); if(!t) return "ללא קב\"ט"; return (t.sectors||[]).length ? `קב"ט ${t.name}` : t.name; }
+/* תוצאת בוחן שהגיעה לישראל (2026-10-08) */
+function resultRowHtml(App, r){
+  const esc = App.escapeHtml;
+  return `<div class="portal-task${r.is_new?" portal-unread":""}" data-action="portal-pv" data-page="trn-training" data-id="${r.training_id}">
+    <span class="portal-task-icon ${r.passed?"done":""}">${r.passed?"✔":"✖"}</span>
+    <span><span style="font-weight:${r.is_new?800:600};">${esc(r.worker_name)}</span> — ${esc(r.training_title)}
+      <span class="muted" style="font-size:.85em;display:block;">${r.passed?"עבר":"לא עבר"}${r.score!=null?` · ציון ${r.score}`:""} · ${esc(workerKabat(App, r))} · ${fmtD(App, r.completed_at)}</span></span>
+  </div>`;
+}
 /* רשימת מי שטרם ביצע, מחולקת לפי קב"טים (חומר מקצועי, 2026-10-08) */
 function notDoneByKabatHtml(App, ws, isDone, notLabel){
   const esc = App.escapeHtml;
@@ -836,7 +845,8 @@ async function loadIsrael(App, ms){
       App.apiRpc("trn_controls_list", {p_token: ms.token}),
       App.apiRpc("trn_posts_list", {p_token: ms.token})
     ]);
-    I.data = {ov, onb, ctrls, posts};
+    const res = await App.apiRpc("trn_results_recent", {p_token: ms.token}).catch(()=>({new_count:0, results:[]}));
+    I.data = {ov, onb, ctrls, posts, res: res || {new_count:0, results:[]}};
   }catch(e){
     if(/session/i.test(e.message)){ saveMgr(App, null); clearMgrMode(App); }
     I.data = {error: "שגיאה בטעינת הנתונים"};
@@ -849,6 +859,7 @@ function renderIsraelDashboard(App, ms){
   if(I.data.loading) return `<div class="card"><p class="muted">טוען...</p></div>`;
   if(I.data.error) return `<div class="card"><p class="shortage">${esc(I.data.error)}</p></div>`;
   const {ov, onb, ctrls, posts} = I.data;
+  const res = I.data.res || {new_count:0, results:[]};
   const trs = ov.trainings||[];
   const progs = ov.programs||[];
   const notDoneOnb = onb.filter(w=>onbDone(w)<ONB_KEYS.length).length;
@@ -860,6 +871,7 @@ function renderIsraelDashboard(App, ms){
     label:"הדרכה לעובדים חדשים (תחנת הדרכה בקליטה)", sub: waitTraining ? `${waitTraining} עובדים ממתינים` : "כולם עברו"});
   progs.forEach(p=>tasks.push({done: p.eligible>0 && p.done>=p.eligible, page:"trn-program", id:p.id,
     label:`השלמת ${p.name}`, sub: p.done>=p.eligible ? "כולם ביצעו" : `נותרו ${p.eligible-p.done} מאבטחים`}));
+  const shownTrs = I.showAll ? trs : trs.slice(0,3);
   const tile = (page, kind, title, big, sub)=>`<div class="portal-dtile" data-action="portal-pv" data-page="${page}"${kind?` data-kind="${kind}"`:""}>
       <div class="portal-dtile-t">${title}</div><div class="portal-dtile-n">${big}</div><div class="portal-dtile-s">${sub}</div></div>`;
   const sumDone = progs.reduce((x,p)=>x+p.done,0), sumElig = progs.reduce((x,p)=>x+p.eligible,0);
@@ -873,6 +885,21 @@ function renderIsraelDashboard(App, ms){
         <span class="portal-task-icon ${t.done?"done":""}" title="${t.done?"בוצע":"טרם בוצע"}">${t.done?"✔":"🕒"}</span>
         <span><span style="font-weight:600;">${esc(t.label)}</span> <span class="muted" style="font-size:.85em;">${esc(t.sub)}</span></span>
       </div>`).join("")}</div>
+  </div>
+  <div class="card">
+    <div class="flexbar" style="justify-content:space-between;">
+      <h3 style="margin:0;">לומדות ובחנים</h3>
+      ${res.new_count ? `<span class="portal-badge">🔔 ${res.new_count} תוצאות בחנים חדשות</span>` : ""}
+    </div>
+    ${trs.length ? `<div class="portal-grid3" style="margin-top:10px;">${shownTrs.map(t=>`<div class="portal-dtile" data-action="portal-pv" data-page="trn-training" data-id="${t.id}">
+        <div class="portal-dtile-t">${esc(t.title)}</div><div class="portal-dtile-n">${pct(t.passed,t.eligible)}%</div>
+        <div class="portal-dtile-s">${t.passed}/${t.eligible} · ${fmtD(App,t.published_at)}</div></div>`).join("")}</div>
+      ${trs.length>3 ? `<button class="btn small secondary" data-action="portal-trn-more" style="margin-top:8px;">${I.showAll?"הצג פחות":`עוד (${trs.length-3})`}</button>`:""}`
+    : `<p class="muted" style="margin:8px 0 0;">עדיין לא הועלו לומדות. כשיהיו — כאן יופיעו אחוזי הביצוע של כל לומדה.</p>`}
+    <h4 style="margin:14px 0 6px;">תוצאות בחנים אחרונות</h4>
+    ${res.results.length ? `<div class="portal-tasks">${res.results.slice(0,5).map(r=>resultRowHtml(App, r)).join("")}</div>
+      <p style="margin:6px 0 0;"><span class="backlink" data-action="portal-pv" data-page="trn-results">לכל התוצאות ◀</span></p>`
+    : `<p class="muted" style="margin:0;">כשמאבטח יסיים בוחן, התוצאה תגיע לכאן.</p>`}
   </div>
   <div class="card">
     <div class="portal-grid3">
@@ -889,12 +916,12 @@ function renderIsraelDashboard(App, ms){
 /* ---------- עמודי משנה (view "pview") ---------- */
 const PV_TITLES = { "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
-  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום" };
+  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
 function pvGo(App, page, args, push){
   if(push !== false && App.S.view==="pview" && PV.page) PV.stack.push({page:PV.page, args:PV.args});
   if(App.S.view!=="pview") PV.stack = [];
-  PV.page = page; PV.args = args||{}; PV.data = null; PV.posts = null; PV.msg = null; PV.error = null; PV.busy = false;
+  PV.page = page; PV.args = args||{}; PV.data = null; PV.posts = null; PV.seenSent = false; PV.msg = null; PV.error = null; PV.busy = false;
   if(page==="trn-control-new" || page==="trn-post-new") PV.form = {};
   App.S.view = "pview"; App.S.ui = {};
   App.render();
@@ -1033,6 +1060,13 @@ function renderPView(App){
       <div class="field"><label>סיכום</label><textarea id="ctlSummary" rows="10" style="width:100%;">${esc(f.summary||"")}</textarea></div>
       <button class="btn ok" data-action="portal-ctl-send" ${PV.busy?"disabled":""}>שלח למאבטח ולקב"ט שלו</button>`);
   }
+  if(pg==="trn-results"){
+    if(needLoad("trn_results_recent", {p_token:tok})) return loading();
+    if(!PV.seenSent){ PV.seenSent = true; App.apiRpc("trn_results_seen", {p_token:tok}).then(()=>{ I.data = null; }).catch(()=>{}); }
+    const rs = (PV.data.r && PV.data.r.results) || [];
+    return wrap(`<h2>תוצאות בחנים</h2>
+      ${rs.length ? `<div class="portal-tasks">${rs.map(r=>resultRowHtml(App, r)).join("")}</div>` : `<p class="muted">עדיין אין תוצאות.</p>`}`);
+  }
   if(pg==="trn-material"){
     if(needLoad("trn_overview", {p_token:tok})) return loading();
     if(!PV.posts){ App.apiRpc("trn_posts_list", {p_token:tok}).then(r=>{ PV.posts = r||[]; App.render(); }).catch(()=>{ PV.posts = []; App.render(); }); return loading(); }
@@ -1144,7 +1178,10 @@ function onbListHtml(App){
       const st = next ? onbStations(App, w).find(s=>s.key===next.key) : null;
       return `<tr><td style="text-align:right;">${esc(w.name)}</td><td style="text-align:right;">${esc(workerSector(App,w))}</td>
         <td>${onbDone(w)}/${ONB_KEYS.length}</td><td style="text-align:right;">${next?`${fmtDT(App,next.scheduled_at)} · ${esc(st?st.who:"")}`:'<span class="muted">—</span>'}</td>
-        <td><button class="btn small" data-action="portal-pv" data-page="trn-onb-worker" data-id="${w.id}">לתאם הדרכה / חפיפה</button></td></tr>`;
+        <td style="white-space:nowrap;"><button class="btn small" data-action="portal-pv" data-page="trn-onb-worker" data-id="${w.id}">לתאם הדרכה / חפיפה</button>
+          ${onbDone(w)>=ONB_KEYS.length
+            ? `<span class="portal-task-icon done" style="margin-inline-start:6px;">✔</span> הושלם <button class="btn small secondary" data-action="portal-onb-complete" data-id="${w.id}" data-done="0">בטל</button>`
+            : `<button class="btn small ok" data-action="portal-onb-complete" data-id="${w.id}" data-done="1" title="מסמן את כל 6 התחנות כבוצעו">✔ בוצע</button>`}</td></tr>`;
     }).join("")}</tbody></table>`).join("");
 }
 
@@ -1156,6 +1193,11 @@ async function trnAction(App, a, el){
     if(a==="portal-prog-set"){
       await App.apiRpc("trn_program_set", {p_token:tok, p_program_id:PV.args.id, p_worker_id:el.dataset.worker, p_done:el.dataset.done==="1", p_done_at:null});
       PV.data = null; I.data = null; PV.msg = null; return App.render();
+    }
+    if(a==="portal-onb-complete"){
+      el.disabled = true;
+      await App.apiRpc("trn_onboarding_complete", {p_token:tok, p_worker_id:el.dataset.id, p_done:el.dataset.done==="1"});
+      PV.data = null; I.data = null; PV.msg = null; PV.error = null; return App.render();
     }
     if(a==="portal-onb-save"){
       const k = el.dataset.key;
@@ -1473,7 +1515,7 @@ function onClick(App, a, el){
   if(a==="portal-trn-more"){ I.showAll = !I.showAll; return App.render(); }
   if(a==="portal-att-open") return openAttachment(App, el);
   if(a==="portal-post-file-remove"){ savePostFields(); (PV.form.files||[]).splice(Number(el.dataset.idx),1); return App.render(); }
-  if(a==="portal-prog-set" || a==="portal-onb-save" || a==="portal-ctl-send" || a==="portal-post-send") return trnAction(App, a, el);
+  if(a==="portal-prog-set" || a==="portal-onb-save" || a==="portal-onb-complete" || a==="portal-ctl-send" || a==="portal-post-send") return trnAction(App, a, el);
   if(a==="portal-pw-load") return pwLoad(App);
   if(a==="portal-pw-save") return pwSave(App, el.dataset.id);
   if(a==="portal-mgr-tile"){ M.tile = el.dataset.id; M.code=null; M.list=null; M.error=null; M.msg=null; return App.render(); }
@@ -1525,6 +1567,7 @@ function onClick(App, a, el){
     .portal-snip{display:block;font-size:.85em;color:var(--text);opacity:.8;margin-top:2px;overflow-wrap:anywhere;}
     .portal-unread{background:#fff8e6;}
     @media (max-width:760px){ .portal-cols{grid-template-columns:minmax(0,1fr);gap:0;} .portal-updates{flex:none;} }
+    .portal-badge{background:#fff3cd;color:#8a5a00;border-radius:999px;padding:3px 10px;font-weight:700;font-size:.85em;}
     .portal-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
     .portal-pct{min-width:52px;text-align:center;font-weight:800;color:var(--primary-dark);font-size:1.1em;}
     .portal-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;}
