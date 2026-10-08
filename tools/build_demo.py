@@ -28,7 +28,7 @@ assert "wcbnkrtxdzfygyyanasx" in s and "hcejwcxsqhpiufaakalj" not in s
 # ---- portal + publish patches ----
 rep("""<script>
 (function(){
-"use strict";""","""<script src="portal.js?v=11"></script>
+"use strict";""","""<script src="portal.js?v=12"></script>
 <script>
 (function(){
 "use strict";""")
@@ -137,6 +137,14 @@ rep("""      ${window.Portal? `<button class="btn secondary" data-action="portal
       ${window.Portal? `<button class="btn secondary" data-action="go-mgrpw">סיסמאות מנהלים</button>`:""}""")
 rep("""  if(a==="managers-back"){""","""  if(a==="go-mgrpw" && window.Portal){ window.Portal.resetPasswordsScreen(); S.view="mgrpw"; S.ui={}; return render(); }
   if(a==="managers-back"){""")
+# ---- הדרכה / בקרות / תכנים (2026-10-08): עמודי משנה של הפורטל ושינויי קבצים ----
+rep("""  else if(S.view==="mgrpw" && window.Portal) html = window.Portal.renderManagerPasswords(App);""","""  else if(S.view==="mgrpw" && window.Portal) html = window.Portal.renderManagerPasswords(App);
+  else if(S.view==="pview" && window.Portal) html = window.Portal.renderPView(App);""")
+rep("""    S.view==="mgrpw" ? "סיסמאות מנהלים" :""","""    S.view==="mgrpw" ? "סיסמאות מנהלים" :
+    (S.view==="pview" && window.Portal) ? window.Portal.pvTitle() :""")
+rep("""  app.onchange = onAppChange;
+  app.oninput""","""  app.onchange = e=>{ const act = e.target && e.target.dataset ? String(e.target.dataset.action||"") : ""; if(window.Portal && act.startsWith("portal-")) return window.Portal.onChange(App, e); return onAppChange(e); };
+  app.oninput""")
 # ---- מפתחות localStorage נפרדים לדמו (הדמו והחי באותו origin) ----
 for k in ["identity","pin","team_access"]:
     s = s.replace('"cst_%s"' % k, '"cstdemo_%s"' % k)

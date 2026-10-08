@@ -104,7 +104,7 @@ async function loadShifts(App, session){
   const from = App.fmtDate(App.addDays(new Date(), -1));
   const to = App.fmtDate(App.addDays(new Date(), 35));
   try{
-    P.shifts = await App.apiRpc("worker_my_shifts", {p_token: session.token, p_from: from, p_to: to});
+    P.shifts = (await App.apiRpc("worker_my_shifts", {p_token: session.token, p_from: from, p_to: to})) || [];
     P.shiftsError = null;
   }catch(e){
     if(/session/i.test(e.message)){ saveSession(App, null); P.shifts=null; }
@@ -174,11 +174,13 @@ function renderTasks(App, session){
     label: "הגשת סידור עבודה", sub: T.data.periodStart ? `לתקופה שמתחילה ב${App.fmtDateHeb(T.data.periodStart)}` : ""});
   trainingsForMainScreen(T.data.trainings).forEach(t=>rows.push({done: !!t.passed, action:"portal-go-training",
     label: `מעבר על הלומדה "${t.title}" ומבחן`, sub: ""}));
+  controlsForMainScreen(T.data.controls).forEach(c=>rows.push({done: !!c.read_at, action:"portal-open-control", id:c.id,
+    label: `קריאת סיכום בקרה: ${c.title}`, sub: fmtD(App, c.exercise_date)}));
   if(T.data.equipment_done !== null && T.data.equipment_done !== undefined){
     rows.push({done: !!T.data.equipment_done, action:"portal-go-logistics", label: "מילוי סטטוס ציוד", sub: ""});
   }
   return `<div class="portal-tasks">${rows.map(r=>`
-    <div class="portal-task" data-action="${r.action}">
+    <div class="portal-task" data-action="${r.action}"${r.id?` data-id="${r.id}"`:""}>
       <span class="portal-task-icon ${r.done?"done":""}" title="${r.done?"בוצע":"טרם בוצע"}">${r.done?"✔":"🕒"}</span>
       <span><span style="font-weight:600;">${esc(r.label)}</span>${r.sub?` <span class="muted" style="font-size:.85em;">${esc(r.sub)}</span>`:""}</span>
     </div>`).join("")}</div>`;
@@ -191,15 +193,15 @@ function renderTraining(App, session){
   if(T.data.loading) return `<p class="muted">טוען...</p>`;
   if(T.data.error) return `<p class="shortage">${esc(T.data.error)}</p>`;
   const list = (T.data.trainings||[]).slice().reverse();
-  if(!list.length) return `<p class="muted">עדיין לא פורסמו לומדות.</p>`;
-  return `<div style="overflow-x:auto;"><table>
+  if(!list.length) return `<h3>לומדות</h3><p class="muted">עדיין לא פורסמו לומדות.</p>` + renderWorkerTrainingExtras(App, session);
+  return `<h3>לומדות</h3><div style="overflow-x:auto;"><table>
     <thead><tr><th style="text-align:right;">לומדה</th><th>פורסמה</th><th>סטטוס</th></tr></thead>
     <tbody>${list.map(t=>`<tr>
       <td style="text-align:right;">${esc(t.title)}</td>
       <td>${App.fmtDateHeb(String(t.published_at).slice(0,10))}</td>
       <td>${t.passed ? `<span class="portal-task-icon done">✔</span> בוצע ${t.completed_at?App.fmtDateHeb(String(t.completed_at).slice(0,10)):""}` : `🕒 טרם בוצע`}</td>
     </tr>`).join("")}</tbody>
-  </table></div>`;
+  </table></div>` + renderWorkerTrainingExtras(App, session);
 }
 
 function renderWorkerHome(App, session){
@@ -224,9 +226,13 @@ function renderWorkerHome(App, session){
     </div>
     <div class="grid-teams" style="margin-top:12px;">
       ${tile("portal-go-submit", "הגשת משמרות", "הגשת אילוצים לתקופה הבאה")}
-      ${tile("portal-go-training", "הדרכה", "לומדות ומבחנים")}
+      ${tile("portal-go-training", "הדרכה", "לומדות, בקרות ותכנים")}
       ${isMokedWorker(App, session) ? "" : tile("portal-go-logistics", "לוגיסטי", "הציוד שלי ובקשת ציוד")}
     </div>
+  </div>
+  <div class="card">
+    <h3>🔔 עדכונים</h3>
+    ${renderWorkerUpdates(App, session)}
   </div>
   <div class="card">
     <h3>משימות פתוחות</h3>
@@ -509,11 +515,503 @@ async function pwSave(App, id){
   App.render();
 }
 
+/* ================================================================
+   הדרכה, בקרות, תכנים והודעות (דמו, 2026-10-08) - לבקשת סרגיי:
+   - מאבטח: "הבקרות שלי" (סיכומי תרגיל שישראל כותב), כל בקרה חדשה = משימת קריאה, ואישור "קראתי"
+     בסוף המסמך. תכנים/סרטונים והודעות - בלשונית הדרכה, וחדשים מופיעים ב"עדכונים" במסך הראשי.
+   - קב"ט גזרתי (דניאל, אביחי, עידן, אלירן): סיכומי התרגילים של המאבטחים שלו, כל הרובריקות של
+     ישראל, והתראות במסך הראשי (פרסומים חדשים, סיכומי תרגיל חדשים, בקשות ציוד ממתינות).
+   - ישראל בודילובסקי: לומדות ואחוזי ביצוע, פרו-ריידינג (כולל תמונות דו"חות שהעובד לא רואה),
+     קליטת עובד חדש, סיכומי תרגילים, תכנים וסרטונים, הודעות לקב"טים, הודעות לכלל המאבטחים והקב"טים.
+   ================================================================ */
+const POST_KIND = { content:"תכנים וסרטונים", kabat:"הודעה לקב\"טים", all:"הודעה לכלל המאבטחים והקב\"טים" };
+const F = { data:null };            // פיד של העובד
+const K = { data:null };            // פיד והתראות של הקב"ט
+const I = { data:null, showAll:false }; // לוח הבקרה של ישראל
+const PV = { page:null, args:{}, stack:[], data:null, form:{}, msg:null, error:null, busy:false, filter:"", onlyOpen:true };
+
+function fmtD(App, s){ return s ? App.fmtDateHeb(String(s).slice(0,10)) : ""; }
+function pct(n, d){ return d ? Math.round(n*100/d) : 0; }
+function workerSector(App, w){
+  if(w.city_sectors && w.city_sectors.length) return w.city_sectors.join(" / ");
+  const t = App.teamById(w.team_id);
+  return t ? ((t.sectors&&t.sectors.length) ? t.sectors.join(" / ") : t.name) : "";
+}
+function youtubeId(url){
+  const m = String(url||"").match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([\w-]{6,})/);
+  return m ? m[1] : null;
+}
+/* הקטנת תמונה בדפדפן לפני שליחה (עד 1600 פיקסל, JPEG) */
+function compressImage(file){
+  return new Promise((resolve, reject)=>{
+    const fr = new FileReader();
+    fr.onerror = ()=>reject(new Error("לא הצלחתי לקרוא את הקובץ"));
+    fr.onload = ()=>{
+      const img = new Image();
+      img.onerror = ()=>reject(new Error("הקובץ אינו תמונה"));
+      img.onload = ()=>{
+        const max = 1600, sc = Math.min(1, max/Math.max(img.width, img.height));
+        const c = document.createElement("canvas");
+        c.width = Math.round(img.width*sc); c.height = Math.round(img.height*sc);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL("image/jpeg", 0.8));
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+function docHtml(App, title, meta, body, link, image){
+  const esc = App.escapeHtml;
+  const yt = youtubeId(link);
+  return `<div class="portal-doc">
+    <h2 style="margin-top:0;">${esc(title)}</h2>
+    ${meta?`<p class="muted" style="margin-top:-6px;">${esc(meta)}</p>`:""}
+    ${body?`<div style="white-space:pre-wrap;line-height:1.7;">${esc(body)}</div>`:""}
+    ${yt?`<div style="position:relative;padding-top:56.25%;margin-top:12px;"><iframe src="https://www.youtube.com/embed/${yt}" style="position:absolute;inset:0;width:100%;height:100%;border:0;" allowfullscreen></iframe></div>`
+        : (link?`<p style="margin-top:12px;"><a href="${esc(link)}" target="_blank" rel="noopener">פתיחת הקישור ↗</a></p>`:"")}
+    ${image?`<img src="${image}" alt="" style="max-width:100%;margin-top:12px;border-radius:8px;">`:""}
+  </div>`;
+}
+
+/* ---------- מאבטח ---------- */
+function controlsForMainScreen(list){
+  if(!list || !list.length) return [];
+  const latest = list[list.length-1];
+  return list.filter(c=> !c.read_at || c.id===latest.id);
+}
+async function loadFeed(App, session){
+  F.data = {loading:true};
+  try{ F.data = {posts: await App.apiRpc("worker_feed", {p_token: session.token}) || []}; }
+  catch(e){ F.data = {posts:[], error:"שגיאה בטעינת העדכונים"}; }
+  App.render();
+}
+function renderWorkerUpdates(App, session){
+  const esc = App.escapeHtml;
+  if(!F.data){ loadFeed(App, session); return `<p class="muted">טוען...</p>`; }
+  if(F.data.loading) return `<p class="muted">טוען...</p>`;
+  const unread = (F.data.posts||[]).filter(p=>!p.read);
+  if(!unread.length) return `<p class="muted">אין עדכונים חדשים. <span class="backlink" data-action="portal-go-training">לכל התכנים וההודעות</span></p>`;
+  return `<div class="portal-tasks">${unread.map(p=>`
+    <div class="portal-task" data-action="portal-open-post" data-id="${p.id}">
+      <span class="portal-task-icon">🔔</span>
+      <span><span style="font-weight:600;">${esc(p.title)}</span> <span class="muted" style="font-size:.85em;">${esc(POST_KIND[p.kind]||"")} · ${fmtD(App,p.created_at)}</span></span>
+    </div>`).join("")}</div>`;
+}
+function renderControlDoc(App, session){
+  const esc = App.escapeHtml;
+  const back = `<span class="backlink" data-action="portal-doc-back">◀ חזרה להדרכה</span>`;
+  if(!T.control){
+    App.apiRpc("worker_control_get", {p_token: session.token, p_id: T.controlOpen})
+      .then(r=>{ T.control = r; App.render(); })
+      .catch(e=>{ T.control = {error: e.message}; App.render(); });
+    T.control = {loading:true};
+  }
+  if(T.control.loading) return back + `<p class="muted">טוען...</p>`;
+  if(T.control.error) return back + `<p class="shortage">${esc(T.control.error)}</p>`;
+  const c = T.control;
+  return back + docHtml(App, c.title, `סיכום בקרת תרגיל · ${fmtD(App,c.exercise_date)}${c.author?` · ${c.author}`:""}`, c.summary) + `
+    <div style="margin-top:18px;border-top:1px solid #e3e9f0;padding-top:12px;">
+      ${c.read_at ? `<span class="portal-task-icon done">✔</span> קראת את הסיכום ב-${fmtD(App,c.read_at)}`
+                  : `<button class="btn ok" data-action="portal-control-read" ${PV.busy?"disabled":""}>קראתי</button>`}
+    </div>`;
+}
+function renderPostDoc(App){
+  const p = T.postOpen;
+  return `<span class="backlink" data-action="portal-doc-back">◀ חזרה להדרכה</span>` +
+    docHtml(App, p.title, `${POST_KIND[p.kind]||""} · ${fmtD(App,p.created_at)}`, p.body, p.link_url, p.image_data);
+}
+function renderWorkerTrainingExtras(App, session){
+  const esc = App.escapeHtml;
+  const ctrls = (T.data && T.data.controls ? T.data.controls : []).slice().reverse();
+  if(!F.data){ loadFeed(App, session); }
+  const posts = (F.data && F.data.posts) || [];
+  const postList = kind=>{
+    const ps = posts.filter(p=>p.kind===kind);
+    if(!ps.length) return `<p class="muted">אין עדיין פרסומים.</p>`;
+    return `<div class="portal-tasks">${ps.map(p=>`<div class="portal-task" data-action="portal-open-post" data-id="${p.id}">
+      <span class="portal-task-icon">${p.read?"📄":"🔔"}</span>
+      <span><span style="font-weight:600;">${esc(p.title)}</span> <span class="muted" style="font-size:.85em;">${fmtD(App,p.created_at)}${youtubeId(p.link_url)?" · סרטון":""}</span></span></div>`).join("")}</div>`;
+  };
+  return `
+    <h3>הבקרות שלי</h3>
+    ${ctrls.length ? `<div class="portal-tasks">${ctrls.map(c=>`<div class="portal-task" data-action="portal-open-control" data-id="${c.id}">
+      <span class="portal-task-icon ${c.read_at?"done":""}">${c.read_at?"✔":"🕒"}</span>
+      <span><span style="font-weight:600;">${esc(c.title)}</span> <span class="muted" style="font-size:.85em;">${fmtD(App,c.exercise_date)}${c.read_at?"":" · טרם נקרא"}</span></span></div>`).join("")}</div>`
+      : `<p class="muted">עדיין אין סיכומי בקרות.</p>`}
+    <h3>תכנים וסרטונים</h3>${postList("content")}
+    <h3>הודעות</h3>${postList("all")}`;
+}
+
+/* ---------- קב"ט גזרתי ---------- */
+async function loadKabat(App, ms){
+  K.data = {loading:true};
+  try{ K.data = (await App.apiRpc("kabat_feed", {p_token: ms.token})) || {posts:[]}; }
+  catch(e){ K.data = {error:"שגיאה בטעינת ההתראות", posts:[]}; }
+  App.render();
+}
+function renderKabatUpdates(App, ms){
+  const esc = App.escapeHtml;
+  if(!K.data){ loadKabat(App, ms); return `<p class="muted">טוען...</p>`; }
+  if(K.data.loading) return `<p class="muted">טוען...</p>`;
+  if(K.data.error) return `<p class="shortage">${esc(K.data.error)}</p>`;
+  const rows = [];
+  if(K.data.new_controls) rows.push(`<div class="portal-task" data-action="portal-pv" data-page="k-controls"><span class="portal-task-icon">🔔</span><span><b>${K.data.new_controls} סיכומי תרגיל חדשים</b> של המאבטחים שלך</span></div>`);
+  if(K.data.pending_requests) rows.push(`<div class="portal-task" data-action="portal-mh-equip"><span class="portal-task-icon">🔔</span><span><b>${K.data.pending_requests} בקשות ציוד</b> ממתינות לטיפול</span></div>`);
+  (K.data.posts||[]).filter(p=>!p.read).forEach(p=>rows.push(`<div class="portal-task" data-action="portal-k-open-post" data-id="${p.id}"><span class="portal-task-icon">🔔</span>
+    <span><span style="font-weight:600;">${esc(p.title)}</span> <span class="muted" style="font-size:.85em;">${esc(POST_KIND[p.kind]||"")} · ${fmtD(App,p.created_at)}</span></span></div>`));
+  return rows.length ? `<div class="portal-tasks">${rows.join("")}</div>` : `<p class="muted">אין עדכונים חדשים.</p>`;
+}
+
+/* ---------- ישראל: לוח הבקרה ---------- */
+const ONB_KEYS = ["general","training","kabat","moked","weapon","logistics"];
+function onbStations(App, w){
+  const t = App.teamById(w.team_id) || {};
+  const jlm = (t.sectors||[]).some(s=>s==="ירושלים" || s==="סובב ירושלים");
+  return [
+    {key:"general",   who:"שיחה כללית", what:"היכרות ותיאום ציפיות"},
+    {key:"training",  who:"ישראל בודילובסקי (קב\"ט הדרכות)", what:"הדרכה"},
+    {key:"kabat",     who:`קב"ט ${t.name||""}`, what:"נהלים והכרת גזרה"},
+    {key:"moked",     who:"סרגיי טורבינסקי", what:"מוקד ומכשירים"},
+    {key:"weapon",    who: jlm ? "גלי פריד" : "מנהל המפעל", what:"חתימה על נשק ותדריך נשק"},
+    {key:"logistics", who:"ניר חטבי", what:"ציוד לוגיסטי"}
+  ];
+}
+function onbDone(w){ return (w.items||[]).filter(i=>i.done).length; }
+async function loadIsrael(App, ms){
+  I.data = {loading:true};
+  try{
+    const [ov, onb, ctrls, posts] = await Promise.all([
+      App.apiRpc("trn_overview", {p_token: ms.token}),
+      App.apiRpc("trn_onboarding_list", {p_token: ms.token}),
+      App.apiRpc("trn_controls_list", {p_token: ms.token}),
+      App.apiRpc("trn_posts_list", {p_token: ms.token})
+    ]);
+    I.data = {ov, onb, ctrls, posts};
+  }catch(e){
+    if(/session/i.test(e.message)){ saveMgr(App, null); clearMgrMode(App); }
+    I.data = {error: "שגיאה בטעינת הנתונים"};
+  }
+  App.render();
+}
+function renderIsraelDashboard(App, ms){
+  const esc = App.escapeHtml;
+  if(!I.data){ loadIsrael(App, ms); return `<div class="card"><p class="muted">טוען...</p></div>`; }
+  if(I.data.loading) return `<div class="card"><p class="muted">טוען...</p></div>`;
+  if(I.data.error) return `<div class="card"><p class="shortage">${esc(I.data.error)}</p></div>`;
+  const {ov, onb, ctrls, posts} = I.data;
+  const trs = ov.trainings||[];
+  const shown = I.showAll ? trs : trs.slice(0,5);
+  const notDoneOnb = onb.filter(w=>onbDone(w)<ONB_KEYS.length).length;
+  const postSection = (kind, title, sub)=>{
+    const ps = posts.filter(p=>p.kind===kind);
+    return `<div class="card">
+      <div class="flexbar" style="justify-content:space-between;"><h3 style="margin:0;">${title}</h3>
+        <button class="btn small" data-action="portal-pv" data-page="trn-post-new" data-kind="${kind}">+ פרסום חדש</button></div>
+      <p class="muted" style="margin:4px 0 8px;">${sub}</p>
+      ${ps.length ? `<table><thead><tr><th style="text-align:right;">כותרת</th><th>תאריך</th><th>קראו</th></tr></thead><tbody>
+        ${ps.slice(0,5).map(p=>`<tr class="portal-click" data-action="portal-pv" data-page="post" data-id="${p.id}" data-from="i"><td style="text-align:right;">${esc(p.title)}${youtubeId(p.link_url)?' <span class="muted">(סרטון)</span>':""}</td><td>${fmtD(App,p.created_at)}</td><td>${p.reads}/${p.audience}</td></tr>`).join("")}
+      </tbody></table>${ps.length>5?`<p><span class="backlink" data-action="portal-pv" data-page="trn-posts" data-kind="${kind}">לכל הפרסומים (${ps.length})</span></p>`:""}` : `<p class="muted">עדיין אין פרסומים.</p>`}
+    </div>`;
+  };
+  return `
+  <div class="card">
+    <h3>לומדות ובחנים</h3>
+    ${trs.length ? `<table><thead><tr><th style="text-align:right;">לומדה</th><th>פורסמה</th><th>ביצוע</th></tr></thead><tbody>
+      ${shown.map(t=>`<tr class="portal-click" data-action="portal-pv" data-page="trn-training" data-id="${t.id}"><td style="text-align:right;">${esc(t.title)}</td><td>${fmtD(App,t.published_at)}</td><td><b>${pct(t.passed,t.eligible)}%</b> <span class="muted">(${t.passed}/${t.eligible})</span></td></tr>`).join("")}
+    </tbody></table>
+    ${trs.length>5 ? `<button class="btn small secondary" data-action="portal-trn-more" style="margin-top:8px;">${I.showAll?"הצג פחות":"עוד"}</button>`:""}`
+    : `<p class="muted">עדיין לא הועלו לומדות. העלאת לומדות ובחנים תיבנה כשנגדיר איך נראית לומדה.</p>`}
+  </div>
+  <div class="card">
+    <h3>סטטוס הדרכות</h3>
+    <div class="grid-teams">${(ov.programs||[]).map(p=>`<div class="team-tile" data-action="portal-pv" data-page="trn-program" data-id="${p.id}">
+      <div style="font-weight:700;">${esc(p.name)}</div>
+      <div style="font-size:1.4em;font-weight:800;margin-top:4px;">${pct(p.done,p.eligible)}%</div>
+      <div class="muted" style="font-size:.85em;">${p.done} מתוך ${p.eligible} מאבטחים</div></div>`).join("")}</div>
+  </div>
+  <div class="card">
+    <h3>קליטת עובד חדש</h3>
+    <p class="muted" style="margin-top:-6px;">${notDoneOnb} מאבטחים עוד לא השלימו את כל תחנות הקליטה (מתוך ${onb.length}).</p>
+    <button class="btn" data-action="portal-pv" data-page="trn-onboarding">פתח רשימה / תיאום</button>
+  </div>
+  <div class="card">
+    <div class="flexbar" style="justify-content:space-between;"><h3 style="margin:0;">סיכומי תרגילים</h3>
+      <button class="btn small" data-action="portal-pv" data-page="trn-control-new">+ סיכום בקרה חדש</button></div>
+    <p class="muted" style="margin:4px 0 8px;">הסיכום מגיע לאיזור האישי של המאבטח ושל הקב"ט שלו.</p>
+    ${ctrls.length ? `<table><thead><tr><th>תאריך</th><th style="text-align:right;">מאבטח</th><th style="text-align:right;">כותרת</th><th>נקרא</th></tr></thead><tbody>
+      ${ctrls.slice(0,5).map(c=>`<tr class="portal-click" data-action="portal-pv" data-page="control" data-id="${c.id}" data-from="i"><td>${fmtD(App,c.exercise_date)}</td><td style="text-align:right;">${esc(c.worker_name)}</td><td style="text-align:right;">${esc(c.title)}</td><td>${c.read_at?'<span class="portal-task-icon done">✔</span>':'🕒'}</td></tr>`).join("")}
+    </tbody></table>${ctrls.length>5?`<p><span class="backlink" data-action="portal-pv" data-page="trn-controls">לכל הסיכומים (${ctrls.length})</span></p>`:""}` : `<p class="muted">עדיין אין סיכומים.</p>`}
+  </div>
+  ${postSection("content", "תכנים וסרטונים", "לכלל המאבטחים והקב\"טים.")}
+  ${postSection("kabat", "הודעות לקב\"טים", "רק הקב\"טים רואים.")}
+  ${postSection("all", "הודעות לכלל המאבטחים והקב\"טים", "כל המאבטחים והקב\"טים שלהם.")}`;
+}
+
+/* ---------- עמודי משנה (view "pview") ---------- */
+const PV_TITLES = { "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
+  "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
+  "trn-post-new":"פרסום חדש", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום" };
+function pvTitle(){ return PV_TITLES[PV.page] || ""; }
+function pvGo(App, page, args, push){
+  if(push !== false && App.S.view==="pview" && PV.page) PV.stack.push({page:PV.page, args:PV.args});
+  if(App.S.view!=="pview") PV.stack = [];
+  PV.page = page; PV.args = args||{}; PV.data = null; PV.msg = null; PV.error = null; PV.busy = false;
+  if(page==="trn-control-new" || page==="trn-post-new") PV.form = {};
+  App.S.view = "pview"; App.S.ui = {};
+  App.render();
+}
+function pvBack(App){
+  const prev = PV.stack.pop();
+  if(!prev){ PV.page = null; App.S.view = "home"; App.S.ui = {}; I.data = null; K.data = null; return App.render(); }
+  PV.page = prev.page; PV.args = prev.args; PV.data = null; PV.msg = null; PV.error = null;
+  App.render();
+}
+function pvLoad(App, fn, args){
+  PV.data = {loading:true};
+  App.apiRpc(fn, args).then(r=>{ PV.data = {r}; App.render(); })
+    .catch(e=>{ PV.data = {error: e.message}; App.render(); });
+}
+function groupedBySector(App, workers, isDone, rowHtml, doneLabel, notLabel){
+  const esc = App.escapeHtml;
+  const groups = {};
+  workers.forEach(w=>{ const s = workerSector(App, w) || "ללא גזרה"; (groups[s] = groups[s]||[]).push(w); });
+  return Object.keys(groups).sort((a,b)=>a.localeCompare(b,"he")).map(sec=>{
+    const ws = groups[sec], done = ws.filter(isDone), not = ws.filter(w=>!isDone(w));
+    return `<div class="portal-group">
+      <h3 style="margin:14px 0 6px;">${esc(sec)} <span class="muted" style="font-size:.8em;">${pct(done.length, ws.length)}% (${done.length}/${ws.length})</span></h3>
+      <div class="portal-sub done">${doneLabel} (${done.length})</div>${done.map(rowHtml).join("") || '<div class="muted portal-wrow">—</div>'}
+      <div class="portal-sub">${notLabel} (${not.length})</div>${not.map(rowHtml).join("") || '<div class="muted portal-wrow">—</div>'}
+    </div>`;
+  }).join("");
+}
+function toLocalInput(iso){
+  if(!iso) return "";
+  const d = new Date(iso), p = n=>String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function fmtDT(App, iso){
+  if(!iso) return "";
+  const d = new Date(iso), p = n=>String(n).padStart(2,"0");
+  return `${App.fmtDateHeb(App.fmtDate(d))} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function renderPView(App){
+  const esc = App.escapeHtml;
+  const ms = loadMgr(App);
+  if(!ms){ App.S.view = "home"; return renderHome(App); }
+  const tok = ms.token;
+  const back = `<span class="backlink" data-action="portal-pv-back">◀ חזרה</span>`;
+  const msgs = `${PV.error?`<p class="shortage">${esc(PV.error)}</p>`:""}${PV.msg?`<p style="color:#1b7f3b;font-weight:600;">${esc(PV.msg)}</p>`:""}`;
+  const wrap = inner=>`<div class="card">${back}${inner}</div>`;
+  const loading = ()=>wrap(`<p class="muted">טוען...</p>`);
+  const pg = PV.page, a = PV.args;
+  const needLoad = (fn, args)=>{ if(!PV.data){ pvLoad(App, fn, args); return true; } return !!PV.data.loading; };
+  if(PV.data && PV.data.error) return wrap(`<p class="shortage">${esc(PV.data.error)}</p>`);
+
+  if(pg==="trn-training"){
+    if(needLoad("trn_training_detail", {p_token:tok, p_training_id:a.id})) return loading();
+    const r = PV.data.r, ws = r.workers||[];
+    const row = w=>`<div class="portal-wrow">${esc(w.name)}${w.passed&&w.completed_at?` <span class="muted">· ${fmtD(App,w.completed_at)}</span>`:""}</div>`;
+    return wrap(`<h2>${esc(r.training?r.training.title:"")}</h2>
+      <p class="muted">פורסמה ${fmtD(App, r.training&&r.training.published_at)} · ${pct(ws.filter(w=>w.passed).length, ws.length)}% ביצעו (${ws.filter(w=>w.passed).length}/${ws.length})</p>
+      ${groupedBySector(App, ws, w=>w.passed, row, "ביצעו לומדה ובוחן", "לא ביצעו")}`);
+  }
+  if(pg==="trn-program"){
+    if(needLoad("trn_program_detail", {p_token:tok, p_program_id:a.id})) return loading();
+    const r = PV.data.r, ws = r.workers||[];
+    const row = w=>`<div class="portal-wrow">
+      <span style="flex:1;">${esc(w.name)}${w.done&&w.done_at?` <span class="muted">· ${fmtD(App,w.done_at)}</span>`:""}</span>
+      ${w.done ? `<button class="btn small secondary" data-action="portal-prog-set" data-worker="${w.id}" data-done="0">בטל</button>`
+               : `<button class="btn small ok" data-action="portal-prog-set" data-worker="${w.id}" data-done="1">סמן שביצע</button>`}
+      <label class="btn small secondary" style="cursor:pointer;">העלאת דו"ח<input type="file" accept="image/*" multiple data-action="portal-trn-upload" data-worker="${w.id}" style="display:none;"></label>
+      ${w.images?`<button class="btn small secondary" data-action="portal-pv" data-page="trn-reports" data-id="${w.id}" data-program="${PV.args.id}" data-name="${esc(w.name)}">דו"חות (${w.images})</button>`:""}
+    </div>`;
+    const done = ws.filter(w=>w.done).length;
+    return wrap(`<h2>${esc(r.program?r.program.name:"")}</h2>
+      <p class="muted">${pct(done, ws.length)}% מהמאבטחים ביצעו (${done}/${ws.length}). דו"חות הסיכום נשמרים אצלך בלבד — לעובד אין גישה אליהם.</p>
+      ${msgs}${PV.busy?'<p class="muted">מעלה...</p>':""}
+      ${groupedBySector(App, ws, w=>w.done, row, "ביצעו", "לא ביצעו")}`);
+  }
+  if(pg==="trn-reports"){
+    if(needLoad("trn_report_list", {p_token:tok, p_program_id:Number(a.program), p_worker_id:a.id})) return loading();
+    const imgs = PV.data.r||[];
+    return wrap(`<h2>דו"חות — ${esc(a.name||"")}</h2>
+      ${imgs.length ? imgs.map(i=>`<div style="margin:10px 0;"><div class="muted">${fmtDT(App,i.uploaded_at)}</div><img src="${i.image_data}" alt="" style="max-width:100%;border:1px solid #e3e9f0;border-radius:8px;"></div>`).join("") : `<p class="muted">אין דו"חות.</p>`}`);
+  }
+  if(pg==="trn-onboarding"){
+    if(needLoad("trn_onboarding_list", {p_token:tok})) return loading();
+    return wrap(`<h2>קליטת עובד חדש</h2>
+      <div class="row">
+        <div class="field"><label>חיפוש שם</label><input type="text" id="onbFilter" data-action="portal-onb-filter" value="${esc(PV.filter)}" autocomplete="off"></div>
+        <label style="align-self:end;"><input type="checkbox" data-action="portal-onb-open" ${PV.onlyOpen?"checked":""}> רק מי שלא השלים</label>
+      </div>
+      <div id="onbList">${onbListHtml(App)}</div>`);
+  }
+  if(pg==="trn-onb-worker"){
+    if(needLoad("trn_onboarding_list", {p_token:tok})) return loading();
+    const w = (PV.data.r||[]).find(x=>x.id===a.id);
+    if(!w) return wrap(`<p class="muted">העובד לא נמצא.</p>`);
+    const items = {}; (w.items||[]).forEach(i=>items[i.key]=i);
+    return wrap(`<h2>${esc(w.name)}</h2>
+      <p class="muted">${esc(workerSector(App,w))} · ${onbDone(w)}/${ONB_KEYS.length} תחנות הושלמו</p>${msgs}
+      <table><thead><tr><th style="text-align:right;">עם מי</th><th style="text-align:right;">נושא</th><th>מועד מתואם</th><th>בוצע</th><th style="text-align:right;">הערה</th><th></th></tr></thead><tbody>
+      ${onbStations(App, w).map(s=>{ const it = items[s.key]||{}; return `<tr>
+        <td style="text-align:right;">${esc(s.who)}</td><td style="text-align:right;">${esc(s.what)}</td>
+        <td><input type="datetime-local" id="onb_at_${s.key}" value="${toLocalInput(it.scheduled_at)}"></td>
+        <td><input type="checkbox" id="onb_done_${s.key}" ${it.done?"checked":""}></td>
+        <td><input type="text" id="onb_note_${s.key}" value="${esc(it.note||"")}" maxlength="300" style="width:160px;"></td>
+        <td><button class="btn small" data-action="portal-onb-save" data-key="${s.key}">${s.key==="training"?"לתאם הדרכה":"שמור"}</button></td></tr>`; }).join("")}
+      </tbody></table>`);
+  }
+  if(pg==="trn-controls" || pg==="k-controls"){
+    if(needLoad(pg==="k-controls"?"kabat_controls_list":"trn_controls_list", {p_token:tok})) return loading();
+    const cs = PV.data.r||[];
+    return wrap(`<div class="flexbar" style="justify-content:space-between;"><h2 style="margin:0;">סיכומי תרגילים</h2>
+      ${pg==="trn-controls"?`<button class="btn small" data-action="portal-pv" data-page="trn-control-new">+ סיכום בקרה חדש</button>`:""}</div>
+      ${cs.length ? `<table style="margin-top:10px;"><thead><tr><th>תאריך</th><th style="text-align:right;">מאבטח</th><th style="text-align:right;">כותרת</th><th>נקרא ע"י המאבטח</th></tr></thead><tbody>
+        ${cs.map(c=>`<tr class="portal-click" data-action="portal-pv" data-page="control" data-id="${c.id}" data-from="${pg==="k-controls"?"k":"i"}"><td>${fmtD(App,c.exercise_date)}</td><td style="text-align:right;">${esc(c.worker_name)}</td><td style="text-align:right;">${esc(c.title)}</td><td>${c.read_at?`<span class="portal-task-icon done">✔</span> ${fmtD(App,c.read_at)}`:"🕒 טרם נקרא"}</td></tr>`).join("")}
+      </tbody></table>` : `<p class="muted">עדיין אין סיכומים.</p>`}`);
+  }
+  if(pg==="control"){
+    const fn = a.from==="k" ? "kabat_controls_list" : "trn_controls_list";
+    if(needLoad(fn, {p_token:tok})) return loading();
+    const c = (PV.data.r||[]).find(x=>x.id===a.id);
+    if(!c) return wrap(`<p class="muted">הסיכום לא נמצא.</p>`);
+    return wrap(docHtml(App, c.title, `${c.worker_name} · ${fmtD(App,c.exercise_date)}`, c.summary) +
+      `<p style="margin-top:14px;">${c.read_at?`<span class="portal-task-icon done">✔</span> המאבטח קרא ב-${fmtD(App,c.read_at)}`:"🕒 המאבטח עדיין לא קרא"}</p>`);
+  }
+  if(pg==="trn-control-new"){
+    if(!PV.workers){ App.apiGet("roster_workers","select=id,name,team_id&order=name").then(r=>{ PV.workers=r; App.render(); }).catch(()=>{ PV.workers=[]; App.render(); }); return loading(); }
+    const f = PV.form;
+    return wrap(`<h2>סיכום בקרה חדש</h2>${msgs}
+      <div class="field"><label>מאבטח</label><select id="ctlWorker"><option value="">בחר/י...</option>
+        ${PV.workers.map(w=>{ const t = App.teamById(w.team_id); return `<option value="${w.id}" ${f.worker===w.id?"selected":""}>${esc(w.name)}${t?` (${esc(t.name)})`:""}</option>`; }).join("")}</select></div>
+      <div class="row">
+        <div class="field"><label>תאריך התרגיל</label><input type="date" id="ctlDate" value="${esc(f.date||App.fmtDate(new Date()))}"></div>
+        <div class="field" style="flex:1;"><label>כותרת</label><input type="text" id="ctlTitle" maxlength="200" value="${esc(f.title||"")}" placeholder="למשל: תרגיל חדירה לשער הצפוני"></div>
+      </div>
+      <div class="field"><label>סיכום</label><textarea id="ctlSummary" rows="10" style="width:100%;">${esc(f.summary||"")}</textarea></div>
+      <button class="btn ok" data-action="portal-ctl-send" ${PV.busy?"disabled":""}>שלח למאבטח ולקב"ט שלו</button>`);
+  }
+  if(pg==="trn-posts" || pg==="k-feed"){
+    const fn = pg==="k-feed" ? "kabat_feed" : "trn_posts_list";
+    if(needLoad(fn, {p_token:tok})) return loading();
+    let ps = pg==="k-feed" ? (PV.data.r.posts||[]) : (PV.data.r||[]).filter(p=>p.kind===a.kind);
+    return wrap(`<h2>${pg==="k-feed"?"תכנים והודעות":esc(POST_KIND[a.kind]||"")}</h2>
+      ${ps.length ? `<div class="portal-tasks">${ps.map(p=>`<div class="portal-task" data-action="portal-pv" data-page="post" data-id="${p.id}" data-from="${pg==="k-feed"?"k":"i"}">
+        <span class="portal-task-icon">${pg==="k-feed"?(p.read?"📄":"🔔"):"📄"}</span>
+        <span><span style="font-weight:600;">${esc(p.title)}</span> <span class="muted" style="font-size:.85em;">${esc(POST_KIND[p.kind]||"")} · ${fmtD(App,p.created_at)}${pg==="trn-posts"?` · קראו ${p.reads}/${p.audience}`:""}</span></span></div>`).join("")}</div>`
+        : `<p class="muted">אין פרסומים.</p>`}`);
+  }
+  if(pg==="post"){
+    const fn = a.from==="k" ? "kabat_feed" : "trn_posts_list";
+    if(needLoad(fn, {p_token:tok})) return loading();
+    const list = a.from==="k" ? (PV.data.r.posts||[]) : (PV.data.r||[]);
+    const p = list.find(x=>x.id===a.id);
+    if(!p) return wrap(`<p class="muted">הפרסום לא נמצא.</p>`);
+    if(a.from==="k" && !p.read){ p.read = true; App.apiRpc("kabat_post_read", {p_token:tok, p_post_id:p.id}).catch(()=>{}); K.data = null; }
+    return wrap(docHtml(App, p.title, `${POST_KIND[p.kind]||""} · ${fmtD(App,p.created_at)}${a.from==="i"?` · קראו ${p.reads}/${p.audience}`:""}`, p.body, p.link_url, p.image_data) +
+      (a.from==="i" && p.has_image ? `<p class="muted">(יש תמונה מצורפת — מוצגת לקוראים)</p>`:""));
+  }
+  if(pg==="trn-post-new"){
+    const f = PV.form;
+    return wrap(`<h2>${esc(POST_KIND[a.kind]||"פרסום חדש")}</h2>
+      <p class="muted">${a.kind==="kabat"?"יוצג רק לקב\"טים.":"יוצג לכלל המאבטחים ולקב\"טים שלהם."} כולם יקבלו התראה במסך הראשי.</p>${msgs}
+      <div class="field"><label>כותרת</label><input type="text" id="postTitle" maxlength="200" value="${esc(f.title||"")}"></div>
+      <div class="field"><label>תוכן</label><textarea id="postBody" rows="8" style="width:100%;">${esc(f.body||"")}</textarea></div>
+      ${a.kind==="content"?`<div class="field"><label>קישור לסרטון או לתוכן (YouTube, Google Drive וכו')</label><input type="url" id="postLink" value="${esc(f.link||"")}" placeholder="https://"></div>`:""}
+      <div class="field"><label>תמונה (לא חובה)</label><input type="file" accept="image/*" data-action="portal-post-image">${f.image?` <span class="muted">✔ תמונה צורפה</span>`:""}</div>
+      <button class="btn ok" data-action="portal-post-send" ${PV.busy?"disabled":""}>פרסם</button>`);
+  }
+  return wrap(`<p class="muted">העמוד לא נמצא.</p>`);
+}
+function onbListHtml(App){
+  const esc = App.escapeHtml;
+  const all = (PV.data && PV.data.r) || [];
+  const q = PV.filter.trim();
+  const ws = all.filter(w=> (!PV.onlyOpen || onbDone(w)<ONB_KEYS.length) && (!q || matches(w.name, q)));
+  if(!ws.length) return `<p class="muted">אין עובדים להצגה.</p>`;
+  return `<table><thead><tr><th style="text-align:right;">עובד</th><th style="text-align:right;">גזרה</th><th>התקדמות</th><th style="text-align:right;">המועד הבא</th><th></th></tr></thead><tbody>
+    ${ws.map(w=>{
+      const next = (w.items||[]).filter(i=>!i.done && i.scheduled_at).sort((x,y)=>String(x.scheduled_at).localeCompare(String(y.scheduled_at)))[0];
+      const st = next ? onbStations(App, w).find(s=>s.key===next.key) : null;
+      return `<tr><td style="text-align:right;">${esc(w.name)}</td><td style="text-align:right;">${esc(workerSector(App,w))}</td>
+        <td>${onbDone(w)}/${ONB_KEYS.length}</td><td style="text-align:right;">${next?`${fmtDT(App,next.scheduled_at)} · ${esc(st?st.who:"")}`:'<span class="muted">—</span>'}</td>
+        <td><button class="btn small" data-action="portal-pv" data-page="trn-onb-worker" data-id="${w.id}">לתאם הדרכה / חפיפה</button></td></tr>`;
+    }).join("")}</tbody></table>`;
+}
+
+/* ---------- פעולות ---------- */
+async function trnAction(App, a, el){
+  const ms = loadMgr(App); if(!ms) return App.render();
+  const tok = ms.token;
+  try{
+    if(a==="portal-prog-set"){
+      await App.apiRpc("trn_program_set", {p_token:tok, p_program_id:PV.args.id, p_worker_id:el.dataset.worker, p_done:el.dataset.done==="1", p_done_at:null});
+      PV.data = null; I.data = null; PV.msg = null; return App.render();
+    }
+    if(a==="portal-onb-save"){
+      const k = el.dataset.key;
+      const at = document.getElementById("onb_at_"+k).value;
+      await App.apiRpc("trn_onboarding_set", {p_token:tok, p_worker_id:PV.args.id, p_item_key:k,
+        p_scheduled_at: at ? new Date(at).toISOString() : null, p_done: document.getElementById("onb_done_"+k).checked,
+        p_note: document.getElementById("onb_note_"+k).value});
+      PV.data = null; I.data = null; PV.msg = "נשמר."; PV.error = null; return App.render();
+    }
+    if(a==="portal-ctl-send"){
+      const f = PV.form;
+      f.worker = document.getElementById("ctlWorker").value; f.date = document.getElementById("ctlDate").value;
+      f.title = document.getElementById("ctlTitle").value; f.summary = document.getElementById("ctlSummary").value;
+      if(!f.worker || !f.title.trim() || !f.summary.trim()){ PV.error = "יש לבחור מאבטח ולמלא כותרת וסיכום"; PV.msg = null; return App.render(); }
+      PV.busy = true; App.render();
+      await App.apiRpc("trn_control_create", {p_token:tok, p_worker_id:f.worker, p_title:f.title, p_exercise_date:f.date||null, p_summary:f.summary});
+      PV.busy = false; I.data = null; PV.form = {}; PV.error = null; PV.msg = "הסיכום נשלח למאבטח ולקב\"ט שלו.";
+      return App.render();
+    }
+    if(a==="portal-post-send"){
+      const f = PV.form;
+      f.title = document.getElementById("postTitle").value; f.body = document.getElementById("postBody").value;
+      const linkEl = document.getElementById("postLink"); f.link = linkEl ? linkEl.value.trim() : "";
+      if(!f.title.trim()){ PV.error = "יש למלא כותרת"; PV.msg = null; return App.render(); }
+      PV.busy = true; App.render();
+      await App.apiRpc("trn_post_create", {p_token:tok, p_kind:PV.args.kind, p_title:f.title, p_body:f.body, p_link:f.link||null, p_image:f.image||null});
+      PV.busy = false; I.data = null; PV.form = {}; PV.error = null; PV.msg = "פורסם. כולם יראו התראה במסך הראשי.";
+      return App.render();
+    }
+  }catch(e){ PV.busy = false; PV.error = e.message; PV.msg = null; App.render(); }
+}
+async function onChangeTraining(App, e){
+  const t = e.target, a = t.dataset.action;
+  const ms = loadMgr(App); if(!ms) return;
+  if(a==="portal-trn-upload"){
+    const files = Array.from(t.files||[]); if(!files.length) return;
+    PV.busy = true; PV.error = null; PV.msg = null; App.render();
+    try{
+      for(const f of files){
+        const data = await compressImage(f);
+        await App.apiRpc("trn_report_upload", {p_token:ms.token, p_program_id:PV.args.id, p_worker_id:t.dataset.worker, p_image_data:data});
+      }
+      PV.busy = false; PV.data = null; PV.msg = files.length>1 ? `${files.length} דו"חות הועלו.` : "הדו\"ח הועלה.";
+    }catch(err){ PV.busy = false; PV.error = err.message; }
+    return App.render();
+  }
+  if(a==="portal-post-image"){
+    const f = (t.files||[])[0]; if(!f) return;
+    ["postTitle","postBody","postLink"].forEach(id=>{ const el = document.getElementById(id); if(el) PV.form[id==="postTitle"?"title":id==="postBody"?"body":"link"] = el.value; });
+    try{ PV.form.image = await compressImage(f); PV.error = null; }catch(err){ PV.error = err.message; }
+    return App.render();
+  }
+  if(a==="portal-onb-open"){ PV.onlyOpen = t.checked; const l = document.getElementById("onbList"); if(l) l.innerHTML = onbListHtml(App); }
+}
+
 /* מסכי "הדרכה" (בינתיים "בקרוב") ו"לוגיסטי" */
 function renderSection(App, view){
   const session = loadSession(App);
   if(!session){ App.S.view = "home"; return renderHome(App); }
   const title = view==="training" ? "הדרכה" : "לוגיסטי";
+  if(view==="training" && T.controlOpen) return `<div class="card">${renderControlDoc(App, session)}</div>`;
+  if(view==="training" && T.postOpen) return `<div class="card">${renderPostDoc(App)}</div>`;
   const body = view==="logistics" ? renderLogistics(App, session) : renderTraining(App, session);
   return `<div class="card">
     <span class="backlink" data-action="go-home">◀ חזרה לאיזור האישי</span>
@@ -566,11 +1064,23 @@ function renderManagerHome(App, ms){
     </div>
   </div>`:""}
   ${logi.length? `<div class="card">
+    <h3>🔔 עדכונים</h3>
+    ${renderKabatUpdates(App, ms)}
+  </div>
+  <div class="card">
     <h3>לוגיסטי</h3>
     <p class="muted" style="margin-top:-6px;">${names(logi)}</p>
     <div class="grid-teams">${tile("portal-mh-equip", "בקשות ציוד", "החלפה / ציוד נוסף")}</div>
+  </div>
+  <div class="card">
+    <h3>הדרכה</h3>
+    <div class="grid-teams">
+      <div class="team-tile" data-action="portal-pv" data-page="k-controls"><div style="font-size:1.1em;font-weight:700;">סיכומי תרגילים</div><div class="muted" style="font-size:.85em;margin-top:4px;">של המאבטחים שלך</div></div>
+      <div class="team-tile" data-action="portal-pv" data-page="k-feed"><div style="font-size:1.1em;font-weight:700;">תכנים והודעות</div><div class="muted" style="font-size:.85em;margin-top:4px;">מקב"ט ההדרכות</div></div>
+    </div>
   </div>`:""}
-  ${!sched.length && !logi.length ? `<div class="card"><p class="muted">אין עדיין הרשאות לממשק הזה.</p></div>`:""}`;
+  ${ms.can_training ? renderIsraelDashboard(App, ms) : ""}
+  ${!sched.length && !logi.length && !ms.can_training ? `<div class="card"><p class="muted">אין עדיין הרשאות לממשק הזה.</p></div>`:""}`;
 }
 function enterMgrSchedule(App, ms, which){
   const S = App.S;
@@ -604,6 +1114,7 @@ function onInput(App, e){
     return true;
   }
   if(t.dataset.action==="portal-code"){ P.code = t.value; return true; }
+  if(t.dataset.action==="portal-onb-filter"){ PV.filter = t.value; const l = document.getElementById("onbList"); if(l) l.innerHTML = onbListHtml(App); return true; }
   return false;
 }
 function onKey(App, e){
@@ -627,7 +1138,7 @@ async function doLogin(App){
       const res = await App.apiRpc("manager_login", {p_manager_id: sel.id, p_password: code});
       P.busy = false;
       if(!res){ P.error = "סיסמה שגויה"; P.code=""; return App.render(); }
-      saveSession(App, null); saveMgr(App, res);
+      saveSession(App, null); saveMgr(App, res); I.data = null; K.data = null;
       P.selectedId = null; P.code = ""; P.query = ""; P.checkedMgr = true;
       return App.render();
     }
@@ -636,7 +1147,7 @@ async function doLogin(App){
     if(!res){ P.error = "קוד שגוי"; P.code=""; return App.render(); }
     saveMgr(App, null); clearMgrMode(App);
     saveSession(App, res);
-    P.selectedId = null; P.code = ""; P.query = ""; P.shifts = null; P.checkedSession = true; T.data = null;
+    P.selectedId = null; P.code = ""; P.query = ""; P.shifts = null; P.checkedSession = true; T.data = null; F.data = null;
     App.render();
   }catch(err){ P.busy = false; P.error = err.message; App.render(); }
 }
@@ -650,10 +1161,10 @@ function onClick(App, a, el){
   if(a==="portal-logout"){
     const s = loadSession(App);
     if(s) App.apiRpc("worker_logout", {p_token: s.token}).catch(()=>{});
-    saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null; T.data = null;
+    saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null; T.data = null; F.data = null;
     return App.render();
   }
-  if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; T.data = null; return App.render(); }
+  if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; T.data = null; F.data = null; T.controlOpen = null; T.postOpen = null; return App.render(); }
   if(a==="portal-go-logistics"){ S.view = "logistics"; S.ui = {}; T.data = null; L.data = null; L.msg = null; L.error = null; return App.render(); }
   if(a==="portal-log-save") return saveLogistics(App);
   if(a==="portal-log-request") return sendRequest(App);
@@ -663,10 +1174,34 @@ function onClick(App, a, el){
   if(a==="portal-mgr-logout"){
     const ms = loadMgr(App);
     if(ms) App.apiRpc("manager_logout", {p_token: ms.token}).catch(()=>{});
-    saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null;
+    saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null;
     S.view = "home"; S.ui = {};
     return App.render();
   }
+  if(a==="portal-open-control"){ S.view = "training"; S.ui = {}; T.controlOpen = el.dataset.id; T.control = null; T.postOpen = null; return App.render(); }
+  if(a==="portal-control-read"){
+    const s = loadSession(App); if(!s || !T.controlOpen) return App.render();
+    PV.busy = true; App.render();
+    return App.apiRpc("worker_control_mark_read", {p_token:s.token, p_id:T.controlOpen})
+      .then(()=>{ PV.busy = false; if(T.control) T.control.read_at = new Date().toISOString(); T.data = null; App.render(); })
+      .catch(e=>{ PV.busy = false; T.control = {error:e.message}; App.render(); });
+  }
+  if(a==="portal-doc-back"){ T.controlOpen = null; T.control = null; T.postOpen = null; return App.render(); }
+  if(a==="portal-open-post"){
+    const s = loadSession(App); if(!s) return App.render();
+    const p = ((F.data&&F.data.posts)||[]).find(x=>x.id===el.dataset.id); if(!p) return App.render();
+    if(!p.read){ p.read = true; App.apiRpc("worker_post_read", {p_token:s.token, p_post_id:p.id}).catch(()=>{}); }
+    S.view = "training"; S.ui = {}; T.postOpen = p; T.controlOpen = null; return App.render();
+  }
+  if(a==="portal-k-open-post") return pvGo(App, "post", {id:el.dataset.id, from:"k"});
+  if(a==="portal-pv"){
+    const d = el.dataset;
+    if(d.page==="k-controls"){ const ms = loadMgr(App); if(ms) App.apiRpc("kabat_controls_seen", {p_token:ms.token}).catch(()=>{}); K.data = null; }
+    return pvGo(App, d.page, {id:d.id, kind:d.kind, from:d.from, name:d.name, program:d.program});
+  }
+  if(a==="portal-pv-back") return pvBack(App);
+  if(a==="portal-trn-more"){ I.showAll = !I.showAll; return App.render(); }
+  if(a==="portal-prog-set" || a==="portal-onb-save" || a==="portal-ctl-send" || a==="portal-post-send") return trnAction(App, a, el);
   if(a==="portal-pw-load") return pwLoad(App);
   if(a==="portal-pw-save") return pwSave(App, el.dataset.id);
   if(a==="portal-mgr-tile"){ M.tile = el.dataset.id; M.code=null; M.list=null; M.error=null; M.msg=null; return App.render(); }
@@ -702,9 +1237,13 @@ function onClick(App, a, el){
     .portal-task{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e3e9f0;border-radius:8px;cursor:pointer;background:#fff;}
     .portal-task:hover{background:#f4f8fc;}
     .portal-task-icon{font-size:1.15em;width:1.4em;text-align:center;}
-    .portal-task-icon.done{color:#1b7f3b;font-weight:800;}`;
+    .portal-task-icon.done{color:#1b7f3b;font-weight:800;}
+    tr.portal-click{cursor:pointer;} tr.portal-click:hover td{background:#f4f8fc;}
+    .portal-wrow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 10px;border-bottom:1px solid #eef2f6;}
+    .portal-sub{font-weight:700;margin:8px 0 2px;color:#8a5a00;} .portal-sub.done{color:#1b7f3b;}
+    .portal-doc{background:#fff;border:1px solid #e3e9f0;border-radius:10px;padding:16px;margin-top:10px;}`;
   (document.head||document.documentElement).appendChild(st);
 })();
 
-window.Portal = { renderHome, renderSection, renderManagerRequests, renderManagerPasswords, resetPasswordsScreen(){ W.pin=null; W.list=null; W.error=null; W.msg=null; }, onClick, onInput, onKey, resetState(){ P.shifts=null; P.checkedSession=false; } };
+window.Portal = { renderHome, renderSection, renderManagerRequests, renderManagerPasswords, renderPView, pvTitle, onChange: onChangeTraining, resetPasswordsScreen(){ W.pin=null; W.list=null; W.error=null; W.msg=null; }, onClick, onInput, onKey, resetState(){ P.shifts=null; P.checkedSession=false; } };
 })();
