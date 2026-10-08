@@ -1133,14 +1133,19 @@ function onbListHtml(App){
   const q = PV.filter.trim();
   const ws = all.filter(w=> (!PV.onlyOpen || onbDone(w)<ONB_KEYS.length) && (!q || matches(w.name, q)));
   if(!ws.length) return `<p class="muted">אין עובדים להצגה.</p>`;
-  return `<table><thead><tr><th style="text-align:right;">עובד</th><th style="text-align:right;">גזרה</th><th>התקדמות</th><th style="text-align:right;">המועד הבא</th><th></th></tr></thead><tbody>
-    ${ws.map(w=>{
+  // מחולק לפי קב"טים, כמו עמוד Pro-Riding (לבקשת סרגיי, 2026-10-08)
+  const groups = {};
+  ws.forEach(w=>{ const k = workerKabat(App, w); (groups[k] = groups[k]||[]).push(w); });
+  return Object.keys(groups).sort((x,y)=>x.localeCompare(y,"he")).map(k=>`
+    <h3 style="margin:16px 0 6px;">${esc(k)} <span class="muted" style="font-size:.8em;">${groups[k].length} עובדים</span></h3>
+    <table><thead><tr><th style="text-align:right;">עובד</th><th style="text-align:right;">עיר</th><th>התקדמות</th><th style="text-align:right;">המועד הבא</th><th></th></tr></thead><tbody>
+    ${groups[k].map(w=>{
       const next = (w.items||[]).filter(i=>!i.done && i.scheduled_at).sort((x,y)=>String(x.scheduled_at).localeCompare(String(y.scheduled_at)))[0];
       const st = next ? onbStations(App, w).find(s=>s.key===next.key) : null;
       return `<tr><td style="text-align:right;">${esc(w.name)}</td><td style="text-align:right;">${esc(workerSector(App,w))}</td>
         <td>${onbDone(w)}/${ONB_KEYS.length}</td><td style="text-align:right;">${next?`${fmtDT(App,next.scheduled_at)} · ${esc(st?st.who:"")}`:'<span class="muted">—</span>'}</td>
         <td><button class="btn small" data-action="portal-pv" data-page="trn-onb-worker" data-id="${w.id}">לתאם הדרכה / חפיפה</button></td></tr>`;
-    }).join("")}</tbody></table>`;
+    }).join("")}</tbody></table>`).join("");
 }
 
 /* ---------- פעולות ---------- */
