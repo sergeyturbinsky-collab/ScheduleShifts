@@ -514,11 +514,12 @@ function renderSubmitPeriod(){
   let windowState = computeWindowState(team, ui.periodStart);
   const exceptionOverride = windowState.state!=="open" && ui.hasException;
   if(exceptionOverride) windowState = {state:"open", closeAt:null};
+  const readOnly = windowState.state!=="open"; // נעול לעריכה (אך אפשר לצפות בהגשה שנשמרה, אם קיימת)
 
   let bannerCls = windowState.state==="open"?"open":windowState.state==="closed"?"closed":"notyet";
   let bannerTxt = exceptionOverride ? "ההגשה נפתחה עבורך באופן ידני על ידי המנהל, למרות שהמועד הרגיל חלף."
                 : windowState.state==="open" ? `הטופס פתוח${windowState.closeAt?` · נסגר ב-${windowState.closeAt}`:""}`
-                : windowState.state==="closed" ? `הטופס סגור להגשה לתקופה זו${windowState.closedSince?` (נסגר ${windowState.closedSince})`:""}`
+                : windowState.state==="closed" ? `הטופס סגור להגשה לתקופה זו${windowState.closedSince?` (נסגר ${windowState.closedSince})`:""} — ניתן לצפות בהגשה שנשמרה, ללא אפשרות לערוך`
                 : `הטופס עדיין לא נפתח${windowState.opensAt?` · ייפתח ב-${windowState.opensAt}`:""}`;
 
   const positiveChips = !isMokedTeam(team); // מאבטחים מסמנים "מה כן יכולים" (וי ירוק); המוקד ממשיך לסמן "מה לא יכול" (X אדום)
@@ -528,13 +529,13 @@ function renderSubmitPeriod(){
     const dayStatusRow = `
       <div class="chip-opts" style="margin-top:6px;">
         <span class="muted" style="align-self:center;">יום שלם:</span>
-        ${DAY_STATUS_TYPES.map(t=>`<div class="chip ${sel.dayStatus===t?"on":""}" data-action="toggle-daystatus" data-date="${d}" data-type="${t}">${SHIFT_LABELS[t]}</div>`).join("")}
+        ${DAY_STATUS_TYPES.map(t=>`<div class="chip ${sel.dayStatus===t?"on":""}"${readOnly?"":` data-action="toggle-daystatus" data-date="${d}" data-type="${t}"`}>${SHIFT_LABELS[t]}</div>`).join("")}
       </div>`;
     if(sel.dayStatus){
       return `
       <div class="day-card">
         <h4>${fmtDateHeb(d)}</h4>
-        <p class="muted">היום מסומן כ"${SHIFT_LABELS[sel.dayStatus]}" — כל המשמרות של היום הזה חסומות. לחצו שוב על הכפתור כדי לבטל ולחזור לבחירת משמרות.</p>
+        <p class="muted">היום מסומן כ"${SHIFT_LABELS[sel.dayStatus]}"${readOnly?"":` — כל המשמרות של היום הזה חסומות. לחצו שוב על הכפתור כדי לבטל ולחזור לבחירת משמרות.`}</p>
         ${dayStatusRow}
       </div>`;
     }
@@ -542,13 +543,13 @@ function renderSubmitPeriod(){
     <div class="day-card">
       <h4>${fmtDateHeb(d)}</h4>
       <div class="chip-opts">
-        ${opts.map(ot=>`<div class="chip ${sel.types.includes(ot)?"on":""} ${positiveChips?"positive":""}" data-action="toggle-shift" data-date="${d}" data-type="${ot}">${submitOptionLabel(ot, d)}</div>`).join("")}
-        <div class="chip ${sel.customOn?"on":""} ${positiveChips?"positive":""}" data-action="toggle-custom" data-date="${d}">שעות מותאמות</div>
+        ${opts.map(ot=>`<div class="chip ${sel.types.includes(ot)?"on":""} ${positiveChips?"positive":""}"${readOnly?"":` data-action="toggle-shift" data-date="${d}" data-type="${ot}"`}>${submitOptionLabel(ot, d)}</div>`).join("")}
+        ${readOnly?"":`<div class="chip ${sel.customOn?"on":""} ${positiveChips?"positive":""}" data-action="toggle-custom" data-date="${d}">שעות מותאמות</div>`}
       </div>
       ${sel.customOn? `
         <div class="row" style="margin-top:8px;">
-          <div class="field"><label>משעה</label><input type="time" data-action="custom-start" data-date="${d}" value="${sel.customStart}"></div>
-          <div class="field"><label>עד שעה</label><input type="time" data-action="custom-end" data-date="${d}" value="${sel.customEnd}"></div>
+          <div class="field"><label>משעה</label><input type="time" data-action="custom-start" data-date="${d}" value="${sel.customStart}"${readOnly?" disabled":""}></div>
+          <div class="field"><label>עד שעה</label><input type="time" data-action="custom-end" data-date="${d}" value="${sel.customEnd}"${readOnly?" disabled":""}></div>
         </div>`:""}
       ${dayStatusRow}
     </div>`;
@@ -564,16 +565,17 @@ function renderSubmitPeriod(){
       <button class="btn small secondary" data-action="period-next">תקופה הבאה ▶</button>
     </div>
     <div class="banner ${bannerCls}">${bannerTxt}</div>
-    ${windowState.state==="open" ? `
-      ${!isMokedTeam(team) ? `<p class="muted">סמנו בכל יום את המשמרות שבהן אתם <b>כן</b> יכולים לעבוד. משמרת שלא תסומן תיחשב כלא זמינה עבורכם. ניתן גם לסמן טווח שעות מותאם נוסף שבו אתם זמינים.</p>` : ""}
+    ${windowState.state==="notyet" ? `<p class="muted">ניתן עדיין לנווט בין תקופות, אך לא להגיש בזמן שהטופס עדיין לא נפתח.</p>` : `
+      ${(!readOnly && !isMokedTeam(team)) ? `<p class="muted">סמנו בכל יום את המשמרות שבהן אתם <b>כן</b> יכולים לעבוד. משמרת שלא תסומן תיחשב כלא זמינה עבורכם. ניתן גם לסמן טווח שעות מותאם נוסף שבו אתם זמינים.</p>` : ""}
+      ${readOnly ? `<p class="muted">הטופס נעול לעריכה — מוצגת ההגשה האחרונה שנשמרה, לצפייה בלבד.</p>` : ""}
       ${daysHtml}
       <div class="field" style="margin-top:10px;">
-        <label>הערה (אופציונלי)</label>
-        <textarea id="submitNote" rows="2" style="width:100%;">${escapeHtml(ui.note||"")}</textarea>
+        <label>הערה${readOnly?"":" (אופציונלי)"}</label>
+        <textarea id="submitNote" rows="2" style="width:100%;"${readOnly?" disabled":""}>${escapeHtml(ui.note||"")}</textarea>
       </div>
-      <button class="btn" data-action="save-submission">שמור/י אילוצים</button>
+      ${readOnly ? "" : `<button class="btn" data-action="save-submission">שמור/י אילוצים</button>`}
       ${ui.saveMsg? `<p class="${ui.saveOk?"":"shortage"}" style="margin-top:8px;">${escapeHtml(ui.saveMsg)}</p>`:""}
-    ` : `<p class="muted">ניתן עדיין לנווט בין תקופות, אך לא להגיש בזמן שהטופס סגור.</p>`}
+    `}
   </div>`;
 }
 
@@ -626,6 +628,8 @@ async function loadMySubmission(team){
 async function saveSubmission(){
   const ui = S.ui;
   const team = teamById(S.identity.teamId);
+  const ws = computeWindowState(team, ui.periodStart);
+  if(ws.state!=="open" && !ui.hasException){ ui.saveMsg = "הטופס נעול להגשה — לא ניתן לשמור."; ui.saveOk = false; return render(); }
   ui.saveMsg = null;
   try{
     const sub = await apiUpsertSubmission({
