@@ -28,7 +28,7 @@ assert "wcbnkrtxdzfygyyanasx" in s and "hcejwcxsqhpiufaakalj" not in s
 # ---- portal + publish patches ----
 rep("""<script>
 (function(){
-"use strict";""","""<script src="portal.js?v=8"></script>
+"use strict";""","""<script src="portal.js?v=9"></script>
 <script>
 (function(){
 "use strict";""")
@@ -63,7 +63,7 @@ rep("""  app.onchange = onAppChange;""","""  app.onchange = onAppChange;
   app.onkeydown = e=>{ if(window.Portal) window.Portal.onKey(App, e); };""")
 rep("""init();
 })();""","""/* מה שהפורטל (portal.js) צריך מהקוד הראשי */
-const App = { S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam };
+const App = { S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
 
 init();
 })();""")

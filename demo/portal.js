@@ -120,6 +120,70 @@ function renderMyShifts(App, session){
   </table></div>`;
 }
 
+/* ================================================================
+   משימות פתוחות (לבקשת סרגיי, 2026-10-08). סדר קבוע: הגשת סידור עבודה, מעבר על לומדה ומבחן, מילוי
+   סטטוס ציוד (לא למוקד). ליד כל משימה: 🕒 אם טרם בוצעה, ✔ אם בוצעה - משימה שבוצעה לא נעלמת.
+   לומדות: מוצגות כל הלומדות שטרם בוצעו, ובנוסף הלומדה האחרונה גם אם בוצעה. כשנוספת לומדה חדשה,
+   לומדה קודמת שבוצעה יורדת מהמסך הראשי ונשארת רק בתיעוד בלשונית "הדרכה".
+   ================================================================ */
+const T = { data:null };
+
+async function loadTasks(App, session){
+  T.data = {loading:true};
+  try{
+    const team = App.teamById(session.team_id);
+    const periodStart = team ? App.currentPeriodStart(team) : App.fmtDate(new Date());
+    const res = await App.apiRpc("worker_tasks", {p_token: session.token, p_period_start: periodStart});
+    T.data = Object.assign({periodStart}, res || {});
+  }catch(e){
+    if(/session/i.test(e.message)){ saveSession(App, null); T.data = null; }
+    else T.data = {error: "שגיאה בטעינת המשימות"};
+  }
+  App.render();
+}
+function trainingsForMainScreen(list){
+  if(!list || !list.length) return [];
+  const latest = list[list.length-1];
+  return list.filter(t=> !t.passed || t.id===latest.id);
+}
+function renderTasks(App, session){
+  const esc = App.escapeHtml;
+  if(!T.data){ loadTasks(App, session); return `<p class="muted">טוען...</p>`; }
+  if(T.data.loading) return `<p class="muted">טוען...</p>`;
+  if(T.data.error) return `<p class="shortage">${esc(T.data.error)}</p>`;
+  const rows = [];
+  rows.push({done: !!T.data.submitted, action:"portal-go-submit",
+    label: "הגשת סידור עבודה", sub: T.data.periodStart ? `לתקופה שמתחילה ב${App.fmtDateHeb(T.data.periodStart)}` : ""});
+  trainingsForMainScreen(T.data.trainings).forEach(t=>rows.push({done: !!t.passed, action:"portal-go-training",
+    label: `מעבר על הלומדה "${t.title}" ומבחן`, sub: ""}));
+  if(T.data.equipment_done !== null && T.data.equipment_done !== undefined){
+    rows.push({done: !!T.data.equipment_done, action:"portal-go-logistics", label: "מילוי סטטוס ציוד", sub: ""});
+  }
+  return `<div class="portal-tasks">${rows.map(r=>`
+    <div class="portal-task" data-action="${r.action}">
+      <span class="portal-task-icon ${r.done?"done":""}" title="${r.done?"בוצע":"טרם בוצע"}">${r.done?"✔":"🕒"}</span>
+      <span><span style="font-weight:600;">${esc(r.label)}</span>${r.sub?` <span class="muted" style="font-size:.85em;">${esc(r.sub)}</span>`:""}</span>
+    </div>`).join("")}</div>`;
+}
+
+/* לשונית "הדרכה": תיעוד של כל הלומדות והסטטוס של העובד בכל אחת. תוכן הלומדה והמבחן עצמם יוגדרו בהמשך. */
+function renderTraining(App, session){
+  const esc = App.escapeHtml;
+  if(!T.data){ loadTasks(App, session); return `<p class="muted">טוען...</p>`; }
+  if(T.data.loading) return `<p class="muted">טוען...</p>`;
+  if(T.data.error) return `<p class="shortage">${esc(T.data.error)}</p>`;
+  const list = (T.data.trainings||[]).slice().reverse();
+  if(!list.length) return `<p class="muted">עדיין לא פורסמו לומדות.</p>`;
+  return `<div style="overflow-x:auto;"><table>
+    <thead><tr><th style="text-align:right;">לומדה</th><th>פורסמה</th><th>סטטוס</th></tr></thead>
+    <tbody>${list.map(t=>`<tr>
+      <td style="text-align:right;">${esc(t.title)}</td>
+      <td>${App.fmtDateHeb(String(t.published_at).slice(0,10))}</td>
+      <td>${t.passed ? `<span class="portal-task-icon done">✔</span> בוצע ${t.completed_at?App.fmtDateHeb(String(t.completed_at).slice(0,10)):""}` : `🕒 טרם בוצע`}</td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
 function renderWorkerHome(App, session){
   const esc = App.escapeHtml;
   if(!P.checkedSession){
@@ -142,7 +206,7 @@ function renderWorkerHome(App, session){
     </div>
     <div class="grid-teams" style="margin-top:12px;">
       ${tile("portal-go-submit", "הגשת משמרות", "הגשת אילוצים לתקופה הבאה")}
-      ${tile("portal-go-training", "הדרכה", "בקרוב", true)}
+      ${tile("portal-go-training", "הדרכה", "לומדות ומבחנים")}
       ${isMokedWorker(App, session) ? "" : tile("portal-go-logistics", "לוגיסטי", "הציוד שלי ובקשת ציוד")}
     </div>
   </div>
@@ -152,7 +216,7 @@ function renderWorkerHome(App, session){
   </div>
   <div class="card">
     <h3>משימות פתוחות</h3>
-    <p class="muted">אין משימות פתוחות כרגע.</p>
+    ${renderTasks(App, session)}
   </div>`;
 }
 
@@ -366,7 +430,7 @@ function renderSection(App, view){
   const session = loadSession(App);
   if(!session){ App.S.view = "home"; return renderHome(App); }
   const title = view==="training" ? "הדרכה" : "לוגיסטי";
-  const body = view==="logistics" ? renderLogistics(App, session) : `<p class="muted">החלק הזה עוד בבנייה.</p>`;
+  const body = view==="logistics" ? renderLogistics(App, session) : renderTraining(App, session);
   return `<div class="card">
     <span class="backlink" data-action="go-home">◀ חזרה לאיזור האישי</span>
     <h2>${title}</h2>
@@ -411,7 +475,7 @@ async function doLogin(App){
     P.busy = false;
     if(!res){ P.error = "קוד שגוי"; P.code=""; return App.render(); }
     saveSession(App, res);
-    P.selectedId = null; P.code = ""; P.query = ""; P.shifts = null; P.checkedSession = true;
+    P.selectedId = null; P.code = ""; P.query = ""; P.shifts = null; P.checkedSession = true; T.data = null;
     App.render();
   }catch(err){ P.busy = false; P.error = err.message; App.render(); }
 }
@@ -425,11 +489,11 @@ function onClick(App, a, el){
   if(a==="portal-logout"){
     const s = loadSession(App);
     if(s) App.apiRpc("worker_logout", {p_token: s.token}).catch(()=>{});
-    saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null;
+    saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null; T.data = null;
     return App.render();
   }
-  if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; return App.render(); }
-  if(a==="portal-go-logistics"){ S.view = "logistics"; S.ui = {}; L.data = null; L.msg = null; L.error = null; return App.render(); }
+  if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; T.data = null; return App.render(); }
+  if(a==="portal-go-logistics"){ S.view = "logistics"; S.ui = {}; T.data = null; L.data = null; L.msg = null; L.error = null; return App.render(); }
   if(a==="portal-log-save") return saveLogistics(App);
   if(a==="portal-log-request") return sendRequest(App);
   if(a==="portal-mgr-open"){ S.view = "equipreq"; S.ui = {}; M.tile=null; M.code=null; M.list=null; M.error=null; M.msg=null; return App.render(); }
@@ -442,6 +506,7 @@ function onClick(App, a, el){
   }
   if(a==="portal-mgr-resolve") return mgrResolve(App, el.dataset.id, el.dataset.res);
   if(a==="portal-go-submit"){
+    T.data = null;
     const s = loadSession(App);
     if(!s) return App.render();
     S.view = "submit";
@@ -460,7 +525,12 @@ function onClick(App, a, el){
     .portal-list{max-height:240px;overflow-y:auto;border:1px solid #cfd8e3;border-radius:8px;background:#fff;margin-top:4px;}
     .portal-row{padding:9px 12px;border-bottom:1px solid #eef2f6;cursor:pointer;text-align:right;}
     .portal-row:last-child{border-bottom:none;}
-    .portal-row:hover{background:#eef4fb;}`;
+    .portal-row:hover{background:#eef4fb;}
+    .portal-tasks{display:flex;flex-direction:column;gap:6px;}
+    .portal-task{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e3e9f0;border-radius:8px;cursor:pointer;background:#fff;}
+    .portal-task:hover{background:#f4f8fc;}
+    .portal-task-icon{font-size:1.15em;width:1.4em;text-align:center;}
+    .portal-task-icon.done{color:#1b7f3b;font-weight:800;}`;
   (document.head||document.documentElement).appendChild(st);
 })();
 

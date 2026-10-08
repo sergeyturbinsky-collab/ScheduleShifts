@@ -133,7 +133,7 @@
 <main id="app"></main>
 <footer>מערכת פנימית · חברת אבטחה · סביבת דמו</footer>
 
-<script src="portal.js?v=8"></script>
+<script src="portal.js?v=9"></script>
 <script>
 (function(){
 "use strict";
@@ -3021,7 +3021,7 @@ document.addEventListener("input", function(e){
 });
 
 /* מה שהפורטל (portal.js) צריך מהקוד הראשי */
-const App = { S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam };
+const App = { S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
 
 init();
 })();
