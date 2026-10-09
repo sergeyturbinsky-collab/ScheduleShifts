@@ -1118,7 +1118,7 @@ function renderPView(App){
       <div class="field"><label>שם הבוחן</label><input type="text" id="quizTitle" maxlength="200" value="${esc(Q.title)}" placeholder="למשל: נהלי שער צפוני"></div>
       <div class="portal-drop" data-drop="quiz">
         <div style="font-weight:700;">גררו לכאן קובץ וורד (docx) של שאלות ותשובות</div>
-        <div class="muted" style="font-size:.85em;margin:4px 0 8px;">בכל שאלה — סמנו את התשובה הנכונה בהדגשה, בצבע/מרקר, בקו תחתון, או בכוכבית (*) לידה</div>
+        <div class="muted" style="font-size:.85em;margin:4px 0 8px;">בכל שאלה — סמנו את התשובה הנכונה בהדגשה, בצבע/מרקר, בקו תחתון, או בכוכבית (*) לפניה או אחריה. התשובות יכולות להיות כל אחת בשורה משלה או באותה שורה (א. ... ב. ... ג. ...)</div>
         <label class="btn small secondary" style="cursor:pointer;">בחרו קובץ<input type="file" accept=".docx" data-action="portal-quiz-file" style="display:none;"></label>
         ${Q.fileName?`<div style="margin-top:8px;">📄 ${esc(Q.fileName)}</div>`:""}
       </div>
@@ -1308,8 +1308,10 @@ function docxRunMarks(rPr){
   const shd = (()=>{ const m = rPr.match(/<w:shd\b[^>]*>/); if(!m) return false; const v = (xmlAttr(m[0], "w:fill") || "").toLowerCase(); return v && v !== "auto" && v !== "ffffff"; })();
   return { bold: on("b") || on("bCs"), underline: on("u"), highlight: on("highlight"), color, shd };
 }
+/* פסקאות → שורות. ירידת שורה בתוך פסקה (Shift+Enter) = שורה נפרדת. לכל תו נשמר הסימון שלו (הדגשה וכו'),
+   כדי שגם תשובות שנכתבו באותה שורה ("א. ... ב. ... ג. ...") יפוצלו ויזוהו כל אחת לחוד. */
 function docxParagraphs(docXml, numFmt){
-  const paras = [];
+  const lines = [];
   const body = (docXml.match(/<w:body>([\s\S]*)<\/w:body>/) || [,docXml])[1];
   (body.match(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/g) || []).forEach(px=>{
     const pPr = (px.match(/<w:pPr>([\s\S]*?)<\/w:pPr>/) || [,""])[1];
@@ -1324,48 +1326,79 @@ function docxParagraphs(docXml, numFmt){
         else kind = "q";
       }
     }
-    let text = "", feats = {bold:0, underline:0, highlight:0, color:0, shd:0}, nchars = 0;
     const content = px.replace(/<w:pPr>[\s\S]*?<\/w:pPr>/, "");
+    let cur = [];               // [{c, m}]
+    const flush = ()=>{ if(cur.some(x=>/\S/.test(x.c))) lines.push({chars:cur, kind: lines.__p === px ? null : kind}); lines.__p = px; cur = []; };
     (content.match(/<w:r\b[^>]*>[\s\S]*?<\/w:r>/g) || []).forEach(rx=>{
-      const rPr = (rx.match(/<w:rPr>([\s\S]*?)<\/w:rPr>/) || [,""])[1];
-      let t = "";
-      (rx.match(/<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>|<w:tab\/>|<w:br\/>/g) || []).forEach(tx=>{
-        if(tx === "<w:tab/>" || tx === "<w:br/>") t += " ";
-        else t += xmlUnescape(tx.replace(/^<w:t(?:\s[^>]*)?>/, "").replace(/<\/w:t>$/, ""));
+      const m = docxRunMarks((rx.match(/<w:rPr>([\s\S]*?)<\/w:rPr>/) || [,""])[1]);
+      (rx.match(/<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>|<w:tab\/>|<w:br\b[^>]*\/>|<w:cr\/>/g) || []).forEach(tx=>{
+        if(/^<w:(br|cr)\b/.test(tx)) return flush();
+        const t = tx === "<w:tab/>" ? " " : xmlUnescape(tx.replace(/^<w:t(?:\s[^>]*)?>/, "").replace(/<\/w:t>$/, ""));
+        for(const c of t) cur.push({c, m});
       });
-      text += t;
-      const n = t.replace(/\s/g, "").length;
-      if(n){ const m = docxRunMarks(rPr); nchars += n; Object.keys(feats).forEach(k=>{ if(m[k]) feats[k] += n; }); }
     });
-    text = text.replace(/\s+/g, " ").trim();
-    if(!text) return;
-    Object.keys(feats).forEach(k=> feats[k] = nchars ? feats[k] / nchars : 0);
-    paras.push({text, kind, feats});
+    flush();
   });
-  return paras;
+  delete lines.__p;
+  return lines;
 }
-const QZ_MARKER = /^\s*[*✓✔√]+\s*|\s*[*✓✔√]+\s*$|\s*\((?:נכון|תשובה נכונה)\)\s*$|\s*[-–]\s*(?:נכון|תשובה נכונה)\s*$/;
-function parseQuizParagraphs(paras){
+function qzText(chars){ return chars.map(x=>x.c).join("").replace(/\s+/g, " ").trim(); }
+function qzFeats(chars){
+  const f = {bold:0, underline:0, highlight:0, color:0, shd:0}; let n = 0;
+  chars.forEach(x=>{ if(/\s/.test(x.c) || /[*＊∗٭⁎✱★✓✔√☑✅.)\-]/.test(x.c)) return; n++; Object.keys(f).forEach(k=>{ if(x.m[k]) f[k]++; }); });
+  Object.keys(f).forEach(k=> f[k] = n ? f[k]/n : 0);
+  return f;
+}
+/* פיצול שורה שבה כתובות כמה תשובות: "א. ... ב. ... ג. ..." (גם "*ב." — הכוכבית שייכת לתשובה שאחריה) */
+function qzSplitInline(chars){
+  const text = chars.map(x=>x.c).join("");
+  const re = /(^|[\s.,;:!?])([*＊∗٭⁎✱★✓✔√]?\s*)([א-י]|[a-jA-J])\s*[.)]\s/g;
+  const hits = []; let m;
+  while((m = re.exec(text))){ hits.push({pos: m.index + m[1].length, letter: m[3]}); re.lastIndex = m.index + m[0].length; }
+  const heb = "אבגדהוזחטי", lat = "abcdefghij";
+  const idx = l=> heb.includes(l) ? heb.indexOf(l) : lat.indexOf(l.toLowerCase());
+  // רצף עולה של אותיות (א,ב,ג... או ב,ג,ד...) - כדי לא לפצל מילים רגילות
+  let best = [];
+  for(let i=0;i<hits.length;i++){ const run=[hits[i]]; for(let j=i+1;j<hits.length;j++){ if(idx(hits[j].letter)===idx(run[run.length-1].letter)+1) run.push(hits[j]); } if(run.length>best.length) best=run; }
+  if(best.length < 2) return [chars];
+  const cuts = best.map(h=>h.pos);
+  if(cuts[0] > 0 && text.slice(0, cuts[0]).trim()) cuts.unshift(0); else cuts[0] = 0;
+  return cuts.map((c,i)=>chars.slice(c, cuts[i+1] !== undefined ? cuts[i+1] : chars.length)).filter(p=>qzText(p));
+}
+const QZ_MARK_CHARS = /[*＊∗٭⁎✱★✓✔√☑✅]/;
+const QZ_MARK_TEXT = /\(\s*(?:נכון|תשובה נכונה)\s*\)|\s[-–]\s*(?:נכון|תשובה נכונה)\s*$/;
+const QZ_LETTER = /^\s*(?:[א-י]|[a-jA-J])\s*[.)\-]\s*/;
+function qzCleanOption(t){
+  return t.replace(QZ_MARK_TEXT, " ").replace(/[*＊∗٭⁎✱★✓✔√☑✅]+/g, " ").replace(/\(\s*\)/g, " ").replace(/\s+/g, " ").trim().replace(QZ_LETTER, "").trim();
+}
+function parseQuizParagraphs(lines){
   const questions = [];
   let cur = null;
-  paras.forEach(p=>{
-    let t = p.text, kind = p.kind;
+  const addOption = chars=>{
+    const raw = qzText(chars);
+    const marked = QZ_MARK_CHARS.test(raw) || QZ_MARK_TEXT.test(raw);
+    const text = qzCleanOption(raw);
+    if(!text) return;
+    cur.options.push(text); cur.markers.push(marked); cur.feats.push(qzFeats(chars));
+  };
+  lines.forEach(L=>{
+    let t = qzText(L.chars), kind = L.kind, chars = L.chars;
     const qm = t.match(/^(?:שאלה\s*)?(\d{1,3})\s*[.):\-]\s*(.*)$/);
-    const am = t.match(/^([א-י]|[a-jA-J])\s*[.)\-]\s+(.*)$/) || t.match(/^([א-י]|[a-jA-J])\s*\)\s*(.*)$/);
+    const am = QZ_LETTER.test(t.replace(/^[*＊∗٭⁎✱★✓✔√]\s*/, ""));
     if(!kind){
-      if(qm && qm[2]) { kind = "q"; t = qm[2]; }
-      else if(am && cur) { kind = "a"; t = am[2]; }
+      if(qm && qm[2]) kind = "q";
+      else if(am && cur) kind = "a";
       else if(/[?？]\s*$/.test(t)) kind = "q";
       else if(cur) kind = "a";
-    } else {
-      if(kind === "q" && qm && qm[2]) t = qm[2];
-      if(kind === "a" && am) t = am[2];
     }
-    if(kind === "q"){ cur = {q:t, options:[], feats:[], markers:[]}; questions.push(cur); }
-    else if(kind === "a" && cur){
-      const marked = QZ_MARKER.test(t);
-      cur.options.push(t.replace(QZ_MARKER, "").trim());
-      cur.markers.push(marked); cur.feats.push(p.feats);
+    if(kind === "q"){
+      // שאלה ותשובות באותה שורה: "1. מה...? א. ... ב. ..."
+      const parts = qzSplitInline(chars);
+      const qText = qzText(parts[0]).replace(/^(?:שאלה\s*)?\d{1,3}\s*[.):\-]\s*/, "");
+      cur = {q:qText, options:[], feats:[], markers:[]}; questions.push(cur);
+      parts.slice(1).forEach(addOption);
+    } else if(kind === "a" && cur){
+      qzSplitInline(chars).forEach(addOption);
     }
   });
   const order = ["highlight", "shd", "color", "underline", "bold"];
