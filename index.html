@@ -244,7 +244,7 @@ function submitOptionsForTeamDay(team, dateStr){
 }
 /* ================================================================
    שישי בוקר של המאבטחים (לא מוקד) - לבקשת סרגיי (2026-10-09): המשמרת מסתיימת שעתיים לפני כניסת
-   השבת, מעוגל לשעה העגולה הקרובה (כניסה 17:48 → 15:48 → סיום 16:00; כניסה 19:15 → 17:15 → 17:00).
+   השבת, בחצאי שעות - ראו fridayMorningEnd.
    זמן כניסת השבת מחושב כאן בכל פתיחה, לכל עיר בנפרד: שקיעה (חישוב אסטרונומי, NOAA) פחות דקות הדלקת
    נרות לפי המקובל בעיר (ירושלים 40, חיפה 30, שאר הערים 18 - כמו בלוחות השנה הנפוצים).
    ================================================================ */
@@ -285,10 +285,15 @@ function candleLightingMinutes(dateStr, sector){
   return Math.floor(sunsetLocalMinutes(dateStr, c.lat, c.lng)) - c.before;
 }
 function fmtMinutes(m){ const h = Math.floor(m/60), mm = Math.round(m%60); return `${String(h).padStart(2,"0")}:${String(mm).padStart(2,"0")}`; }
-/* סיום משמרת שישי בוקר: שעתיים לפני כניסת שבת, מעוגל לשעה הקרובה (30 דקות ומעלה - כלפי מעלה) */
+/* סיום משמרת שישי בוקר: שעתיים לפני כניסת שבת, בחצאי שעות (לבקשת סרגיי, 2026-10-09):
+   כניסה עד "ורבע" (17:15) → סיום בשעה העגולה שעתיים לפני (15:00);
+   כניסה אחרי "ורבע" ועד "רבע ל" (18:17, 19:35, 20:28) → סיום בחצי (16:30, 17:30, 18:30);
+   כניסה אחרי "רבע ל" (17:48, 18:51) → סיום בשעה העגולה שאחרי (16:00, 17:00). */
 function fridayMorningEnd(dateStr, sector){
   const cl = candleLightingMinutes(dateStr, sector); if(cl==null) return null;
-  return fmtMinutes(Math.round((cl - 120)/60) * 60);
+  const h = Math.floor(cl/60), m = cl % 60;
+  const end = m <= 15 ? (h-2)*60 : m <= 45 ? (h-2)*60 + 30 : (h-1)*60;
+  return fmtMinutes(end);
 }
 /* התקן בפועל לתאריך מסוים: כמו התקן הרגיל, חוץ משישי בוקר של המאבטחים שמתעדכן לפי כניסת השבת */
 function effQuota(q, dateStr){
@@ -302,7 +307,7 @@ function shabbatNoteHtml(group, dates){
   const cities = (group.citySectors||[]).filter(c=>SHABBAT_CITIES[c] && (S.quotas||[]).some(q=>q.sector===c && q.shift_type==="friday_morning"));
   if(!cities.length) return "";
   const rows = dates.filter(d=>dayTypeForDate(d)==="friday").map(d=>`<div>🕯️ <b>${fmtDateHeb(d)}</b>: ${cities.map(c=>`${escapeHtml(c)} — כניסת שבת ${fmtMinutes(candleLightingMinutes(d,c))}, שישי בוקר עד <b>${fridayMorningEnd(d,c)}</b>`).join(" · ")}</div>`);
-  return rows.length ? `<div class="muted" style="font-size:.88em;margin:-4px 0 10px;line-height:1.8;">${rows.join("")}<div style="font-size:.9em;">משמרת שישי בוקר מסתיימת שעתיים לפני כניסת השבת, מעוגל לשעה הקרובה.</div></div>` : "";
+  return rows.length ? `<div class="muted" style="font-size:.88em;margin:-4px 0 10px;line-height:1.8;">${rows.join("")}<div style="font-size:.9em;">משמרת שישי בוקר מסתיימת שעתיים לפני כניסת השבת, בחצאי שעות: כניסה עד ורבע — שעה עגולה, בין ורבע לרבע ל — בחצי, אחרי רבע ל — שעה עגולה כלפי מעלה.</div></div>` : "";
 }
 /* תווית לבחירת משמרת בטופס - בשבת "ערב" מציג את השעות מתוך התקן של המוקד */
 function submitOptionLabel(ot, dateStr){
