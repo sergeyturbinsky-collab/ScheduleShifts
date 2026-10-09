@@ -242,6 +242,68 @@ function submitOptionsForTeamDay(team, dateStr){
   if(isMokedTeam(team)) return ["evening","motzash"];
   return ["motzash"];
 }
+/* ================================================================
+   שישי בוקר של המאבטחים (לא מוקד) - לבקשת סרגיי (2026-10-09): המשמרת מסתיימת שעתיים לפני כניסת
+   השבת, מעוגל לשעה העגולה הקרובה (כניסה 17:48 → 15:48 → סיום 16:00; כניסה 19:15 → 17:15 → 17:00).
+   זמן כניסת השבת מחושב כאן בכל פתיחה, לכל עיר בנפרד: שקיעה (חישוב אסטרונומי, NOAA) פחות דקות הדלקת
+   נרות לפי המקובל בעיר (ירושלים 40, חיפה 30, שאר הערים 18 - כמו בלוחות השנה הנפוצים).
+   ================================================================ */
+const SHABBAT_CITIES = {
+  "ירושלים":       {lat:31.778, lng:35.235, before:40},
+  "בית שמש":       {lat:31.747, lng:34.988, before:18},
+  "ביתר עילית":    {lat:31.696, lng:35.116, before:18},
+  "מודיעין עילית": {lat:31.932, lng:35.044, before:18},
+  "חיפה":          {lat:32.794, lng:34.989, before:30},
+  "באר שבע":       {lat:31.252, lng:34.791, before:18}
+};
+function israelUtcOffsetMin(dateUtc){
+  const parts = new Intl.DateTimeFormat("en-US", {timeZone:"Asia/Jerusalem", hour12:false, year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit"}).formatToParts(dateUtc);
+  const g = t=>Number(parts.find(x=>x.type===t).value);
+  const asUtc = Date.UTC(g("year"), g("month")-1, g("day"), g("hour")%24, g("minute"));
+  return Math.round((asUtc - dateUtc.getTime())/60000);
+}
+/* שקיעה (שעון ישראל, בדקות מחצות) לתאריך "YYYY-MM-DD" - אלגוריתם NOAA, דיוק של כדקה */
+function sunsetLocalMinutes(dateStr, lat, lng){
+  const [Y,M,D] = dateStr.split("-").map(Number);
+  const rad = Math.PI/180;
+  const jd = Date.UTC(Y, M-1, D, 12) / 86400000 + 2440587.5;
+  const n = jd - 2451545.0 + 0.0008;
+  const Jstar = n - lng/360;
+  const Mdeg = (357.5291 + 0.98560028*Jstar) % 360;
+  const C = 1.9148*Math.sin(Mdeg*rad) + 0.02*Math.sin(2*Mdeg*rad) + 0.0003*Math.sin(3*Mdeg*rad);
+  const lambda = (Mdeg + C + 180 + 102.9372) % 360;
+  const Jtransit = 2451545.0 + Jstar + 0.0053*Math.sin(Mdeg*rad) - 0.0069*Math.sin(2*lambda*rad);
+  const decl = Math.asin(Math.sin(lambda*rad) * Math.sin(23.4397*rad));
+  const cosH = (Math.sin(-0.833*rad) - Math.sin(lat*rad)*Math.sin(decl)) / (Math.cos(lat*rad)*Math.cos(decl));
+  const H = Math.acos(Math.max(-1, Math.min(1, cosH))) / rad;
+  const Jset = Jtransit + H/360;
+  const setUtc = new Date((Jset - 2440587.5) * 86400000);
+  return (setUtc.getUTCHours()*60 + setUtc.getUTCMinutes() + setUtc.getUTCSeconds()/60 + israelUtcOffsetMin(setUtc) + 1440) % 1440;
+}
+function candleLightingMinutes(dateStr, sector){
+  const c = SHABBAT_CITIES[sector]; if(!c) return null;
+  return Math.floor(sunsetLocalMinutes(dateStr, c.lat, c.lng)) - c.before;
+}
+function fmtMinutes(m){ const h = Math.floor(m/60), mm = Math.round(m%60); return `${String(h).padStart(2,"0")}:${String(mm).padStart(2,"0")}`; }
+/* סיום משמרת שישי בוקר: שעתיים לפני כניסת שבת, מעוגל לשעה הקרובה (30 דקות ומעלה - כלפי מעלה) */
+function fridayMorningEnd(dateStr, sector){
+  const cl = candleLightingMinutes(dateStr, sector); if(cl==null) return null;
+  return fmtMinutes(Math.round((cl - 120)/60) * 60);
+}
+/* התקן בפועל לתאריך מסוים: כמו התקן הרגיל, חוץ משישי בוקר של המאבטחים שמתעדכן לפי כניסת השבת */
+function effQuota(q, dateStr){
+  if(!q || q.shift_type!=="friday_morning" || q.sector==="מוקד" || dayTypeForDate(dateStr)!=="friday") return q;
+  const end = fridayMorningEnd(dateStr, q.sector);
+  if(!end || end===String(q.end_time).slice(0,5)) return q;
+  return Object.assign({}, q, {end_time:end, label: String(q.label||"").replace(/\(\d{2}:\d{2}-\d{2}:\d{2}\)/, `(${String(q.start_time).slice(0,5)}-${end})`), shabbat_adjusted:true});
+}
+/* שורת מידע בטבלה המרוכזת: כניסת שבת וסיום משמרת שישי בוקר, לכל שישי בתקופה ולכל עיר */
+function shabbatNoteHtml(group, dates){
+  const cities = (group.citySectors||[]).filter(c=>SHABBAT_CITIES[c] && (S.quotas||[]).some(q=>q.sector===c && q.shift_type==="friday_morning"));
+  if(!cities.length) return "";
+  const rows = dates.filter(d=>dayTypeForDate(d)==="friday").map(d=>`<div>🕯️ <b>${fmtDateHeb(d)}</b>: ${cities.map(c=>`${escapeHtml(c)} — כניסת שבת ${fmtMinutes(candleLightingMinutes(d,c))}, שישי בוקר עד <b>${fridayMorningEnd(d,c)}</b>`).join(" · ")}</div>`);
+  return rows.length ? `<div class="muted" style="font-size:.88em;margin:-4px 0 10px;line-height:1.8;">${rows.join("")}<div style="font-size:.9em;">משמרת שישי בוקר מסתיימת שעתיים לפני כניסת השבת, מעוגל לשעה הקרובה.</div></div>` : "";
+}
 /* תווית לבחירת משמרת בטופס - בשבת "ערב" מציג את השעות מתוך התקן של המוקד */
 function submitOptionLabel(ot, dateStr){
   if(ot==="evening" && dayTypeForDate(dateStr)==="saturday"){
@@ -682,6 +744,7 @@ function renderAggregate(){
   <div class="card">
     <span class="backlink" data-action="agg-back">◀ בחירת צוות אחר</span>
     <h2>טבלה מרוכזת — ${escapeHtml(group.label)}</h2>
+    ${shabbatNoteHtml(group, dates)}
     ${group.pooledNote? `<div class="note-box">שים לב: כמה תת-גזרות/קב"טים חולקים כאן את אותה בריכת עובדים זמינים (אין הפרדה בהגשת האילוצים ברמת תת-הגזרה), כך שהזמינות מחושבת עבור כל תת-הגזרות/הצוותים יחד.</div>`:""}
     <div class="flexbar">
       <button class="btn small secondary" data-action="agg-period-prev">◀ תקופה קודמת</button>
@@ -1048,6 +1111,7 @@ function buildSlots(dates, group, quotas){
     const wd = parseDate(d).getDay();
     group.citySectors.forEach(sector=>{
       quotas.filter(q=>q.sector===sector && q.day_type===dt && (q.weekday==null || q.weekday===wd)).forEach(q=>{
+        q = effQuota(q, d);
         slots.push({date:d, sector, shiftType:q.shift_type, label:q.label, start:q.start_time, end:q.end_time, required:q.required_count, roleCounts:q.role_counts||null});
       });
     });
@@ -1130,8 +1194,8 @@ const REST_HOURS_REQUIRED = 8;
 /* טווח הזמן בפועל של שיבוץ נתון: שעות מותאמות אם הוגדרו, אחרת שעות התקן הרגילות לפי S.quotas.
    משמרת שחוצה חצות (סיום <= התחלה) - הסיום מחושב ליום הבא. */
 function shiftInterval(a){
-  const q = S.quotas.find(x=>x.sector===a.sector && x.shift_type===a.shift_type &&
-    (x.weekday==null || x.weekday===parseDate(a.entry_date).getDay()));
+  const q = effQuota(S.quotas.find(x=>x.sector===a.sector && x.shift_type===a.shift_type &&
+    (x.weekday==null || x.weekday===parseDate(a.entry_date).getDay())), a.entry_date);
   if(!q) return null;
   const startStr = (a.custom_start || q.start_time).slice(0,5);
   const endStr = (a.custom_end || q.end_time).slice(0,5);
@@ -1270,7 +1334,7 @@ function buildTemplateData(group, dates, quotas){
         .forEach(q=>{
           const key = bucketKey(q.shift_type);
           if(!byKey[key]) byKey[key] = {key, maxReq:0, perDate:{}, minStart:q.start_time, label: TMPL_BUCKET_LABEL_OVERRIDE[key] || q.label.replace(/\s*\([^)]*\)\s*$/,""), roleMax:{}};
-          byKey[key].perDate[d] = q;
+          byKey[key].perDate[d] = effQuota(q, d);
           byKey[key].maxReq = Math.max(byKey[key].maxReq, q.required_count);
           if(q.start_time < byKey[key].minStart) byKey[key].minStart = q.start_time;
           if(q.role_counts){ Object.keys(q.role_counts).forEach(r=>{ byKey[key].roleMax[r] = Math.max(byKey[key].roleMax[r]||0, q.role_counts[r]||0); }); }
