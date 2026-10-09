@@ -172,7 +172,7 @@ function renderTasks(App, session){
   const rows = [];
   rows.push({done: !!T.data.submitted, action:"portal-go-submit",
     label: "הגשת סידור עבודה", sub: T.data.periodStart ? `לתקופה שמתחילה ב${App.fmtDateHeb(T.data.periodStart)}` : ""});
-  trainingsForMainScreen(T.data.trainings).forEach(t=>rows.push({done: !!t.passed, action:"portal-go-training",
+  trainingsForMainScreen(T.data.trainings).forEach(t=>rows.push({done: !!t.passed, action:"portal-open-quiz", id:t.id,
     label: `מעבר על הלומדה "${t.title}" ומבחן`, sub: ""}));
   controlsForMainScreen(T.data.controls).forEach(c=>rows.push({done: !!c.read_at, action:"portal-open-control", id:c.id,
     label: `קריאת סיכום בקרה: ${c.title}`, sub: fmtD(App, c.exercise_date)}));
@@ -196,8 +196,8 @@ function renderTraining(App, session){
   if(!list.length) return `<h3>לומדות</h3><p class="muted">עדיין לא פורסמו לומדות.</p>` + renderWorkerTrainingExtras(App, session);
   return `<h3>לומדות</h3><div style="overflow-x:auto;"><table>
     <thead><tr><th style="text-align:right;">לומדה</th><th>פורסמה</th><th>סטטוס</th></tr></thead>
-    <tbody>${list.map(t=>`<tr>
-      <td style="text-align:right;">${esc(t.title)}</td>
+    <tbody>${list.map(t=>`<tr class="portal-click" data-action="portal-open-quiz" data-id="${t.id}">
+      <td style="text-align:right;">${esc(t.title)}${t.passed?"":' <span class="muted" style="font-size:.85em;">— לחצו למעבר על הבוחן</span>'}</td>
       <td>${App.fmtDateHeb(String(t.published_at).slice(0,10))}</td>
       <td>${t.passed ? `<span class="portal-task-icon done">✔</span> בוצע ${t.completed_at?App.fmtDateHeb(String(t.completed_at).slice(0,10)):""}` : `🕒 טרם בוצע`}</td>
     </tr>`).join("")}</tbody>
@@ -750,6 +750,34 @@ function renderAllUpdates(App, session){
   const ps = sortedPosts();
   return ps.length ? `<div class="portal-tasks">${ps.map(p=>postRowHtml(App, p, true)).join("")}</div>` : `<p class="muted">אין עדיין הודעות.</p>`;
 }
+/* בוחן אצל המאבטח (2026-10-09): חובה לענות על הכל; הבדיקה בשרת. עד 100 — חוזר לשאלון עם ✓/✗ בלי לחשוף את הנכונה */
+function renderQuiz(App, session){
+  const esc = App.escapeHtml, Z = T.quiz;
+  const back = `<span class="backlink" data-action="portal-quiz-back">◀ חזרה להדרכה</span>`;
+  if(!Z.data){
+    if(!Z.loading){ Z.loading = true;
+      App.apiRpc("worker_quiz_get", {p_token: session.token, p_training_id: Z.id})
+        .then(r=>{ Z.loading = false; Z.data = r || {missing:true}; if(r && r.questions) Z.answers = r.questions.map(()=>null); App.render(); })
+        .catch(e=>{ Z.loading = false; Z.data = {error:e.message}; App.render(); }); }
+    return back + `<p class="muted">טוען...</p>`;
+  }
+  if(Z.data.error) return back + `<p class="shortage">${esc(Z.data.error)}</p>`;
+  if(Z.data.missing || !Z.data.questions) return back + `<h2>${esc(Z.title||"")}</h2><p class="muted">לבוחן הזה עדיין אין שאלות.</p>`;
+  const qs = Z.data.questions;
+  if(Z.result && Z.result.passed) return back + `<h2>${esc(Z.data.title)}</h2>
+    <div class="banner open" style="font-size:1.1em;">✔ כל הכבוד! ציון 100 — עברת את הבוחן.</div>`;
+  if(Z.data.passed && !Z.result) return back + `<h2>${esc(Z.data.title)}</h2><div class="banner open">✔ עברת את הבוחן הזה.</div>`;
+  const marks = Z.result ? Z.result.marks : null;
+  return back + `<h2>${esc(Z.data.title)}</h2>
+    ${Z.result ? `<div class="banner closed">ציון: <b>${Z.result.score}</b> · ענית נכון על <b>${Z.result.correct} מתוך ${Z.result.total}</b> שאלות.<br>השאלות שסומנו ב-✖ — יש לענות עליהן מחדש ולהגיש שוב. צריך 100 כדי לעבור.</div>`
+               : `<p class="muted">יש לענות על כל השאלות ואז ללחוץ "הגשה".</p>`}
+    ${qs.map((q,i)=>`<div class="portal-qbox${marks? (marks[i]?" ok":" bad") : ""}">
+      <div style="font-weight:700;">${marks? (marks[i]?'<span class="portal-mark ok">✔</span>':'<span class="portal-mark bad">✖</span>') : ""}${i+1}. ${esc(q.q)}</div>
+      ${q.options.map((o,j)=>`<label class="portal-opt"><input type="radio" name="qa_${i}" data-action="portal-quiz-answer" data-q="${i}" data-o="${j}" ${Z.answers[i]===j?"checked":""}> ${esc(o)}</label>`).join("")}
+    </div>`).join("")}
+    ${Z.error?`<p class="shortage">${esc(Z.error)}</p>`:""}
+    <button class="btn ok" data-action="portal-quiz-submit" ${Z.busy?"disabled":""} style="font-size:1.05em;padding:10px 26px;">${Z.busy?"בודק...":"הגשה"}</button>`;
+}
 function renderControlDoc(App, session){
   const esc = App.escapeHtml;
   const back = `<span class="backlink" data-action="portal-doc-back">◀ חזרה להדרכה</span>`;
@@ -888,7 +916,7 @@ function renderIsraelDashboard(App, ms){
   </div>
   <div class="card">
     <div class="flexbar" style="justify-content:space-between;">
-      <h3 style="margin:0;">לומדות ובחנים</h3>
+      <h3 style="margin:0;">לומדות ובחנים <button class="btn small" data-action="portal-pv" data-page="trn-quiz-new" style="margin-inline-start:8px;">+ בוחן חדש</button></h3>
       ${res.new_count ? `<span class="portal-badge">🔔 ${res.new_count} תוצאות בחנים חדשות</span>` : ""}
     </div>
     ${trs.length ? `<div class="portal-grid3" style="margin-top:10px;">${shownTrs.map(t=>`<div class="portal-dtile" data-action="portal-pv" data-page="trn-training" data-id="${t.id}">
@@ -916,13 +944,14 @@ function renderIsraelDashboard(App, ms){
 /* ---------- עמודי משנה (view "pview") ---------- */
 const PV_TITLES = { "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
-  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום" };
+  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "trn-quiz-new":"בוחן חדש", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
 function pvGo(App, page, args, push){
   if(push !== false && App.S.view==="pview" && PV.page) PV.stack.push({page:PV.page, args:PV.args});
   if(App.S.view!=="pview") PV.stack = [];
   PV.page = page; PV.args = args||{}; PV.data = null; PV.posts = null; PV.seenSent = false; PV.msg = null; PV.error = null; PV.busy = false;
   if(page==="trn-control-new" || page==="trn-post-new") PV.form = {};
+  if(page==="trn-quiz-new") PV.quiz = null;
   App.S.view = "pview"; App.S.ui = {};
   App.render();
 }
@@ -1081,10 +1110,39 @@ function renderPView(App){
           <div class="portal-dtile-n">${cs.length}</div><div class="portal-dtile-s">${cs.length?`צפייה ממוצעת ${avg(cs,p=>p.viewed||0,p=>p.workers_total||0)}%`:"עדיין אין תכנים"}</div></div>
       </div>`);
   }
+  if(pg==="trn-quiz-new"){
+    const Q = PV.quiz || (PV.quiz = {title:"", questions:null, fileName:"", busy:false});
+    const qs = Q.questions;
+    const missing = qs ? qs.map((q,i)=>q.correct==null?i+1:0).filter(Boolean) : [];
+    return wrap(`<h2>בוחן חדש מקובץ וורד</h2>${msgs}
+      <div class="field"><label>שם הבוחן</label><input type="text" id="quizTitle" maxlength="200" value="${esc(Q.title)}" placeholder="למשל: נהלי שער צפוני"></div>
+      <div class="portal-drop" data-drop="quiz">
+        <div style="font-weight:700;">גררו לכאן קובץ וורד (docx) של שאלות ותשובות</div>
+        <div class="muted" style="font-size:.85em;margin:4px 0 8px;">בכל שאלה — סמנו את התשובה הנכונה בהדגשה, בצבע/מרקר, בקו תחתון, או בכוכבית (*) לידה</div>
+        <label class="btn small secondary" style="cursor:pointer;">בחרו קובץ<input type="file" accept=".docx" data-action="portal-quiz-file" style="display:none;"></label>
+        ${Q.fileName?`<div style="margin-top:8px;">📄 ${esc(Q.fileName)}</div>`:""}
+      </div>
+      ${Q.busy?'<p class="muted">קורא את הקובץ...</p>':""}
+      ${qs ? `
+        <h3 style="margin-top:16px;">בדיקה לפני פרסום — ${qs.length} שאלות</h3>
+        <p class="muted" style="margin-top:-6px;">התשובה הנכונה מסומנת בירוק, כפי שזוהתה בקובץ. אפשר לתקן בלחיצה על תשובה אחרת. המאבטחים לא יראו את הסימון.</p>
+        ${missing.length?`<p class="shortage">לא זוהתה תשובה נכונה בשאלות: ${missing.join(", ")} — סמנו אותה ידנית.</p>`:""}
+        ${qs.map((q,i)=>`<div class="portal-qbox${q.correct==null?" bad":""}">
+          <div class="flexbar" style="justify-content:space-between;align-items:flex-start;">
+            <div style="font-weight:700;">${i+1}. ${esc(q.q)}</div>
+            <button class="btn small secondary" data-action="portal-quiz-del" data-q="${i}">הסר</button>
+          </div>
+          ${q.options.map((o,j)=>`<label class="portal-opt${q.correct===j?" right":""}"><input type="radio" name="qzc_${i}" data-action="portal-quiz-correct" data-q="${i}" data-o="${j}" ${q.correct===j?"checked":""}> ${esc(o)}</label>`).join("")}
+          ${q.options.length<2?'<p class="shortage" style="margin:4px 0 0;">פחות משתי תשובות — בדקו את הקובץ</p>':""}
+        </div>`).join("")}
+        <p class="muted">שום דבר לא עולה ולא נשלח עד הלחיצה על "פרסם".</p>
+        <button class="btn ok" data-action="portal-quiz-publish" ${PV.busy||missing.length||!qs.length?"disabled":""}>📢 פרסם בוחן</button>` : ""}`);
+  }
   if(pg==="trn-lomdas"){
     if(needLoad("trn_overview", {p_token:tok})) return loading();
     const trs = (PV.data.r && PV.data.r.trainings) || [];
-    return wrap(`<h2>לומדה ובחנים</h2>
+    return wrap(`<div class="flexbar" style="justify-content:space-between;"><h2 style="margin:0;">לומדה ובחנים</h2>
+      <button class="btn small" data-action="portal-pv" data-page="trn-quiz-new">+ בוחן חדש מקובץ וורד</button></div><div style="height:10px;"></div>
       ${trs.length ? `<div class="portal-tasks">${trs.map(t=>`<div class="portal-task" data-action="portal-pv" data-page="trn-training" data-id="${t.id}">
         <span class="portal-pct">${pct(t.passed,t.eligible)}%</span>
         <span><span style="font-weight:600;">${esc(t.title)}</span> <span class="muted" style="font-size:.85em;">${t.passed} מתוך ${t.eligible} מאבטחים ביצעו · פורסמה ${fmtD(App,t.published_at)}</span></span></div>`).join("")}</div>`
@@ -1185,6 +1243,166 @@ function onbListHtml(App){
     }).join("")}</tbody></table>`).join("");
 }
 
+/* ================================================================
+   בוחן מקובץ וורד (לבקשת סרגיי, 2026-10-09): ישראל גורר קובץ .docx של שאלות ותשובות, שבו התשובה
+   הנכונה מסומנת (מודגשת / מסומנת בצבע או ב"מרקר" / קו תחתון / כוכבית או ✓). הקובץ נקרא כאן בדפדפן,
+   מוצג לישראל לבדיקה, ורק "פרסם" שולח לשרת. אין ספריות חיצוניות: פריסת ה-zip ב-DecompressionStream.
+   ================================================================ */
+async function docxReadFiles(buf, names){
+  const dv = new DataView(buf), u8 = new Uint8Array(buf);
+  let eocd = -1;
+  for(let i = u8.length - 22; i >= Math.max(0, u8.length - 70000); i--){ if(dv.getUint32(i, true) === 0x06054b50){ eocd = i; break; } }
+  if(eocd < 0) throw new Error("הקובץ אינו קובץ וורד (docx) תקין");
+  const count = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+  const out = {};
+  const dec = new TextDecoder("utf-8");
+  for(let k = 0; k < count; k++){
+    if(dv.getUint32(p, true) !== 0x02014b50) break;
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
+    const nlen = dv.getUint16(p + 28, true), elen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+    const lho = dv.getUint32(p + 42, true);
+    const name = dec.decode(u8.subarray(p + 46, p + 46 + nlen));
+    p += 46 + nlen + elen + clen;
+    if(!names.includes(name)) continue;
+    const lnlen = dv.getUint16(lho + 26, true), lelen = dv.getUint16(lho + 28, true);
+    const data = u8.subarray(lho + 30 + lnlen + lelen, lho + 30 + lnlen + lelen + csize);
+    let bytes;
+    if(method === 0) bytes = data;
+    else if(method === 8){
+      if(typeof DecompressionStream === "undefined") throw new Error("הדפדפן לא תומך בקריאת קבצי וורד — נסו בכרום");
+      const ds = new DecompressionStream("deflate-raw");
+      const stream = new Blob([data]).stream().pipeThrough(ds);
+      bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+    } else throw new Error("פורמט דחיסה לא נתמך");
+    out[name] = dec.decode(bytes);
+  }
+  return out;
+}
+function xmlUnescape(s){ return s.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&#(\d+);/g,(m,n)=>String.fromCharCode(+n)).replace(/&#x([0-9a-f]+);/gi,(m,n)=>String.fromCharCode(parseInt(n,16))).replace(/&amp;/g,"&"); }
+function xmlAttr(tagXml, attr){ const m = tagXml.match(new RegExp(attr + '="([^"]*)"')); return m ? m[1] : null; }
+function docxNumFormats(numberingXml){
+  const fmt = {}; // numId -> {ilvl: numFmt}
+  if(!numberingXml) return fmt;
+  const abs = {};
+  (numberingXml.match(/<w:abstractNum\b[\s\S]*?<\/w:abstractNum>/g) || []).forEach(a=>{
+    const id = xmlAttr(a.match(/<w:abstractNum\b[^>]*>/)[0], "w:abstractNumId");
+    const lv = {};
+    (a.match(/<w:lvl\b[\s\S]*?<\/w:lvl>/g) || []).forEach(l=>{
+      const il = xmlAttr(l.match(/<w:lvl\b[^>]*>/)[0], "w:ilvl");
+      const f = l.match(/<w:numFmt\b[^>]*>/);
+      lv[il] = f ? xmlAttr(f[0], "w:val") : null;
+    });
+    abs[id] = lv;
+  });
+  (numberingXml.match(/<w:num\b[\s\S]*?<\/w:num>/g) || []).forEach(n=>{
+    const id = xmlAttr(n.match(/<w:num\b[^>]*>/)[0], "w:numId");
+    const a = n.match(/<w:abstractNumId\b[^>]*>/);
+    if(a) fmt[id] = abs[xmlAttr(a[0], "w:val")] || {};
+  });
+  return fmt;
+}
+function docxRunMarks(rPr){
+  const on = tag=>{ const m = rPr.match(new RegExp("<w:" + tag + "(\\s[^>]*)?/?>")); if(!m) return false; const v = xmlAttr(m[0], "w:val"); return v === null || !/^(0|false|none|off)$/i.test(v); };
+  const color = (()=>{ const m = rPr.match(/<w:color\b[^>]*>/); if(!m) return false; const v = (xmlAttr(m[0], "w:val") || "").toLowerCase(); return v && v !== "auto" && v !== "000000"; })();
+  const shd = (()=>{ const m = rPr.match(/<w:shd\b[^>]*>/); if(!m) return false; const v = (xmlAttr(m[0], "w:fill") || "").toLowerCase(); return v && v !== "auto" && v !== "ffffff"; })();
+  return { bold: on("b") || on("bCs"), underline: on("u"), highlight: on("highlight"), color, shd };
+}
+function docxParagraphs(docXml, numFmt){
+  const paras = [];
+  const body = (docXml.match(/<w:body>([\s\S]*)<\/w:body>/) || [,docXml])[1];
+  (body.match(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/g) || []).forEach(px=>{
+    const pPr = (px.match(/<w:pPr>([\s\S]*?)<\/w:pPr>/) || [,""])[1];
+    let kind = null;
+    const numId = (pPr.match(/<w:numId\b[^>]*>/) || [null])[0], ilvlT = (pPr.match(/<w:ilvl\b[^>]*>/) || [null])[0];
+    if(numId){
+      const nid = xmlAttr(numId, "w:val"), il = ilvlT ? xmlAttr(ilvlT, "w:val") : "0";
+      if(nid && nid !== "0"){
+        const f = (numFmt[nid] || {})[il];
+        if(il !== "0") kind = "a";
+        else if(f && /hebrew|letter|roman|aiueo|iroha/i.test(f)) kind = "a";
+        else kind = "q";
+      }
+    }
+    let text = "", feats = {bold:0, underline:0, highlight:0, color:0, shd:0}, nchars = 0;
+    const content = px.replace(/<w:pPr>[\s\S]*?<\/w:pPr>/, "");
+    (content.match(/<w:r\b[^>]*>[\s\S]*?<\/w:r>/g) || []).forEach(rx=>{
+      const rPr = (rx.match(/<w:rPr>([\s\S]*?)<\/w:rPr>/) || [,""])[1];
+      let t = "";
+      (rx.match(/<w:t(?:\s[^>]*)?>[\s\S]*?<\/w:t>|<w:tab\/>|<w:br\/>/g) || []).forEach(tx=>{
+        if(tx === "<w:tab/>" || tx === "<w:br/>") t += " ";
+        else t += xmlUnescape(tx.replace(/^<w:t(?:\s[^>]*)?>/, "").replace(/<\/w:t>$/, ""));
+      });
+      text += t;
+      const n = t.replace(/\s/g, "").length;
+      if(n){ const m = docxRunMarks(rPr); nchars += n; Object.keys(feats).forEach(k=>{ if(m[k]) feats[k] += n; }); }
+    });
+    text = text.replace(/\s+/g, " ").trim();
+    if(!text) return;
+    Object.keys(feats).forEach(k=> feats[k] = nchars ? feats[k] / nchars : 0);
+    paras.push({text, kind, feats});
+  });
+  return paras;
+}
+const QZ_MARKER = /^\s*[*✓✔√]+\s*|\s*[*✓✔√]+\s*$|\s*\((?:נכון|תשובה נכונה)\)\s*$|\s*[-–]\s*(?:נכון|תשובה נכונה)\s*$/;
+function parseQuizParagraphs(paras){
+  const questions = [];
+  let cur = null;
+  paras.forEach(p=>{
+    let t = p.text, kind = p.kind;
+    const qm = t.match(/^(?:שאלה\s*)?(\d{1,3})\s*[.):\-]\s*(.*)$/);
+    const am = t.match(/^([א-י]|[a-jA-J])\s*[.)\-]\s+(.*)$/) || t.match(/^([א-י]|[a-jA-J])\s*\)\s*(.*)$/);
+    if(!kind){
+      if(qm && qm[2]) { kind = "q"; t = qm[2]; }
+      else if(am && cur) { kind = "a"; t = am[2]; }
+      else if(/[?？]\s*$/.test(t)) kind = "q";
+      else if(cur) kind = "a";
+    } else {
+      if(kind === "q" && qm && qm[2]) t = qm[2];
+      if(kind === "a" && am) t = am[2];
+    }
+    if(kind === "q"){ cur = {q:t, options:[], feats:[], markers:[]}; questions.push(cur); }
+    else if(kind === "a" && cur){
+      const marked = QZ_MARKER.test(t);
+      cur.options.push(t.replace(QZ_MARKER, "").trim());
+      cur.markers.push(marked); cur.feats.push(p.feats);
+    }
+  });
+  const order = ["highlight", "shd", "color", "underline", "bold"];
+  return questions.filter(q=>q.q).map(q=>{
+    let correct = null, how = null;
+    const mk = q.markers.map((m,i)=>m?i:-1).filter(i=>i>=0);
+    if(mk.length === 1){ correct = mk[0]; how = "סימון"; }
+    else {
+      for(const f of order){
+        const has = q.feats.map((x,i)=> x[f] >= 0.5 ? i : -1).filter(i=>i>=0);
+        if(has.length === 1){ correct = has[0]; how = {highlight:"מרקר", shd:"הצללה", color:"צבע", underline:"קו תחתון", bold:"הדגשה"}[f]; break; }
+      }
+    }
+    return {q:q.q, options:q.options, correct, how};
+  });
+}
+async function parseQuizDocx(buf){
+  const files = await docxReadFiles(buf, ["word/document.xml", "word/numbering.xml"]);
+  if(!files["word/document.xml"]) throw new Error("לא נמצא תוכן בקובץ הוורד");
+  return parseQuizParagraphs(docxParagraphs(files["word/document.xml"], docxNumFormats(files["word/numbering.xml"])));
+}
+
+async function loadQuizFile(App, file){
+  if(!file) return;
+  const Q = PV.quiz || (PV.quiz = {title:"", questions:null, fileName:"", busy:false});
+  const tEl = document.getElementById("quizTitle"); if(tEl) Q.title = tEl.value;
+  PV.error = null; PV.msg = null;
+  if(!/\.docx$/i.test(file.name)){ PV.error = "יש לבחור קובץ וורד מסוג docx (בוורד: שמירה בשם ← Word Document)"; return App.render(); }
+  Q.busy = true; Q.fileName = file.name; App.render();
+  try{
+    const qs = await parseQuizDocx(await file.arrayBuffer());
+    Q.questions = qs;
+    if(!Q.title) Q.title = file.name.replace(/\.docx$/i, "");
+    if(!qs.length) PV.error = "לא נמצאו שאלות בקובץ. כל שאלה צריכה להיות בשורה משלה (למשל \"1. ...\" או שורה שמסתיימת ב-?) ומתחתיה התשובות.";
+  }catch(err){ Q.questions = null; PV.error = err.message; }
+  Q.busy = false; App.render();
+}
 /* ---------- פעולות ---------- */
 async function trnAction(App, a, el){
   const ms = loadMgr(App); if(!ms) return App.render();
@@ -1193,6 +1411,19 @@ async function trnAction(App, a, el){
     if(a==="portal-prog-set"){
       await App.apiRpc("trn_program_set", {p_token:tok, p_program_id:PV.args.id, p_worker_id:el.dataset.worker, p_done:el.dataset.done==="1", p_done_at:null});
       PV.data = null; I.data = null; PV.msg = null; return App.render();
+    }
+    if(a==="portal-quiz-publish"){
+      const Q = PV.quiz; if(!Q || !Q.questions) return;
+      const tEl = document.getElementById("quizTitle"); if(tEl) Q.title = tEl.value;
+      if(!Q.title.trim()){ PV.error = "יש לתת שם לבוחן"; return App.render(); }
+      PV.busy = true; PV.error = null; App.render();
+      await App.apiRpc("trn_training_create", {p_token:tok, p_title:Q.title, p_questions: Q.questions.map(q=>({q:q.q, options:q.options, correct:q.correct}))});
+      PV.busy = false; PV.quiz = null; I.data = null;
+      pvBack(App); PV.msg = "הבוחן פורסם. המאבטחים קיבלו אותו כמשימה."; return App.render();
+    }
+    if(a==="portal-quiz-del"){
+      const Q = PV.quiz; const tEl = document.getElementById("quizTitle"); if(tEl) Q.title = tEl.value;
+      Q.questions.splice(+el.dataset.q, 1); return App.render();
     }
     if(a==="portal-onb-complete"){
       el.disabled = true;
@@ -1264,7 +1495,7 @@ function onDrag(App, e){
   e.preventDefault();
   if(e.type==="dragover"){ zone.classList.add("over"); return; }
   if(e.type==="dragleave"){ zone.classList.remove("over"); return; }
-  if(e.type==="drop"){ zone.classList.remove("over"); if(PV.page==="trn-post-new" && !PV.busy) addPostFiles(App, e.dataTransfer && e.dataTransfer.files); }
+  if(e.type==="drop"){ zone.classList.remove("over"); if(PV.page==="trn-post-new" && !PV.busy) addPostFiles(App, e.dataTransfer && e.dataTransfer.files); if(PV.page==="trn-quiz-new") loadQuizFile(App, e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]); }
 }
 async function openAttachment(App, el){
   const tok = el.dataset.who==="w" ? (loadSession(App)||{}).token : (loadMgr(App)||{}).token;
@@ -1277,7 +1508,10 @@ async function openAttachment(App, el){
 function alertMsg(App, m){ PV.error = m; T.attError = m; App.render(); }
 async function onChangeTraining(App, e){
   const t = e.target, a = t.dataset.action;
+  if(a==="portal-quiz-answer"){ if(T.quiz){ T.quiz.answers[+t.dataset.q] = +t.dataset.o; T.quiz.error = null; } return; }
   const ms = loadMgr(App); if(!ms) return;
+  if(a==="portal-quiz-file"){ return loadQuizFile(App, t.files && t.files[0]); }
+  if(a==="portal-quiz-correct"){ const Q = PV.quiz; const tEl = document.getElementById("quizTitle"); if(tEl) Q.title = tEl.value; Q.questions[+t.dataset.q].correct = +t.dataset.o; return App.render(); }
   if(a==="portal-trn-upload"){
     const files = Array.from(t.files||[]); if(!files.length) return;
     PV.busy = true; PV.error = null; PV.msg = null; App.render();
@@ -1300,6 +1534,7 @@ function renderSection(App, view){
   if(!session){ App.S.view = "home"; return renderHome(App); }
   if(N.state!=="on"){ App.S.view = "home"; return renderHome(App); }
   const title = view==="training" ? "הדרכה" : "לוגיסטי";
+  if(view==="training" && T.quiz) return `<div class="card">${renderQuiz(App, session)}</div>`;
   if(view==="training" && T.controlOpen) return `<div class="card">${renderControlDoc(App, session)}</div>`;
   if((view==="training" || view==="updates") && T.postOpen) return `<div class="card">${renderPostDoc(App)}</div>`;
   if(view==="updates") return `<div class="card">
@@ -1468,7 +1703,7 @@ function onClick(App, a, el){
     return App.render();
   }
   if(a==="portal-go-updates"){ S.view = "updates"; S.ui = {}; F.data = null; T.postOpen = null; T.controlOpen = null; T.attError = null; return App.render(); }
-  if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; T.data = null; F.data = null; T.controlOpen = null; T.postOpen = null; return App.render(); }
+  if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; T.data = null; F.data = null; T.controlOpen = null; T.postOpen = null; T.quiz = null; return App.render(); }
   if(a==="portal-go-logistics"){ S.view = "logistics"; S.ui = {}; T.data = null; L.data = null; L.msg = null; L.error = null; return App.render(); }
   if(a==="portal-log-save") return saveLogistics(App);
   if(a==="portal-log-request") return sendRequest(App);
@@ -1481,6 +1716,19 @@ function onClick(App, a, el){
     saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null;
     S.view = "home"; S.ui = {};
     return App.render();
+  }
+  if(a==="portal-open-quiz"){ S.view = "training"; S.ui = {}; T.quiz = {id: el.dataset.id, title: el.dataset.title||"", data:null, answers:[], result:null}; T.controlOpen = null; T.postOpen = null; return App.render(); }
+  if(a==="portal-quiz-back"){ T.quiz = null; T.data = null; return App.render(); }
+  if(a==="portal-quiz-submit"){
+    const s = loadSession(App), Z = T.quiz; if(!s || !Z || !Z.data) return App.render();
+    const missing = Z.answers.map((v,i)=>v==null?i+1:0).filter(Boolean);
+    if(missing.length){ Z.error = `יש לענות על כל השאלות. חסרות תשובות בשאלות: ${missing.join(", ")}`; return App.render(); }
+    Z.busy = true; Z.error = null; App.render();
+    return App.apiRpc("worker_quiz_submit", {p_token:s.token, p_training_id:Z.id, p_answers:Z.answers})
+      .then(r=>{ Z.busy = false; Z.result = r; T.data = null;
+        if(!r.passed) Z.answers = Z.answers.map((v,i)=> r.marks[i] ? v : null); // בשאלות שטעה — עונים מחדש
+        App.render(); if(typeof window!=="undefined" && window.scrollTo) window.scrollTo(0,0); })
+      .catch(e=>{ Z.busy = false; Z.error = e.message; App.render(); });
   }
   if(a==="portal-open-control"){ S.view = "training"; S.ui = {}; T.controlOpen = el.dataset.id; T.control = null; T.postOpen = null; return App.render(); }
   if(a==="portal-control-read"){
@@ -1515,7 +1763,7 @@ function onClick(App, a, el){
   if(a==="portal-trn-more"){ I.showAll = !I.showAll; return App.render(); }
   if(a==="portal-att-open") return openAttachment(App, el);
   if(a==="portal-post-file-remove"){ savePostFields(); (PV.form.files||[]).splice(Number(el.dataset.idx),1); return App.render(); }
-  if(a==="portal-prog-set" || a==="portal-onb-save" || a==="portal-onb-complete" || a==="portal-ctl-send" || a==="portal-post-send") return trnAction(App, a, el);
+  if(a==="portal-prog-set" || a==="portal-onb-save" || a==="portal-onb-complete" || a==="portal-quiz-publish" || a==="portal-quiz-del" || a==="portal-ctl-send" || a==="portal-post-send") return trnAction(App, a, el);
   if(a==="portal-pw-load") return pwLoad(App);
   if(a==="portal-pw-save") return pwSave(App, el.dataset.id);
   if(a==="portal-mgr-tile"){ M.tile = el.dataset.id; M.code=null; M.list=null; M.error=null; M.msg=null; return App.render(); }
@@ -1568,6 +1816,11 @@ function onClick(App, a, el){
     .portal-unread{background:#fff8e6;}
     @media (max-width:760px){ .portal-cols{grid-template-columns:minmax(0,1fr);gap:0;} .portal-updates{flex:none;} }
     .portal-badge{background:#fff3cd;color:#8a5a00;border-radius:999px;padding:3px 10px;font-weight:700;font-size:.85em;}
+    .portal-qbox{border:1px solid #e3e9f0;border-radius:10px;padding:12px;margin:10px 0;background:#fff;}
+    .portal-qbox.bad{border-color:#d0342c;background:#fff7f6;} .portal-qbox.ok{border-color:#1a8a4a;background:#f4fbf6;}
+    .portal-opt{display:block;padding:6px 8px;margin:4px 0;border-radius:8px;cursor:pointer;} .portal-opt:hover{background:#eef5fd;}
+    .portal-opt.right{background:#e6f7ec;font-weight:700;}
+    .portal-mark{display:inline-block;width:1.4em;font-weight:900;} .portal-mark.ok{color:#1a8a4a;} .portal-mark.bad{color:#d0342c;}
     .portal-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
     .portal-pct{min-width:52px;text-align:center;font-weight:800;color:var(--primary-dark);font-size:1.1em;}
     .portal-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;}
