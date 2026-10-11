@@ -163,7 +163,7 @@ rep("""    (S.view==="pview" && window.Portal) ? window.Portal.pvTitle() :""",""
     S.view==="mgrview" ? "סידור עבודה (צפייה בלבד)" :""")
 rep("""    <button class="btn secondary" data-action="close-print">סגור</button>""","""    ${S.view==="mgrview" ? "" : `<button class="btn secondary" data-action="close-print">סגור</button>`}""")
 rep("""/* --------- פרסום סידור לעובדים (דמו, 2026-10-07)""","""/* --------- צפייה בלבד בסידור עבודה - למנהלים בלי הרשאת עריכה (דמו, 2026-10-11): אותו פלט כמו "הפקת פלט
-   סידור", בלי שום כפתור עריכה. מציג גם אם התקופה כבר פורסמה לעובדים או שזו עדיין טיוטה. --------- */
+   סידור", בלי שום כפתור עריכה. רק סידור שפורסם - טיוטות לא מוצגות (לבקשת סרגיי). --------- */
 function renderMgrScheduleView(){
   const ui = S.ui;
   const team = teamById(ui.teamId);
@@ -178,8 +178,8 @@ function renderMgrScheduleView(){
       <button class="btn small secondary" data-action="mgrview-prev">◀ תקופה קודמת</button>
       <button class="btn small secondary" data-action="mgrview-next">תקופה הבאה ▶</button>
     </div>
-    <div class="banner ${published?"open":"notyet"} no-print">${published ? "✅ הסידור לתקופה הזו פורסם לעובדים." : "📝 טיוטה — הסידור לתקופה הזו עדיין לא פורסם לעובדים ועשוי להשתנות."}</div>
-    ${renderPrintView(team)}
+    ${published ? renderPrintView(team)
+      : `<p class="muted" style="margin-top:12px;">הסידור לתקופה ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(periodDates(ui.periodStart, team).slice(-1)[0])} עדיין לא פורסם. הוא יופיע כאן מיד אחרי הפרסום.</p>`}
   </div>`;
 }
 
