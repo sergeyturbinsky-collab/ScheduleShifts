@@ -91,6 +91,7 @@
   .tmpl-table{border-collapse:collapse;width:100%;font-size:12px;}
   .tmpl-table th,.tmpl-table td{border:1px solid var(--border);padding:5px 6px;text-align:center;white-space:nowrap;}
   .tmpl-table th{background:#f4f7fb;font-weight:600;}
+  .tmpl-table th .shabbat-th{font-weight:500;font-size:.9em;color:#7a5c00;margin-top:2px;}
   .tmpl-table td.tmpl-pos{background:#f4f7fb;font-weight:600;}
   .tmpl-na{background:#2a2a2a;}
   .tmpl-missing{font-weight:800;}
@@ -325,7 +326,14 @@ function effQuota(q, dateStr){
   if(!end || end===String(q.end_time).slice(0,5)) return q;
   return Object.assign({}, q, {end_time:end, label: String(q.label||"").replace(/\(\d{2}:\d{2}-\d{2}:\d{2}\)/, `(${String(q.start_time).slice(0,5)}-${end})`), shabbat_adjusted:true});
 }
-/* שורת מידע בטבלה המרוכזת: כניסת שבת וסיום משמרת שישי בוקר, לכל שישי בתקופה ולכל עיר */
+/* כניסת שבת בתוך טבלת הסידור עצמה (2026-10-12, לבקשת סרגיי): בכותרת עמודת יום שישי, לכל עיר, רק השעה.
+   מחושב לכל תאריך מחדש - מתעדכן אוטומטית מדי שבוע. שעות סיום שישי בוקר כבר מובנות במשבצות (effQuota). */
+function shabbatThHtml(dateStr, sector){
+  if(dayTypeForDate(dateStr)!=="friday" || !SHABBAT_CITIES[sector]) return "";
+  const m = candleLightingMinutes(dateStr, sector);
+  return m==null ? "" : `<div class="shabbat-th">🕯️ כניסת שבת ${fmtMinutes(m)}</div>`;
+}
+/* (לא בשימוש מאז 2026-10-12 - הוחלף ב-shabbatThHtml) */
 function shabbatNoteHtml(group, dates){
   const cities = (group.citySectors||[]).filter(c=>SHABBAT_CITIES[c] && (S.quotas||[]).some(q=>q.sector===c && q.shift_type==="friday_morning"));
   if(!cities.length) return "";
@@ -829,7 +837,6 @@ function renderAggregate(){
   <div class="card">
     <span class="backlink" data-action="agg-back">${(typeof S.pin==="string" && S.pin.startsWith("mgr:") && !ui.mgrPick) ? "◀ חזרה" : "◀ בחירת צוות אחר"}</span>
     <h2>טבלה מרוכזת — ${escapeHtml(group.label)}</h2>
-    ${shabbatNoteHtml(group, dates)}
     ${renderSwapHistoryBox(group, dates)}
     ${streakWarningsHtml(group, dates)}
     ${group.pooledNote? `<div class="note-box">שים לב: כמה תת-גזרות/קב"טים חולקים כאן את אותה בריכת עובדים זמינים (אין הפרדה בהגשת האילוצים ברמת תת-הגזרה), כך שהזמינות מחושבת עבור כל תת-הגזרות/הצוותים יחד.</div>`:""}
@@ -1536,7 +1543,8 @@ function buildTemplateData(group, dates, quotas){
     return {sector, buckets};
   });
 }
-function tmplHourNum(t){ if(!t) return ""; return String(parseInt(t.slice(0,2),10)); }
+/* שעה לתא: "15" לשעה עגולה, "15:30" כשיש דקות (2026-10-12: סיום שישי בוקר בחצאי שעות לפי כניסת שבת) */
+function tmplHourNum(t){ if(!t) return ""; const h = String(parseInt(t.slice(0,2),10)), m = t.slice(3,5); return (m && m!=="00") ? `${h}:${m}` : h; }
 
 /* טקסט השעות לתא: שעות התקן הרגילות, אלא אם לעובד יש שעות מותאמות שונות (למשל שיבוץ שחוצה בין
    משמרות) - ואז מציגים את השעה בפועל במקום שבו היא שונה מהסטנדרט */
@@ -1729,7 +1737,7 @@ function renderTemplateGrid(group, dates, ui, mode){
       <div class="tmpl-bucket-head">${escapeHtml(bucket.label)}</div>
       <div style="overflow-x:auto;">
       <table class="tmpl-table">
-        <thead><tr><th></th>${dates.map(d=>`<th>${fmtDateHeb(d)}</th>`).join("")}</tr></thead>
+        <thead><tr><th></th>${dates.map(d=>`<th>${fmtDateHeb(d)}${shabbatThHtml(d, secData.sector)}</th>`).join("")}</tr></thead>
         <tbody>${rowsHtml || `<tr><td colspan="${dates.length+1}" class="muted">אין תקן</td></tr>`}${mirrorHtml}</tbody>
       </table>
       </div>`;
