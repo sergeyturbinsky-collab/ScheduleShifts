@@ -91,7 +91,8 @@ function renderLogin(App){
 /* ---------- דף הבית של העובד ---------- */
 function quotaFor(App, a){
   const dt = App.dayTypeForDate(a.entry_date), wd = App.parseDate(a.entry_date).getDay();
-  return (App.S.quotas||[]).find(q=>q.sector===a.sector && q.shift_type===a.shift_type && q.day_type===dt && (q.weekday==null || q.weekday===wd));
+  const q = (App.S.quotas||[]).find(q=>q.sector===a.sector && q.shift_type===a.shift_type && q.day_type===dt && (q.weekday==null || q.weekday===wd));
+  return (q && App.effQuota) ? App.effQuota(q, a.entry_date) : q;
 }
 function hoursOf(App, a){
   const q = quotaFor(App, a);
@@ -113,6 +114,35 @@ async function loadShifts(App, session){
   App.render();
 }
 
+/* ================================================================
+   בקשת חילוף (לבקשת סרגיי, 2026-10-11, שלב 1): כפתור "מבקש חילוף" - העובד בוחר משמרת מתוך המשמרות
+   שלו בסידור שפורסם (מהיום והלאה), אפשר להוסיף הערה. הבקשה נשמרת (swap_requests) וגלויה לקב"ט/מנהל.
+   ================================================================ */
+const SW = { open:false, list:null, sel:null, busy:false, msg:null, error:null };
+function swKey(a){ return `${a.sector}|${a.entry_date}|${a.shift_type}`; }
+function loadSwaps(App, session){
+  SW.list = [];
+  App.apiRpc("worker_swap_list", {p_token: session.token}).then(r=>{ SW.list = r || []; App.render(); }).catch(()=>{});
+}
+function renderSwapPanel(App, session, rows){
+  const esc = App.escapeHtml;
+  const today = App.fmtDate(new Date());
+  const open = new Set((SW.list||[]).map(swKey));
+  const cands = rows.filter(a=>a.entry_date >= today && !open.has(swKey(a)));
+  return `<div class="portal-qbox" style="border-color:#0c3a6e;">
+    <div style="font-weight:700;margin-bottom:6px;">🔁 בקשת חילוף — איזו משמרת תרצה להחליף?</div>
+    ${cands.length ? cands.map(a=>{ const k = swKey(a); const q = quotaFor(App, a);
+      return `<label class="portal-opt${SW.sel===k?" right":""}"><input type="radio" name="swsel" data-action="portal-swap-sel" data-k="${esc(k)}" ${SW.sel===k?"checked":""}>
+        ${App.fmtDateHeb(a.entry_date)} · ${esc(App.SHIFT_LABELS[a.shift_type] || (q&&q.label) || a.shift_type)} · ${hoursOf(App, a)} · ${esc(a.sector)}</label>`; }).join("")
+      : `<p class="muted">אין משמרות עתידיות שאפשר לבקש עליהן חילוף.</p>`}
+    ${cands.length ? `<div class="field" style="margin-top:8px;"><label>הערה (לא חובה)</label><input type="text" id="swapNote" maxlength="300" placeholder="למשל: אירוע משפחתי"></div>` : ""}
+    ${SW.error?`<p class="shortage">${esc(SW.error)}</p>`:""}
+    <div class="flexbar" style="margin-top:8px;">
+      ${cands.length ? `<button class="btn ok" data-action="portal-swap-send" ${SW.busy?"disabled":""}>שלח בקשת חילוף</button>` : ""}
+      <button class="btn secondary" data-action="portal-swap-close">ביטול</button>
+    </div>
+  </div>`;
+}
 function renderMyShifts(App, session){
   const esc = App.escapeHtml;
   if(P.shifts===null){ loadShifts(App, session); return `<p class="muted">טוען...</p>`; }
@@ -125,7 +155,11 @@ function renderMyShifts(App, session){
     const k = `${a.entry_date}|${a.custom_start}|${a.custom_end}`;
     if(seen.has(k)) return false; seen.add(k); return true;
   });
-  return `<div style="overflow-x:auto;"><table>
+  if(SW.list===null) loadSwaps(App, session);
+  const openReq = {}; (SW.list||[]).forEach(r=>openReq[swKey(r)] = r);
+  return `${SW.msg?`<p style="color:#1b7f3b;font-weight:600;">${esc(SW.msg)}</p>`:""}
+  ${SW.open ? renderSwapPanel(App, session, rows) : ""}
+  <div style="overflow-x:auto;"><table>
     <thead><tr><th>תאריך</th><th>משמרת</th><th>שעות</th><th>גזרה</th><th></th></tr></thead>
     <tbody>${rows.map(a=>{
       const q = quotaFor(App, a);
@@ -133,6 +167,8 @@ function renderMyShifts(App, session){
       const notes = [];
       if(a.shadow_of_name) notes.push(`חפיפה (ח) עם ${esc(a.shadow_of_name)}`);
       if(a.filled_role && a.filled_role!==session.role) notes.push(`בתקן ${esc(a.filled_role)}`);
+      const req = openReq[swKey(a)];
+      if(req) notes.push(`<span style="color:#8a5a00;font-weight:600;">⏳ ביקשת חילוף</span> <button class="btn small secondary" data-action="portal-swap-cancel" data-id="${req.id}">בטל בקשה</button>`);
       return `<tr><td>${App.fmtDateHeb(a.entry_date)}</td><td>${esc(label)}</td><td>${hoursOf(App, a)}</td><td>${esc(a.sector)}</td><td class="muted">${notes.join(" · ")}</td></tr>`;
     }).join("")}</tbody>
   </table></div>`;
@@ -329,7 +365,9 @@ function renderWorkerHome(App, session){
   <div class="portal-cols">
     <div class="portal-col-main">
       <div class="card">
-        <h3>המשמרות שלי</h3>
+        <div class="flexbar" style="justify-content:space-between;"><h3 style="margin:0;">המשמרות שלי</h3>
+          ${(P.shifts && P.shifts.length) ? `<button class="btn small" data-action="portal-swap-open">🔁 מבקש חילוף</button>` : ""}</div>
+        <div style="height:8px;"></div>
         ${renderMyShifts(App, session)}
       </div>
       <div class="card">
@@ -944,7 +982,7 @@ function renderIsraelDashboard(App, ms){
 /* ---------- עמודי משנה (view "pview") ---------- */
 const PV_TITLES = { "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
-  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "trn-quiz-new":"בוחן חדש", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום" };
+  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
 function pvGo(App, page, args, push){
   if(push !== false && App.S.view==="pview" && PV.page) PV.stack.push({page:PV.page, args:PV.args});
@@ -952,6 +990,7 @@ function pvGo(App, page, args, push){
   PV.page = page; PV.args = args||{}; PV.data = null; PV.posts = null; PV.seenSent = false; PV.msg = null; PV.error = null; PV.busy = false;
   if(page==="trn-control-new" || page==="trn-post-new") PV.form = {};
   if(page==="trn-quiz-new") PV.quiz = null;
+  if(page==="swap-mgr") PV.swap = null;
   App.S.view = "pview"; App.S.ui = {};
   App.render();
 }
@@ -1088,6 +1127,41 @@ function renderPView(App){
       </div>
       <div class="field"><label>סיכום</label><textarea id="ctlSummary" rows="10" style="width:100%;">${esc(f.summary||"")}</textarea></div>
       <button class="btn ok" data-action="portal-ctl-send" ${PV.busy?"disabled":""}>שלח למאבטח ולקב"ט שלו</button>`);
+  }
+  if(pg==="swap-mgr"){
+    const S2 = PV.swap || (PV.swap = {teamId: a.id || null, sector:null, rows:null, sel:null, list:null});
+    if(S2.list===null){ S2.list = []; App.apiRpc("mgr_swap_list", {p_token:tok}).then(r=>{ S2.list = r||[]; App.render(); }).catch(()=>{}); }
+    const openHtml = S2.list.length ? `<h3 style="margin-top:4px;">בקשות חילוף פתוחות</h3><div class="portal-tasks">${S2.list.map(r=>`<div class="portal-task">
+        <span class="portal-task-icon">🔁</span>
+        <span style="flex:1;"><b>${esc(r.worker_name)}</b> — ${App.fmtDateHeb(r.entry_date)} · ${esc(App.SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${esc(r.sector)}
+          <span class="muted" style="font-size:.85em;display:block;">${r.requested_by_kind==="w"?"ביקש בעצמו":"נפתח ע\"י "+esc(r.requested_by_name||"מנהל")}${r.note?` · ${esc(r.note)}`:""}</span></span>
+        <button class="btn small secondary" data-action="portal-swapm-cancel" data-id="${r.id}">בטל</button></div>`).join("")}</div><hr style="border:none;border-top:1px solid #e3e9f0;margin:14px 0;">` : "";
+    if(!S2.teamId){
+      const groups = mgrScopeGroups(App, ms);
+      return wrap(`<h2>🔁 מבקש חילוף</h2>${msgs}${openHtml}<p class="muted">בחרו קבוצת גזרות:</p>
+        <div class="grid-teams">${groups.map(g=>`<div class="team-tile" data-action="portal-swapm-team" data-id="${g.id}">${esc(g.label)}</div>`).join("")}</div>`);
+    }
+    const team = App.teamById(S2.teamId), group = App.sectorGroupForTeam(team);
+    const sectors = group.citySectors;
+    if(!S2.sector && sectors.length===1) S2.sector = sectors[0];
+    let body = "";
+    if(S2.sector){
+      if(S2.rows===null){ S2.rows = "loading"; loadSwapRows(App, S2); }
+      if(S2.rows==="loading") body = `<p class="muted">טוען...</p>`;
+      else if(!S2.rows.length) body = `<p class="muted">אין משמרות עתידיות בסידור שפורסם ב${esc(S2.sector)}.</p>`;
+      else {
+        const open = new Set(S2.list.map(r=>`${r.sector}|${r.entry_date}|${r.shift_type}|${r.worker_id}`));
+        body = S2.rows.map(r=>{ const k = `${r.sector}|${r.entry_date}|${r.shift_type}|${r.worker_id}`; const q = quotaFor(App, r);
+          return open.has(k) ? `<div class="portal-opt muted">⏳ ${App.fmtDateHeb(r.entry_date)} · ${esc(App.SHIFT_LABELS[r.shift_type]||(q&&q.label)||r.shift_type)} · <b>${esc(r.worker_name)}</b> — כבר יש בקשה פתוחה</div>`
+            : `<label class="portal-opt${S2.sel===k?" right":""}"><input type="radio" name="swmsel" data-action="portal-swapm-sel" data-k="${esc(k)}" ${S2.sel===k?"checked":""}>
+            ${App.fmtDateHeb(r.entry_date)} · ${esc(App.SHIFT_LABELS[r.shift_type]||(q&&q.label)||r.shift_type)} · ${hoursOf(App, r)} · <b>${esc(r.worker_name)}</b></label>`; }).join("")
+          + `<div class="field" style="margin-top:8px;"><label>הערה (לא חובה)</label><input type="text" id="swapmNote" maxlength="300"></div>
+             <button class="btn ok" data-action="portal-swapm-send" ${PV.busy?"disabled":""}>שלח בקשת חילוף</button>`;
+      }
+    }
+    return wrap(`<h2>🔁 מבקש חילוף — ${esc(group.label)}</h2>${msgs}${openHtml}
+      ${sectors.length>1 ? `<div class="chip-opts" style="margin-bottom:10px;">${sectors.map(c=>`<div class="chip ${S2.sector===c?"on":""}" data-action="portal-swapm-sector" data-s="${esc(c)}">${esc(c)}</div>`).join("")}</div>` : ""}
+      ${S2.sector ? `<p class="muted" style="margin-top:0;">בחרו את המשמרת להחלפה (סידור שפורסם, מהיום והלאה):</p>${body}` : `<p class="muted">בחרו גזרה.</p>`}`);
   }
   if(pg==="trn-results"){
     if(needLoad("trn_results_recent", {p_token:tok})) return loading();
@@ -1541,6 +1615,8 @@ async function openAttachment(App, el){
 function alertMsg(App, m){ PV.error = m; T.attError = m; App.render(); }
 async function onChangeTraining(App, e){
   const t = e.target, a = t.dataset.action;
+  if(a==="portal-swap-sel"){ SW.sel = t.dataset.k; SW.error = null; return; }
+  if(a==="portal-swapm-sel"){ if(PV.swap) PV.swap.sel = t.dataset.k; PV.error = null; return; }
   if(a==="portal-quiz-answer"){ if(T.quiz){ T.quiz.answers[+t.dataset.q] = +t.dataset.o; T.quiz.error = null; } return; }
   const ms = loadMgr(App); if(!ms) return;
   if(a==="portal-quiz-file"){ return loadQuizFile(App, t.files && t.files[0]); }
@@ -1593,6 +1669,32 @@ function renderSection(App, view){
 function mgrTeams(App, ids){
   return (ids||[]).map(App.teamById).filter(Boolean).sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
 }
+function mgrScopeGroups(App, ms){
+  const ids = new Set([].concat(ms.schedule_team_ids||[], ms.logistics_team_ids||[]));
+  const teams = ms.can_training ? (App.S.teams||[]) : (App.S.teams||[]).filter(t=>ids.has(t.id));
+  const seen = new Set(), out = [];
+  teams.slice().sort((a,b)=>(a.sort_order||0)-(b.sort_order||0)).forEach(t=>{ const g = App.sectorGroupForTeam(t); if(seen.has(g.label)) return; seen.add(g.label); out.push({id:t.id, label:g.label}); });
+  return out;
+}
+/* כל השיבוצים העתידיים בגזרה, רק בתקופות שפורסמו */
+async function loadSwapRows(App, S2){
+  try{
+    const today = App.fmtDate(new Date());
+    const enc = encodeURIComponent(S2.sector);
+    const pubs = await App.apiGet("schedule_publications", `select=period_start,period_end&sector=eq.${enc}&period_end=gte.${today}`);
+    if(!pubs.length){ S2.rows = []; return App.render(); }
+    const maxEnd = pubs.map(p=>p.period_end).sort().slice(-1)[0];
+    const as = await App.apiGet("shift_assignments", `select=sector,entry_date,shift_type,worker_id,custom_start,custom_end,shadow_of&sector=eq.${enc}&entry_date=gte.${today}&entry_date=lte.${maxEnd}&order=entry_date`);
+    const inPub = d=>pubs.some(p=>d>=p.period_start && d<=p.period_end);
+    const rows = as.filter(x=>!x.shadow_of && inPub(x.entry_date));
+    const ids = Array.from(new Set(rows.map(r=>r.worker_id)));
+    const ws = ids.length ? await App.apiGet("roster_workers", `select=id,name&id=in.(${ids.join(",")})`) : [];
+    const names = {}; ws.forEach(w=>names[w.id]=w.name);
+    const seen = new Set();
+    S2.rows = rows.map(r=>Object.assign(r, {worker_name: names[r.worker_id]||"?"})).filter(r=>{ const k = `${r.entry_date}|${r.shift_type}|${r.worker_id}`; if(seen.has(k)) return false; seen.add(k); return true; });
+  }catch(e){ S2.rows = []; PV.error = e.message; }
+  App.render();
+}
 /* צפייה בלבד בסידור עבודה (2026-10-11): למנהלים בלי הרשאת עריכה. קב"ט - הצוותים שלו; ישראל - כל הצוותים */
 function mgrViewCard(App, ms, sched){
   if(sched.length) return ""; // מי שבונה סידור כבר רואה אותו
@@ -1603,7 +1705,8 @@ function mgrViewCard(App, ms, sched){
   return `<div class="card">
     <h3>סידור עבודה</h3>
     <p class="muted" style="margin-top:-6px;">צפייה בלבד</p>
-    <div class="grid-teams">${tiles.map(t=>`<div class="team-tile" data-action="portal-mgr-view" data-id="${t.id}">${App.escapeHtml(t.label)}</div>`).join("")}</div>
+    <div class="grid-teams">${tiles.map(t=>`<div class="team-tile" data-action="portal-mgr-view" data-id="${t.id}">${App.escapeHtml(t.label)}</div>`).join("")}
+      <div class="team-tile" data-action="portal-pv" data-page="swap-mgr">🔁 מבקש חילוף</div></div>
   </div>`;
 }
 function renderManagerHome(App, ms){
@@ -1637,6 +1740,7 @@ function renderManagerHome(App, ms){
     <div class="grid-teams">
       ${tile("portal-mh-agg", "טבלה מרוכזת ובניית סידור", "שיבוץ, פרסום, פלט ופתיחת הגשה")}
       ${tile("portal-mh-admin", "ניהול עובדים", "הוספה, קודים וסימונים")}
+      <div class="team-tile" data-action="portal-pv" data-page="swap-mgr"><div style="font-size:1.1em;font-weight:700;">🔁 מבקש חילוף</div><div class="muted" style="font-size:.85em;margin-top:4px;">בקשות חילוף ופתיחת בקשה</div></div>
     </div>
   </div>`:""}
   ${logi.length? `<div class="card">
@@ -1737,6 +1841,22 @@ async function doLogin(App){
 
 function onClick(App, a, el){
   const S = App.S;
+  if(a==="portal-swapm-team"){ PV.swap.teamId = el.dataset.id; PV.swap.sector = null; PV.swap.rows = null; PV.swap.sel = null; return App.render(); }
+  if(a==="portal-swapm-sector"){ PV.swap.sector = el.dataset.s; PV.swap.rows = null; PV.swap.sel = null; return App.render(); }
+  if(a==="portal-swapm-send"){
+    const ms = loadMgr(App); const S2 = PV.swap; if(!ms || !S2) return App.render();
+    if(!S2.sel){ PV.error = "יש לבחור משמרת"; PV.msg = null; return App.render(); }
+    const [sector, date, shiftType, workerId] = S2.sel.split("|");
+    const noteEl = document.getElementById("swapmNote");
+    PV.busy = true; PV.error = null; App.render();
+    return App.apiRpc("mgr_swap_request", {p_token:ms.token, p_sector:sector, p_date:date, p_shift_type:shiftType, p_worker_id:workerId, p_note: noteEl?noteEl.value:""})
+      .then(()=>{ PV.busy = false; PV.msg = "בקשת החילוף נשמרה."; S2.sel = null; S2.list = null; App.render(); })
+      .catch(e=>{ PV.busy = false; PV.error = e.message; App.render(); });
+  }
+  if(a==="portal-swapm-cancel"){
+    const ms = loadMgr(App); if(!ms) return App.render();
+    return App.apiRpc("mgr_swap_cancel", {p_token:ms.token, p_id:el.dataset.id}).then(()=>{ if(PV.swap) PV.swap.list = null; PV.msg = "הבקשה בוטלה."; App.render(); }).catch(e=>{ PV.error = e.message; App.render(); });
+  }
   if(a==="portal-mgr-view"){ if(!loadMgr(App)) return App.render(); S.view = "mgrview"; S.ui = {teamId: el.dataset.id}; return App.render(); }
   if(a==="portal-pick"){ P.selectedId = el.dataset.id; P.code=""; P.error=null; return App.render(); }
   if(a==="portal-unpick"){ P.selectedId = null; P.code=""; P.error=null; return App.render(); }
@@ -1747,7 +1867,7 @@ function onClick(App, a, el){
   if(a==="portal-logout"){
     const s = loadSession(App);
     if(s) App.apiRpc("worker_logout", {p_token: s.token}).catch(()=>{});
-    saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null; T.data = null; F.data = null; N.state = null;
+    saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null; T.data = null; F.data = null; N.state = null; SW.list = null; SW.open = false; SW.msg = null;
     return App.render();
   }
   if(a==="portal-go-updates"){ S.view = "updates"; S.ui = {}; F.data = null; T.postOpen = null; T.controlOpen = null; T.attError = null; return App.render(); }
@@ -1764,6 +1884,22 @@ function onClick(App, a, el){
     saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null;
     S.view = "home"; S.ui = {};
     return App.render();
+  }
+  if(a==="portal-swap-open"){ SW.open = true; SW.sel = null; SW.msg = null; SW.error = null; return App.render(); }
+  if(a==="portal-swap-close"){ SW.open = false; SW.error = null; return App.render(); }
+  if(a==="portal-swap-send"){
+    const s = loadSession(App); if(!s) return App.render();
+    if(!SW.sel){ SW.error = "יש לבחור משמרת"; return App.render(); }
+    const [sector, date, shiftType] = SW.sel.split("|");
+    const noteEl = document.getElementById("swapNote");
+    SW.busy = true; SW.error = null; App.render();
+    return App.apiRpc("worker_swap_request", {p_token:s.token, p_sector:sector, p_date:date, p_shift_type:shiftType, p_note: noteEl ? noteEl.value : ""})
+      .then(()=>{ SW.busy = false; SW.open = false; SW.msg = "בקשת החילוף נשלחה."; SW.list = null; App.render(); })
+      .catch(e=>{ SW.busy = false; SW.error = e.message; App.render(); });
+  }
+  if(a==="portal-swap-cancel"){
+    const s = loadSession(App); if(!s) return App.render();
+    return App.apiRpc("worker_swap_cancel", {p_token:s.token, p_id:el.dataset.id}).then(()=>{ SW.list = null; SW.msg = "הבקשה בוטלה."; App.render(); }).catch(()=>{});
   }
   if(a==="portal-open-quiz"){ S.view = "training"; S.ui = {}; T.quiz = {id: el.dataset.id, title: el.dataset.title||"", data:null, answers:[], result:null}; T.controlOpen = null; T.postOpen = null; return App.render(); }
   if(a==="portal-quiz-back"){ T.quiz = null; T.data = null; return App.render(); }

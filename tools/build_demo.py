@@ -37,7 +37,7 @@ assert "wcbnkrtxdzfygyyanasx" in s and "hcejwcxsqhpiufaakalj" not in s
 # ---- portal + publish patches ----
 rep("""<script>
 (function(){
-"use strict";""","""<script src="portal.js?v=26"></script>
+"use strict";""","""<script src="portal.js?v=27"></script>
 <script>
 (function(){
 "use strict";""")
@@ -73,7 +73,7 @@ rep("""  app.onchange = onAppChange;""","""  app.onchange = onAppChange;
   ["dragover","dragleave","drop"].forEach(t=>app.addEventListener(t, e=>{ if(window.Portal && window.Portal.onDrag) window.Portal.onDrag(App, e); }));""")
 rep("""init();
 })();""","""/* מה שהפורטל (portal.js) צריך מהקוד הראשי */
-const App = { SUPABASE_URL, SUPABASE_ANON_KEY, S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
+const App = { SUPABASE_URL, SUPABASE_ANON_KEY, effQuota, S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
 
 init();
 })();""")
@@ -177,6 +177,7 @@ function renderMgrScheduleView(){
     <div class="flexbar no-print" style="margin-bottom:8px;">
       <button class="btn small secondary" data-action="mgrview-prev">◀ תקופה קודמת</button>
       <button class="btn small secondary" data-action="mgrview-next">תקופה הבאה ▶</button>
+      <button class="btn small" data-action="portal-pv" data-page="swap-mgr" data-id="${team.id}" style="margin-inline-start:auto;">🔁 מבקש חילוף</button>
     </div>
     ${published ? renderPrintView(team)
       : `<p class="muted" style="margin-top:12px;">הסידור לתקופה ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(periodDates(ui.periodStart, team).slice(-1)[0])} עדיין לא פורסם. הוא יופיע כאן מיד אחרי הפרסום.</p>`}
