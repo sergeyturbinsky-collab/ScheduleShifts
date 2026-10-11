@@ -50,7 +50,9 @@ async function loadWorkers(App){
       App.apiGet("roster_workers", "select=id,name,team_id&order=name"),
       App.apiRpc("login_managers", {}).catch(()=>[])
     ]);
-    P.workers = ws.map(w=>Object.assign({kind:"w", key:"w:"+w.id}, w))
+    // מי שהוא גם עובד וגם מנהל (באותו שם, כמו סרגיי) מופיע פעם אחת - כמנהל (2026-10-12)
+    const mgrNames = new Set((ms||[]).map(m=>m.name.trim()));
+    P.workers = ws.filter(w=>!mgrNames.has(w.name.trim())).map(w=>Object.assign({kind:"w", key:"w:"+w.id}, w))
       .concat((ms||[]).map(m=>({kind:"m", key:"m:"+m.id, id:m.id, name:m.name})))
       .sort((a,b)=>a.name.localeCompare(b.name,"he"));
   }catch(e){ P.workers = []; P.error = "שגיאה בטעינת רשימת השמות"; }
