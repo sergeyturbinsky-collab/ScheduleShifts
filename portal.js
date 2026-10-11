@@ -8,8 +8,8 @@
 (function(){
 "use strict";
 
-const SESSION_KEY = "cstdemo_worker_session";
-const MGR_KEY = "cstdemo_manager_session";
+const SESSION_KEY = "cst_worker_session";
+const MGR_KEY = "cst_manager_session";
 const P = { workers:null, query:"", selectedId:null, code:"", error:null, busy:false,
             shifts:null, shiftsError:null, checkedSession:false };
 
@@ -20,8 +20,8 @@ function saveMgr(App, s){ if(s) App.saveJSON(MGR_KEY, s); else localStorage.remo
 /* יציאה של מנהל: מחזירים את קוד העריכה והגישות לקב"ט למה שנשמר בדפדפן (בלי הסשן של המנהל) */
 function clearMgrMode(App){
   const S = App.S;
-  if(typeof S.pin==="string" && S.pin.startsWith("mgr:")) S.pin = localStorage.getItem("cstdemo_pin") || null;
-  S.teamAccess = App.loadJSON("cstdemo_team_access") || {};
+  if(typeof S.pin==="string" && S.pin.startsWith("mgr:")) S.pin = localStorage.getItem("cst_pin") || null;
+  S.teamAccess = App.loadJSON("cst_team_access") || {};
 }
 
 /* חיפוש: כל אות שמוקלדת מצמצמת את הרשימה - שמות שמתחילים במה שהוקלד, או שאחת המילים בשם מתחילה בו */
@@ -76,16 +76,24 @@ function renderLogin(App){
     ` : `
       <p><b>${esc(sel.name)}</b> <span class="btn small secondary" data-action="portal-unpick" style="cursor:pointer;">לא אני</span></p>
       <div class="row">
-        <div class="field"><label>${sel.kind==="m"?"סיסמה":"קוד אישי"}</label>
-          <input type="password" id="portalCode" autocomplete="off" placeholder="${sel.kind==="m"?"סיסמה":"קוד"}" value="${esc(P.code)}" data-action="portal-code">
+        <div class="field"><label>קוד אישי</label>
+          <input type="password" id="portalCode" autocomplete="off" placeholder="קוד" value="${esc(P.code)}" data-action="portal-code">
         </div>
         <button class="btn" data-action="portal-login" ${P.busy?"disabled":""}>כניסה</button>
       </div>
+      ${P.firstCode ? `<div class="portal-qbox" style="margin-top:10px;">
+        <div style="font-weight:700;margin-bottom:4px;">עוד לא הוגדר לך קוד אישי</div>
+        <p class="muted" style="margin:0 0 8px;">מנהל המערכת מגדיר את הקוד הראשון עם קוד העריכה שלו. אחר כך הקוד האישי הוא הקוד היחיד לכל הכניסות.</p>
+        <div class="row">
+          <div class="field"><label>קוד עריכה (מנהל המערכת)</label><input type="password" id="firstEditPin" autocomplete="off"></div>
+          <div class="field"><label>קוד אישי חדש (לפחות 4 תווים)</label><input type="password" id="firstNewCode" autocomplete="new-password"></div>
+          <button class="btn ok" data-action="portal-first-code" ${P.busy?"disabled":""}>שמור וכניסה</button>
+        </div></div>` : ""}
     `}
     ${P.error? `<p class="shortage">${esc(P.error)}</p>`:""}
     <p class="muted" style="margin-top:14px;">שמך לא ברשימה? פנה/י למנהל המערכת כדי שיוסיף אותך.</p>
   </div>
-  <p style="text-align:center;margin-top:6px;"><span class="backlink" data-action="portal-managers">כניסת מנהלים / בניית סידור ←</span></p>`;
+  `;
 }
 
 /* ---------- דף הבית של העובד ---------- */
@@ -638,26 +646,28 @@ async function mgrResolve(App, id, res){
 const W = { pin:null, list:null, error:null, msg:null };
 function renderManagerPasswords(App){
   const esc = App.escapeHtml;
+  const ms = loadMgr(App);
+  if(!W.list && ms && ms.is_admin && !W.loading){ W.loading = true; W.pin = "mgr:" + ms.token; pwLoad(App).finally(()=>{ W.loading = false; }); return `<div class="card"><p class="muted">טוען...</p></div>`; }
   if(!W.list){
     return `<div class="card">
-      <span class="backlink" data-action="go-home">◀ חזרה לתפריט המנהלים</span>
-      <h2>סיסמאות מנהלים</h2>
+      <span class="backlink" data-action="go-home">◀ חזרה</span>
+      <h2>קודים של מנהלים</h2>
       <div class="field"><label>קוד עריכה (PIN)</label><input type="password" id="pwPin" autocomplete="off"></div>
       <button class="btn" data-action="portal-pw-load">כניסה</button>
       ${W.error? `<p class="shortage">${esc(W.error)}</p>`:""}
     </div>`;
   }
   return `<div class="card">
-    <span class="backlink" data-action="go-home">◀ חזרה לתפריט המנהלים</span>
-    <h2>סיסמאות מנהלים</h2>
-    <p class="muted">מנהל נכנס ממסך הכניסה הראשי: מקליד את שמו, בוחר בשורה שמסומנת "מנהל" ומזין את הסיסמה. שמירת סיסמה חדשה מנתקת אותו מכל מכשיר שהיה מחובר בו.</p>
+    <span class="backlink" data-action="go-home">◀ חזרה</span>
+    <h2>קודים של מנהלים</h2>
+    <p class="muted">לכל מנהל קוד אישי אחד לכל הכניסות: נכנסים ממסך הכניסה הראשי, בוחרים את השם שמסומן "מנהל" ומזינים את הקוד. שמירת קוד חדש מנתקת את המנהל מכל מכשיר שהיה מחובר בו.</p>
     ${W.msg? `<p style="color:#1b7f3b;font-weight:600;">${esc(W.msg)}</p>`:""}
     ${W.error? `<p class="shortage">${esc(W.error)}</p>`:""}
     <table>
-      <thead><tr><th style="text-align:right;">מנהל</th><th>סיסמה</th><th>סיסמה חדשה</th><th></th></tr></thead>
+      <thead><tr><th style="text-align:right;">מנהל</th><th>קוד אישי</th><th>קוד חדש</th><th></th></tr></thead>
       <tbody>${W.list.map(m=>`<tr>
         <td style="text-align:right;">${esc(m.name)}</td>
-        <td>${m.has_password?"✔ מוגדרת":'<span class="muted">לא מוגדרת</span>'}</td>
+        <td>${m.has_password?"✔ מוגדר":'<span class="muted">לא מוגדר</span>'}</td>
         <td><input type="password" id="pw_${m.id}" autocomplete="new-password" placeholder="לפחות 4 תווים" style="width:150px;"></td>
         <td><button class="btn small" data-action="portal-pw-save" data-id="${m.id}">שמור</button></td>
       </tr>`).join("")}</tbody>
@@ -677,12 +687,12 @@ async function pwLoad(App){
 async function pwSave(App, id){
   const el = document.getElementById("pw_"+id);
   const pw = el ? el.value : "";
-  if(pw.length < 4){ W.error = "הסיסמה צריכה להיות לפחות 4 תווים"; W.msg = null; return App.render(); }
+  if(pw.length < 4){ W.error = "הקוד צריך להיות לפחות 4 תווים"; W.msg = null; return App.render(); }
   try{
     await App.apiRpc("admin_set_manager_password", {p_pin: W.pin, p_manager_id: id, p_password: pw});
     W.list = await App.apiRpc("admin_list_managers", {p_pin: W.pin});
     const m = W.list.find(x=>x.id===id);
-    W.msg = `הסיסמה של ${m?m.name:"המנהל"} נשמרה.`; W.error = null;
+    W.msg = `הקוד של ${m?m.name:"המנהל"} נשמר.`; W.error = null;
   }catch(e){ W.error = e.message; W.msg = null; }
   App.render();
 }
@@ -1927,6 +1937,10 @@ function renderManagerHome(App, ms){
       <div class="team-tile" data-action="portal-pv" data-page="k-feed"><div style="font-size:1.1em;font-weight:700;">תכנים והודעות</div><div class="muted" style="font-size:.85em;margin-top:4px;">מקב"ט ההדרכות</div></div>
     </div>
   </div>`:""}
+  ${ms.is_admin ? `<div class="card">
+    <h3>ניהול מערכת</h3>
+    <div class="grid-teams">${tile("portal-mh-codes", "קודים של מנהלים", "הגדרה ואיפוס קוד אישי לכל מנהל")}</div>
+  </div>` : ""}
   ${mgrViewCard(App, ms, sched)}
   ${ms.can_training ? renderIsraelDashboard(App, ms) : ""}
   ${!sched.length && !logi.length && !ms.can_training ? `<div class="card"><p class="muted">אין עדיין הרשאות לממשק הזה.</p></div>`:""}`;
@@ -1936,12 +1950,14 @@ function enterMgrSchedule(App, ms, which){
   const teams = mgrTeams(App, ms.schedule_team_ids);
   if(!teams.length) return App.render();
   S.pin = "mgr:" + ms.token; // הסשן של המנהל במקום קוד העריכה המשותף (לא נשמר בדפדפן)
+  const access = {}; teams.forEach(t=>access[t.id] = true);
+  S.teamAccess = Object.assign({}, S.teamAccess, access);
+  const groups = new Set(teams.map(t=>App.sectorGroupForTeam(t).label));
+  const many = ms.is_admin || groups.size > 1; // מנהל מערכת / כמה קבוצות גזרות - בוחרים מהרשימה
   if(which==="agg"){
-    const rep = teams[0];
-    S.teamAccess = Object.assign({}, S.teamAccess, {[rep.id]: true});
-    S.view = "aggregate"; S.ui = {teamId: rep.id};
+    S.view = "aggregate"; S.ui = many ? {mgrPick: true} : {teamId: teams[0].id};
   } else {
-    S.view = "admin"; S.ui = {pinOk: true, teamIds: teams.map(t=>t.id), recipientLabel: ms.name};
+    S.view = "admin"; S.ui = many ? {pinOk: true, mgrPick: true} : {pinOk: true, teamIds: teams.map(t=>t.id), recipientLabel: ms.name};
   }
   App.render();
 }
@@ -1981,15 +1997,15 @@ async function doLogin(App){
   const codeEl = document.getElementById("portalCode");
   const code = codeEl ? codeEl.value : P.code;
   const sel = (P.workers||[]).find(w=>w.key===P.selectedId);
-  if(!sel || !code){ P.error = sel && sel.kind==="m" ? "יש להזין סיסמה" : "יש להזין קוד אישי"; return App.render(); }
+  if(!sel || !code){ P.error = "יש להזין קוד אישי"; return App.render(); }
   P.busy = true; P.error = null; App.render();
   try{
     if(sel.kind==="m"){
       const res = await App.apiRpc("manager_login", {p_manager_id: sel.id, p_password: code});
       P.busy = false;
-      if(!res){ P.error = "סיסמה שגויה"; P.code=""; return App.render(); }
+      if(!res){ P.error = "קוד שגוי"; P.code=""; return App.render(); }
       saveSession(App, null); saveMgr(App, res); I.data = null; K.data = null;
-      P.selectedId = null; P.code = ""; P.query = ""; P.checkedMgr = true;
+      P.selectedId = null; P.code = ""; P.query = ""; P.checkedMgr = true; P.firstCode = false;
       return App.render();
     }
     const res = await App.apiRpc("worker_login", {p_worker_id: sel.id, p_code: code});
@@ -2002,7 +2018,31 @@ async function doLogin(App){
   }catch(err){
     P.busy = false;
     // "Failed to fetch" = הבקשה לא הגיעה לשרת (אין אינטרנט / רשת חוסמת) - הודעה ברורה בעברית
+    if(sel.kind==="m" && /לא הוגדר|לא הוגדרה/.test(err.message)){ P.firstCode = true; P.error = null; return App.render(); }
     P.error = /failed to fetch|networkerror|load failed/i.test(err.message) ? "אין חיבור לשרת. בדקו את החיבור לאינטרנט ונסו שוב." : err.message;
+    App.render();
+  }
+}
+/* קוד ראשון למנהל (קוד אחד לכל מנהל, 2026-10-11): מנהל המערכת מאשר עם קוד העריכה, והמנהל נכנס מיד */
+async function firstManagerCode(App){
+  const sel = (P.workers||[]).find(w=>w.key===P.selectedId);
+  const pin = (document.getElementById("firstEditPin")||{}).value || "";
+  const code = (document.getElementById("firstNewCode")||{}).value || "";
+  if(!sel || sel.kind!=="m") return;
+  if(!pin){ P.error = "יש להזין את קוד העריכה"; return App.render(); }
+  if(code.length < 4){ P.error = "הקוד האישי צריך להיות לפחות 4 תווים"; return App.render(); }
+  P.busy = true; P.error = null; App.render();
+  try{
+    await App.apiRpc("admin_set_manager_password", {p_pin: pin, p_manager_id: sel.id, p_password: code});
+    const res = await App.apiRpc("manager_login", {p_manager_id: sel.id, p_password: code});
+    P.busy = false;
+    if(!res){ P.error = "הקוד נשמר אבל הכניסה נכשלה - נסו להיכנס שוב"; return App.render(); }
+    saveSession(App, null); saveMgr(App, res); I.data = null; K.data = null;
+    P.selectedId = null; P.code = ""; P.query = ""; P.checkedMgr = true; P.firstCode = false;
+    App.render();
+  }catch(err){
+    P.busy = false;
+    P.error = /invalid pin/i.test(err.message) ? "קוד העריכה שגוי" : err.message;
     App.render();
   }
 }
@@ -2147,6 +2187,8 @@ function onClick(App, a, el){
   if(a==="portal-post-file-remove"){ savePostFields(); (PV.form.files||[]).splice(Number(el.dataset.idx),1); return App.render(); }
   if(a==="portal-prog-set" || a==="portal-onb-save" || a==="portal-onb-complete" || a==="portal-quiz-publish" || a==="portal-quiz-del" || a==="portal-quiz-save" || a==="portal-quiz-delete" || a==="portal-quiz-restore" || a==="portal-ctl-send" || a==="portal-post-send") return trnAction(App, a, el);
   if(a==="portal-pw-load") return pwLoad(App);
+  if(a==="portal-first-code") return firstManagerCode(App);
+  if(a==="portal-mh-codes"){ W.pin=null; W.list=null; W.error=null; W.msg=null; S.view = "mgrpw"; S.ui = {}; return App.render(); }
   if(a==="portal-pw-save") return pwSave(App, el.dataset.id);
   if(a==="portal-mgr-tile"){ M.tile = el.dataset.id; M.code=null; M.list=null; M.error=null; M.msg=null; return App.render(); }
   if(a==="portal-mgr-back"){ M.tile=null; M.code=null; M.list=null; M.error=null; M.msg=null; return App.render(); }

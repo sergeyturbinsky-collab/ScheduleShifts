@@ -144,7 +144,7 @@
 <main id="app"></main>
 <footer>מערכת פנימית · חברת אבטחה</footer>
 
-<script src="portal.js?v=30"></script>
+<script src="portal.js?v=31"></script>
 <script>
 (function(){
 "use strict";
@@ -472,7 +472,7 @@ function render(){
     S.view==="home" ? "" :
     (portalCtx && S.view==="submit") ? "סידור עבודה" :
     S.view==="equipreq" ? "בקשות ציוד" :
-    S.view==="mgrpw" ? "סיסמאות מנהלים" :
+    S.view==="mgrpw" ? "קודים של מנהלים" :
     (S.view==="pview" && window.Portal) ? window.Portal.pvTitle() :
     S.view==="mgrview" ? "סידור עבודה (צפייה בלבד)" :
     S.view==="training" ? "הדרכה" :
@@ -751,6 +751,9 @@ function renderAggregate(){
     </div>`;
   }
   const team = teamById(ui.teamId);
+  if(!S.teamAccess[team.id] && typeof S.pin==="string" && S.pin.startsWith("mgr:")){
+    return `<div class="card"><span class="backlink" data-action="agg-back">◀ חזרה</span><p class="muted">אין לך הרשאה לגזרה הזו.</p></div>`;
+  }
   if(!S.teamAccess[team.id]){
     return `<div class="card">
       <span class="backlink" data-action="agg-back">◀ צוות אחר</span>
@@ -795,7 +798,7 @@ function renderAggregate(){
 
   return `
   <div class="card">
-    <span class="backlink" data-action="agg-back">${(typeof S.pin==="string" && S.pin.startsWith("mgr:")) ? "◀ חזרה" : "◀ בחירת צוות אחר"}</span>
+    <span class="backlink" data-action="agg-back">${(typeof S.pin==="string" && S.pin.startsWith("mgr:") && !ui.mgrPick) ? "◀ חזרה" : "◀ בחירת צוות אחר"}</span>
     <h2>טבלה מרוכזת — ${escapeHtml(group.label)}</h2>
     ${shabbatNoteHtml(group, dates)}
     ${renderSwapHistoryBox(group, dates)}
@@ -2872,16 +2875,16 @@ function renderAdmin(){
   const anyMoked = teams.some(isMokedTeam);
   const avihaiTeam = teams.find(t=>(t.sectors||[]).includes("סובב ירושלים"));
   return `<div class="card">
-    <span class="backlink" data-action="admin-back">${(typeof S.pin==="string" && S.pin.startsWith("mgr:")) ? "◀ חזרה" : "◀ נמען אחר"}</span>
+    <span class="backlink" data-action="admin-back">${(typeof S.pin==="string" && S.pin.startsWith("mgr:") && !ui.mgrPick) ? "◀ חזרה" : "◀ נמען אחר"}</span>
     <h2>ניהול עובדים — ${escapeHtml(ui.recipientLabel)}</h2>
-    <h3>קוד קב"ט (לצפייה בטבלה המרוכזת ובניית הסידור)</h3>
+    ${(typeof S.pin==="string" && S.pin.startsWith("mgr:")) ? "" : `<h3>קוד קב"ט (לצפייה בטבלה המרוכזת ובניית הסידור)</h3>
     <div class="row">
       <div class="field"><label>קוד נוכחי</label><input type="text" id="adminTeamCode" value="${escapeHtml(ui.teamCode||"")}"></div>
       <button class="btn" data-action="admin-set-team-code">שמור קוד</button>
     </div>
     <p class="muted">הקוד הזה נדרש כדי להיכנס ל"טבלה מרוכזת ובניית סידור" ולראות מה הוגש עבור ${escapeHtml(ui.recipientLabel)}. לא קשור לקוד העריכה (PIN) שלך.${merged?` (הקוד המשותף של ${escapeHtml(ui.recipientLabel)} — זהה לקוד שדורש שער הכניסה לטבלה המרוכזת עבור הכפתור הממוזג.)`:""}</p>
     ${ui.teamCodeMsg? `<p>${escapeHtml(ui.teamCodeMsg)}</p>`:""}
-    ${isLockActive(ui.teamCodeLockedUntil)? `<p class="shortage">🔒 קוד הקב"ט נעול כרגע (יותר מדי ניסיונות שגויים) — ייפתח אוטומטית בעוד כ-${lockMinutesLeft(ui.teamCodeLockedUntil)} דק'. <button class="btn small" data-action="admin-unlock-team">פתח נעילה עכשיו</button></p>`:""}
+    ${isLockActive(ui.teamCodeLockedUntil)? `<p class="shortage">🔒 קוד הקב"ט נעול כרגע (יותר מדי ניסיונות שגויים) — ייפתח אוטומטית בעוד כ-${lockMinutesLeft(ui.teamCodeLockedUntil)} דק'. <button class="btn small" data-action="admin-unlock-team">פתח נעילה עכשיו</button></p>`:""}`}
     <table>
       <thead><tr><th>שם</th><th title="עובד בהכשרה - אפשר לשבץ אותו בחפיפה, באותה קוביה עם עובד שכבר משובץ">חפיפה</th><th title="לא יוצג כאפשרות לשיבוץ בשישי ערב, שישי לילה ושבת ערב">שומר שבת</th><th>קוד אישי</th>${merged?"<th>גזרה</th>":""}${avihaiTeam?"<th title=\"סדר העדיפות לשיבוץ האוטומטי, מימין לשמאל\">ערים (לפי עדיפות)</th>":""}${anyMoked?"<th>תפקיד</th>":""}<th title="כשמסומן, העובד לעולם לא ייבחר ב&quot;שיבוץ אוטומטי&quot; - עדיין אפשר לשבץ אותו ידנית">לא לשבץ אוטומטית</th><th></th></tr></thead>
       <tbody>
@@ -3104,7 +3107,7 @@ function onAppClick(e){
 
   // ---- aggregate ----
   if(a==="agg-pick-team"){ ui.teamId = el.dataset.id; ui.loaded=false; return render(); }
-  if(a==="agg-back"){ if(typeof S.pin==="string" && S.pin.startsWith("mgr:")) return goHome(); S.ui = {}; return render(); }
+  if(a==="agg-back"){ if(typeof S.pin==="string" && S.pin.startsWith("mgr:") && !(S.ui.mgrPick && S.ui.teamId)) return goHome(); S.ui = S.ui.mgrPick ? {mgrPick:true} : {}; return render(); }
   if(a==="agg-team-code-submit"){
     const code = document.getElementById("aggTeamCode").value;
     ui.teamCodeValue = code;
@@ -3281,7 +3284,7 @@ function onAppClick(e){
     ui.recipientLabel = label; ui.teamIds = group.teamIds; ui.workers=null;
     return render();
   }
-  if(a==="admin-back"){ if(typeof S.pin==="string" && S.pin.startsWith("mgr:")) return goHome(); ui.recipientLabel=null; ui.teamIds=null; ui.workers=null; return render(); }
+  if(a==="admin-back"){ if(typeof S.pin==="string" && S.pin.startsWith("mgr:") && !(ui.mgrPick && ui.teamIds)) return goHome(); ui.recipientLabel=null; ui.teamIds=null; ui.workers=null; return render(); }
   if(a==="admin-set-team-code"){
     const code = document.getElementById("adminTeamCode").value;
     if(!code){ ui.teamCodeMsg = "יש להזין קוד"; return render(); }
