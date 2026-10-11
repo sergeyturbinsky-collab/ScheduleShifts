@@ -78,7 +78,9 @@
   .side-layout>.side-main{flex:2 1 480px;min-width:280px;}
   .side-layout>.side-aside{flex:1 1 280px;min-width:240px;display:flex;flex-direction:column;gap:14px;}
   .side-layout>.side-aside>.card{margin-bottom:0;}
-  .note-box{background:#fff8e6;border:1px solid #f0dca0;border-radius:8px;padding:10px 12px;font-size:13px;color:#7a5c00;margin-bottom:12px;}
+  .streak-warn{color:#b45309;font-weight:700;font-size:.85em;}
+.streak-box{border-color:#f59e0b !important;background:#fffbeb !important;}
+.note-box{background:#fff8e6;border:1px solid #f0dca0;border-radius:8px;padding:10px 12px;font-size:13px;color:#7a5c00;margin-bottom:12px;}
   .overlay{position:fixed;inset:0;background:rgba(10,30,55,.55);display:flex;align-items:center;justify-content:center;z-index:50;}
   .overlay .card{max-width:360px;width:90%;}
   .slot-row{cursor:pointer;}
@@ -147,7 +149,7 @@
 <main id="app"></main>
 <footer>מערכת פנימית · חברת אבטחה · סביבת דמו</footer>
 
-<script src="portal.js?v=28"></script>
+<script src="portal.js?v=29"></script>
 <script>
 (function(){
 "use strict";
@@ -793,6 +795,7 @@ function renderAggregate(){
     <h2>טבלה מרוכזת — ${escapeHtml(group.label)}</h2>
     ${shabbatNoteHtml(group, dates)}
     ${renderSwapHistoryBox(group, dates)}
+    ${streakWarningsHtml(group, dates)}
     ${group.pooledNote? `<div class="note-box">שים לב: כמה תת-גזרות/קב"טים חולקים כאן את אותה בריכת עובדים זמינים (אין הפרדה בהגשת האילוצים ברמת תת-הגזרה), כך שהזמינות מחושבת עבור כל תת-הגזרות/הצוותים יחד.</div>`:""}
     <div class="flexbar">
       <button class="btn small secondary" data-action="agg-period-prev">◀ תקופה קודמת</button>
@@ -1086,6 +1089,20 @@ async function loadAggregateData(team){
       }
     }catch(e){ ui.allAssignments = ui.assignments||[]; }
 
+    // --- רצף ימי עבודה / שבתות: כל השיבוצים (בכל הגזרות) 4 שבועות לפני ואחרי התקופה (2026-10-11) ---
+    try{
+      if(dates.length){
+        const from = fmtDate(addDays(parseDate(dates[0]),-27)), to = fmtDate(addDays(parseDate(dates[dates.length-1]),27));
+        let rows = [], off = 0;
+        for(;;){
+          const page = await apiGet("shift_assignments", `select=worker_id,entry_date,shift_type,sector&entry_date=gte.${from}&entry_date=lte.${to}&order=entry_date.asc,id.asc&limit=1000&offset=${off}`);
+          rows = rows.concat(page); if(page.length < 1000) break; off += 1000;
+        }
+        ui.streakAssignments = rows;
+      } else ui.streakAssignments = [];
+    }catch(e){ ui.streakAssignments = ui.allAssignments || []; }
+    ui.streakIdx = buildStreakIndex(ui.streakAssignments);
+
     ui.loaded = true;
   }catch(e){
     ui.loaded = true; ui.loadError = e.message;
@@ -1321,6 +1338,85 @@ function wouldViolateRest(workerId, newInterval, workerIntervals){
     else return true; // חפיפה ממש - לא אמור לקרות (availableForSlot כבר מדיר "כבר משובץ"), נזהרים בכל זאת
     return gapHours < REST_HOURS_REQUIRED;
   });
+}
+
+/* --------- 7 ימי עבודה ברצף / שבת רביעית ברצף (לבקשת סרגיי, 2026-10-11) ---------
+   שיבוץ אוטומטי: עובד שהשיבוץ היה יוצר אצלו 7 ימי עבודה ברצף או שבת רביעית ברצף - לא משובץ (בלי
+   "מוצא אחרון" כמו במנוחה; המשבצת תישאר בחוסר). שיבוץ ידני: מותר, אבל מוצגת אזהרה ⚠ ליד השם ובשלב
+   השני, וריבוע אזהרות בראש הטבלה המרוכזת. הבדיקה בכל הגזרות, כולל השבועות שלפני/אחרי התקופה
+   (ui.streakAssignments נטען בטווח של 4 שבועות לכל כיוון).
+   שבת = משמרת ערב/לילה של יום שישי ועד משמרת מוצ"ש כולל (כל משמרת ביום שבת). */
+const STREAK_MAX_DAYS = 6;      // היום השביעי ברצף = הפרה
+const STREAK_MAX_SHABBATS = 3;  // השבת הרביעית ברצף = הפרה
+function isShabbatShift(date, shiftType){
+  const dow = parseDate(date).getDay();
+  return dow===5 ? ["evening","night","friday_night"].includes(shiftType) : dow===6;
+}
+function shabbatKeyOf(date){ const d = parseDate(date); if(d.getDay()===6) d.setDate(d.getDate()-1); return fmtDate(d); }
+function buildStreakIndex(assignments){
+  const idx = {};
+  (assignments||[]).forEach(a=>{
+    const w = idx[a.worker_id] || (idx[a.worker_id] = {days:new Set(), shabbats:new Set()});
+    w.days.add(a.entry_date);
+    if(isShabbatShift(a.entry_date, a.shift_type)) w.shabbats.add(shabbatKeyOf(a.entry_date));
+  });
+  return idx;
+}
+function streakAdd(idx, workerId, date, shiftType){
+  const w = idx[workerId] || (idx[workerId] = {days:new Set(), shabbats:new Set()});
+  w.days.add(date);
+  if(isShabbatShift(date, shiftType)) w.shabbats.add(shabbatKeyOf(date));
+}
+function runAround(set, key, step){
+  let n = 1, d = addDays(parseDate(key), -step);
+  while(set.has(fmtDate(d))){ n++; d = addDays(d, -step); }
+  d = addDays(parseDate(key), step);
+  while(set.has(fmtDate(d))){ n++; d = addDays(d, step); }
+  return n;
+}
+/* מה היה קורה אם העובד ישובץ למשמרת הזו: מחזיר רשימת הפרות (ריקה = תקין) */
+function streakIssues(idx, workerId, date, shiftType){
+  const w = (idx||{})[workerId] || {days:new Set(), shabbats:new Set()};
+  const out = [];
+  const n = runAround(w.days, date, 1);
+  if(n > STREAK_MAX_DAYS) out.push(`${n} ימי עבודה ברצף`);
+  if(isShabbatShift(date, shiftType)){
+    const k = runAround(w.shabbats, shabbatKeyOf(date), 7);
+    if(k > STREAK_MAX_SHABBATS) out.push(k===4 ? "שבת רביעית ברצף" : `שבת ${k} ברצף`);
+  }
+  return out;
+}
+function streakTag(workerId, date, shiftType){
+  const v = streakIssues(S.ui && S.ui.streakIdx, workerId, date, shiftType);
+  return v.length ? ` <span class="streak-warn">⚠ ${escapeHtml(v.join(", "))}</span>` : "";
+}
+function streakNoticeHtml(workerId, date, shiftType){
+  const v = streakIssues(S.ui && S.ui.streakIdx, workerId, date, shiftType);
+  return v.length ? `<div class="note-box streak-box">⚠ שים לב: שיבוץ כאן ייצור לעובד <b>${escapeHtml(v.join(" ו"))}</b>. אפשר לשבץ בכל זאת (שיבוץ ידני).</div>` : "";
+}
+/* ריבוע אזהרות בטבלה המרוכזת: עובדים שכבר משובצים 7+ ימים ברצף או שבת רביעית+ ברצף, בתקופה המוצגת */
+function streakWarningsHtml(group, dates){
+  const ui = S.ui; const idx = ui && ui.streakIdx; if(!idx || !dates.length) return "";
+  const sectors = new Set(group.citySectors||[]);
+  const first = dates[0], last = dates[dates.length-1];
+  const inGroup = new Set((ui.assignments||[]).filter(a=>sectors.has(a.sector)).map(a=>a.worker_id));
+  const byId = Object.assign({}, ui.allWorkersById || {}); (ui.workers||[]).forEach(w=>{ if(!byId[w.id]) byId[w.id] = w; });
+  const lines = [];
+  inGroup.forEach(wid=>{
+    const w = idx[wid]; if(!w) return;
+    const name = (byId[wid]&&byId[wid].name) || "?";
+    // רצפי ימים
+    const days = Array.from(w.days).sort(); let runStart = null, prev = null;
+    const flush = ()=>{ if(runStart===null) return; const n = Math.round((parseDate(prev)-parseDate(runStart))/86400000)+1;
+      if(n > STREAK_MAX_DAYS && prev >= first && runStart <= last) lines.push(`<div>⚠ <b>${escapeHtml(name)}</b> — ${n} ימי עבודה ברצף (${fmtDateHeb(runStart)} עד ${fmtDateHeb(prev)})</div>`); };
+    days.forEach(d=>{ if(prev && fmtDate(addDays(parseDate(prev),1))===d){ prev = d; return; } flush(); runStart = d; prev = d; }); flush();
+    // רצפי שבתות
+    const sh = Array.from(w.shabbats).sort(); let k = 0; prev = null;
+    sh.forEach(f=>{ k = (prev && fmtDate(addDays(parseDate(prev),7))===f) ? k+1 : 1; prev = f;
+      if(k > STREAK_MAX_SHABBATS && f >= fmtDate(addDays(parseDate(first),-1)) && f <= last) lines.push(`<div>⚠ <b>${escapeHtml(name)}</b> — ${k===4?"שבת רביעית":"שבת "+k} ברצף (${fmtDateHeb(fmtDate(addDays(parseDate(f),1)))})</div>`); });
+  });
+  if(!lines.length) return "";
+  return `<div class="note-box streak-box"><b>אזהרות רצף (7 ימי עבודה / שבת רביעית ברצף):</b>${lines.join("")}</div>`;
 }
 
 function renderQuotaPanel(group, slots, ui){
@@ -1758,6 +1854,7 @@ function renderTmplCellOverlay(){
     <div class="overlay" data-action="tmpl-cell-bg">
       <div class="card" data-action="noop">
         <h3>${escapeHtml(w?w.name:"")} · ${escapeHtml(c.sector)} · ${fmtDateHeb(c.date)}</h3>
+        ${streakNoticeHtml(ui.tmplPickedWorker, c.date, c.type)}
         ${ui.tmplHoursMode!=="custom" ? `
           <div class="row">
             <button class="btn" data-action="tmpl-hours-standard">משמרת סטנדרטית</button>
@@ -1790,13 +1887,13 @@ function renderTmplCellOverlay(){
   const availOptions = options.filter(w=>avail.some(a=>a.id===w.id));
   const busyOptions = options.filter(w=> !avail.some(a=>a.id===w.id) && availIncludingBusy.some(a=>a.id===w.id));
   const unavailOptions = options.filter(w=>!availIncludingBusy.some(a=>a.id===w.id));
-  const pickBtn = w => `<button class="btn small ${w.id===(currentWorker&&currentWorker.id)?"":"secondary"}" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}</button>`;
+  const pickBtn = w => `<button class="btn small ${w.id===(currentWorker&&currentWorker.id)?"":"secondary"}" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}</button>`;
   const busyNote = w => {
     const already = (assignmentsByDate[c.date]||[]).filter(a=>a.worker_id===w.id);
     const labels = Array.from(new Set(already.map(a=>SHIFT_LABELS[a.shift_type]||a.shift_type)));
     return labels.join("/") || "משמרת אחרת";
   };
-  const busyBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`;
+  const busyBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`;
   return `
   <div class="overlay" data-action="tmpl-cell-bg">
     <div class="card" data-action="noop">
@@ -1827,7 +1924,7 @@ function renderTmplCellOverlay(){
       <div class="avail-list" style="margin-top:4px;">
         ${otherOptions.length? otherOptions.map(w=>{
           const t = teamById(w.team_id);
-          return `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)} <span class="muted">(${escapeHtml(t?t.name:"")})</span></button>`;
+          return `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)} <span class="muted">(${escapeHtml(t?t.name:"")})</span></button>`;
         }).join("") : '<span class="muted">אין עובדים זמינים מגזרות אחרות</span>'}
       </div>` : ""}
       <div class="row" style="margin-top:8px;">
@@ -1898,6 +1995,7 @@ function renderMokedCellOverlay(){
     <div class="overlay" data-action="tmpl-cell-bg">
       <div class="card" data-action="noop">
         <h3>${escapeHtml(w?w.name:"")} · ${escapeHtml(c.role)} · ${fmtDateHeb(c.date)}</h3>
+        ${streakNoticeHtml(ui.tmplPickedWorker, c.date, c.type)}
         ${ui.tmplHoursMode!=="custom" ? `
           <div class="row">
             <button class="btn" data-action="tmpl-hours-standard">משמרת סטנדרטית</button>
@@ -1930,13 +2028,13 @@ function renderMokedCellOverlay(){
   const availOptions = options.filter(w=>avail.some(a=>a.id===w.id));
   const busyOptions = options.filter(w=> !avail.some(a=>a.id===w.id) && availIncludingBusy.some(a=>a.id===w.id));
   const unavailOptions = options.filter(w=>!availIncludingBusy.some(a=>a.id===w.id));
-  const pickBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}</button>`;
+  const pickBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}</button>`;
   const busyNote = w => {
     const already = (assignmentsByDate[c.date]||[]).filter(a=>a.worker_id===w.id);
     const labels = Array.from(new Set(already.map(a=>SHIFT_LABELS[a.shift_type]||a.shift_type)));
     return labels.join("/") || "משמרת אחרת";
   };
-  const busyBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`;
+  const busyBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`;
   return `
   <div class="overlay" data-action="tmpl-cell-bg">
     <div class="card" data-action="noop">
@@ -1963,9 +2061,9 @@ function renderMokedCellOverlay(){
       ${(roleOverrideOptions.length || roleOverrideBusy.length || roleOverrideUnavail.length)? `
       <p class="muted" style="margin:8px 0 2px;font-weight:600;">אחמ"שים (יכולים למלא גם תקן מוקדן)</p>
       <div class="avail-list">
-        ${roleOverrideOptions.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)}</button>`).join("")}
-        ${roleOverrideBusy.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`).join("")}
-        ${roleOverrideUnavail.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)} <span class="muted">(לא זמין/ה)</span></button>`).join("")}
+        ${roleOverrideOptions.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}</button>`).join("")}
+        ${roleOverrideBusy.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`).join("")}
+        ${roleOverrideUnavail.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)} <span class="muted">(לא זמין/ה)</span></button>`).join("")}
       </div>` : ""}
       <div class="row" style="margin-top:8px;">
         <button class="btn small secondary" data-action="tmpl-other-sectors-toggle">${ui.tmplShowOtherSectors?"הסתר זמינים מגזרות אחרות":"הצג זמינים מגזרות אחרות"}</button>
@@ -1974,7 +2072,7 @@ function renderMokedCellOverlay(){
       <div class="avail-list" style="margin-top:4px;">
         ${otherOptions.length? otherOptions.map(w=>{
           const t = teamById(w.team_id);
-          return `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)} <span class="muted">(${escapeHtml(t?t.name:"")})</span></button>`;
+          return `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)} <span class="muted">(${escapeHtml(t?t.name:"")})</span></button>`;
         }).join("") : '<span class="muted">אין עובדים זמינים מגזרות/צוותים אחרים בתפקיד זה</span>'}
       </div>` : ""}
       <div class="row" style="margin-top:8px;">
@@ -2418,6 +2516,14 @@ async function runAutoAssign(){
     if(!newInterval) return;
     (workerIntervals[workerId] = workerIntervals[workerId]||[]).push(newInterval);
   }
+  // 7 ימים ברצף / שבת רביעית ברצף (2026-10-11): מודרים לגמרי מהשיבוץ האוטומטי - ראו streakIssues למעלה
+  const streakIdx = buildStreakIndex(ui.streakAssignments || ui.allAssignments || ui.assignments || []);
+  const streakCut = new Set(); let streakShort = 0;
+  function streakFilter(list, slot){
+    const out = list.filter(w=>!streakIssues(streakIdx, w.id, slot.date, slot.shiftType).length);
+    if(out.length < list.length) streakCut.add(slot);
+    return out;
+  }
 
   /* עדיפות ערים אצל "מאיר אזרואל" (לבקשת סרגיי, 2026-10-08): לכל עובד רשימת ערים לפי סדר עדיפות
      (roster_workers.city_sectors, ראו computeWorkerCities). משבצות של אותו תאריך ואותו סוג משמרת בכל
@@ -2444,7 +2550,7 @@ async function runAutoAssign(){
     const st = unit.map(slot=>{
       const alreadyAll = (assignmentsByDate[slot.date]||[]).filter(a=>a.sector===slot.sector && a.shift_type===slot.shiftType);
       const need = slot.required - alreadyAll.filter(a=>!a.shadow_of).length;
-      const avail = availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType)).filter(w=>!w.auto_assign_exempt);
+      const avail = streakFilter(availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType)).filter(w=>!w.auto_assign_exempt), slot);
       const {ok, bad, newInterval} = splitByRest(avail, slot);
       return {slot, need, ok, bad, newInterval, chosen:[]};
     });
@@ -2477,7 +2583,7 @@ async function runAutoAssign(){
     // עובד עם auto_assign_exempt=true (למשל סרגיי, לבקשתו 2026-10-06: "אל תשבץ אותי בשיבוצים אוטומטי")
     // מודר כאן בלבד - מהמועמדים לשיבוץ אוטומטי. הוא עדיין מוצג כזמין/לא-זמין רגיל בכל מסך אחר
     // (כולל בורר השיבוץ הידני, ששם אפשר עדיין לבחור בו ידנית בכוונה).
-    const avail = availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType)).filter(w=>!w.auto_assign_exempt);
+    const avail = streakFilter(availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType)).filter(w=>!w.auto_assign_exempt), slot);
     let chosen = [];
     const planned = plannedBySlot.get(slot);
     const {ok: restOk, bad: restBad, newInterval} = planned ? {ok:[], bad:[], newInterval:planned.newInterval} : splitByRest(avail, slot);
@@ -2512,7 +2618,7 @@ async function runAutoAssign(){
         if(pickedRole.length < needRole && role==="מוקדן"){
           // fallback: אחמ"שים זמינים (ללא סינון תפקיד) למשבצת זו, שלא נבחרו כבר לתקן האחמ"ש שלה
           if(availAnyRole===null){
-            availAnyRole = availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType), true).filter(w=>!w.auto_assign_exempt);
+            availAnyRole = streakFilter(availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType), true).filter(w=>!w.auto_assign_exempt), slot);
           }
           const fallbackPool = availAnyRole.filter(w=>w.role==='אחמ"ש' && !chosen.some(c=>c.id===w.id) && !pickedRole.some(c=>c.id===w.id));
           const {ok: fbOk, bad: fbBad} = splitByRest(fallbackPool, slot);
@@ -2536,7 +2642,7 @@ async function runAutoAssign(){
         chosen = chosen.concat(more);
       }
     }
-    if(chosen.length < need) short++;
+    if(chosen.length < need){ short++; if(streakCut.has(slot)) streakShort++; }
     if(chosen.length===0) continue;
     const fullList = alreadyAll.map(a=>a.worker_id).concat(chosen.map(w=>w.id));
     try{
@@ -2551,11 +2657,11 @@ async function runAutoAssign(){
         await apiRpc("rpc_assignment_set_role", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:wid, p_role:"מוקדן"});
       }
       filled++;
-      chosen.forEach(w=>{ assignCount[w.id]++; recordChosenInterval(w.id, newInterval); (assignmentsByDate[slot.date]=assignmentsByDate[slot.date]||[]).push({sector:slot.sector, shift_type:slot.shiftType, worker_id:w.id, entry_date:slot.date}); });
+      chosen.forEach(w=>{ assignCount[w.id]++; recordChosenInterval(w.id, newInterval); streakAdd(streakIdx, w.id, slot.date, slot.shiftType); (assignmentsByDate[slot.date]=assignmentsByDate[slot.date]||[]).push({sector:slot.sector, shift_type:slot.shiftType, worker_id:w.id, entry_date:slot.date}); });
     }catch(e){ ui.buildMsg = "שגיאה בשמירת שיבוץ: " + e.message; render(); return; }
   }
   }
-  ui.buildMsg = `השיבוץ האוטומטי הושלם: עודכנו ${filled} משבצות.${short?` שימו לב — ב-${short} משבצות אין מספיק עובדים זמינים כדי למלא את כל התקן (יופיעו כ"חוסר").`:""}${restForced?` שימו לב — ב-${restForced} שיבוצים לא נמצא עובד עם 8 שעות מנוחה, ושובץ עובד עם פחות (כעדיפות אחרונה, מסומן באדום בטבלה).`:""}`;
+  ui.buildMsg = `השיבוץ האוטומטי הושלם: עודכנו ${filled} משבצות.${short?` שימו לב — ב-${short} משבצות אין מספיק עובדים זמינים כדי למלא את כל התקן (יופיעו כ"חוסר").`:""}${restForced?` שימו לב — ב-${restForced} שיבוצים לא נמצא עובד עם 8 שעות מנוחה, ושובץ עובד עם פחות (כעדיפות אחרונה, מסומן באדום בטבלה).`:""}${streakShort?` ב-${streakShort} משבצות נשאר חוסר כי העובדים הזמינים היו מגיעים ל-7 ימי עבודה ברצף או לשבת רביעית ברצף — אפשר לשבץ ידנית (תוצג אזהרה).`:""}`;
   ui.loaded = false; // רענון מלא של נתוני השיבוצים
   await loadAggregateData(team);
 }

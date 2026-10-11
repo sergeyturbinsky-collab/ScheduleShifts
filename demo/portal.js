@@ -134,6 +134,7 @@ function renderSwapBoard(App){
       <span class="portal-task-icon">🔁</span>
       <span style="flex:1;"><b>${esc(r.worker_name)}</b> — ${swShiftTxt(App, r)}${r.note?` <span class="muted" style="font-size:.85em;">· ${esc(r.note)}</span>`:""}</span>
       ${r.already ? `<span class="muted" style="font-size:.85em;">כבר משובץ באותה משמרת</span>`
+        : (r.blocked && r.blocked.length) ? `<span style="font-size:.85em;color:#b42318;">⛔ לא ניתן לקחת: ${esc(r.blocked.join(", "))}</span>`
         : SW.confirm===r.id ? `<button class="btn small ok" data-action="portal-swap-take" data-id="${r.id}" ${SW.busy?"disabled":""}>כן, אני לוקח</button> <button class="btn small secondary" data-action="portal-swap-take-no">לא</button>`
         : `<button class="btn small ok" data-action="portal-swap-take-ask" data-id="${r.id}">לוקח את המשמרת</button>`}
     </div>`).join("")}</div>`;
@@ -317,13 +318,26 @@ async function enablePush(App, session){
 /* חובה (לבקשת סרגיי, 2026-10-08): עד שההתראות מופעלות במכשיר, המאבטח רואה רק את מסך ההפעלה */
 function pushGate(App, session){
   if(N.state==="on") return null;
+  if(N.state===null || N.checking){ if(N.state===null) checkPush(App, session); }
+  return pushGateHtml(App, session.name, N, {logout:"portal-logout", enable:"portal-push-enable", recheck:"portal-push-recheck",
+    intro:"כדי להשתמש באיזור האישי צריך להפעיל התראות לטלפון. כך תדע מיד על סידור שפורסם, בקרה, לומדה, בקשת חילוף או הודעה חדשה."});
+}
+/* מנהלים - חובה כמו לעובדים (לבקשת סרגיי, 2026-10-11): עד שההתראות מופעלות, רואים רק את מסך ההפעלה */
+function mgrPushGate(App, ms){
+  if(MN.state==="on") return null;
+  if(MN.state===null){ MN.state = "checking"; checkMgrPush(App, ms); }
+  return pushGateHtml(App, ms.name, {state: MN.state, checking: MN.state==="checking", busy: MN.busy, error: MN.error},
+    {logout:"portal-mgr-logout", enable:"portal-mgr-push-enable", recheck:"portal-mgr-push-recheck",
+     intro:"כדי להשתמש באיזור המנהלים צריך להפעיל התראות לטלפון. כך תדע מיד כשעובד מבקש חילוף, כשמשמרת מוחלפת ועל כל עדכון רלוונטי."});
+}
+function pushGateHtml(App, name, N, act){
   const esc = App.escapeHtml;
   const head = `<div class="card">
     <div class="flexbar" style="justify-content:space-between;">
-      <h2 style="margin:0;">שלום, ${esc(session.name)}</h2>
-      <button class="btn small secondary" data-action="portal-logout">יציאה</button>
+      <h2 style="margin:0;">שלום, ${esc(name)}</h2>
+      <button class="btn small secondary" data-action="${act.logout}">יציאה</button>
     </div></div>`;
-  if(N.state===null || N.checking){ if(N.state===null) checkPush(App, session); return head + `<div class="card"><p class="muted">בודק התראות במכשיר...</p></div>`; }
+  if(N.state===null || N.checking) return head + `<div class="card"><p class="muted">בודק התראות במכשיר...</p></div>`;
   let body;
   if(N.state==="ios-install") body = `<p>באייפון ההתראות עובדות רק כשהאיזור האישי מותקן במסך הבית:</p>
       <ol style="padding-inline-start:20px;line-height:2;">
@@ -344,9 +358,9 @@ function pushGate(App, session){
         <li><b>אייפון:</b> הגדרות ← התראות ← איזור אישי ← אפשר התראות</li>
       </ul>
       <p>אחרי השינוי — לרענן את הדף.</p>
-      <button class="btn secondary" data-action="portal-push-recheck">בדיקה חוזרת</button>`;
-  else body = `<p>כדי להשתמש באיזור האישי צריך להפעיל התראות לטלפון. כך תדע מיד על סידור שפורסם, בקרה, לומדה או הודעה חדשה.</p>
-      <button class="btn ok" data-action="portal-push-enable" ${N.busy?"disabled":""} style="font-size:1.1em;padding:12px 22px;">${N.busy?"מפעיל...":"🔔 הפעלת התראות"}</button>
+      <button class="btn secondary" data-action="${act.recheck}">בדיקה חוזרת</button>`;
+  else body = `<p>${act.intro}</p>
+      <button class="btn ok" data-action="${act.enable}" ${N.busy?"disabled":""} style="font-size:1.1em;padding:12px 22px;">${N.busy?"מפעיל...":"🔔 הפעלת התראות"}</button>
       ${N.error?`<p class="shortage" style="margin-top:8px;">${esc(N.error)}</p>`:""}
       <p style="margin-top:10px;font-weight:800;">המערכת לא אוספת מהטלפון מידע אישי או מיקום</p>
       <p class="muted" style="font-size:.85em;margin-top:4px;">כשהטלפון שואל — לבחור <b>"אפשר"</b>.</p>`;
@@ -1158,7 +1172,7 @@ function renderPView(App){
         ${S2.handle===r.id ? `<div class="portal-qbox" style="margin-top:-4px;">
           <div style="font-weight:700;margin-bottom:6px;">מי החליף את ${esc(r.worker_name)}?</div>
           ${S2.cands===null ? `<p class="muted">טוען...</p>` : !S2.cands.length ? `<p class="muted">אין עובדים זמינים בגזרה.</p>`
-            : S2.cands.map(c=>`<label class="portal-opt"><input type="radio" name="swh" data-action="portal-swapm-hsel" data-w="${c.id}" ${S2.hsel===c.id?"checked":""}> ${esc(c.name)}${c.busy_same_day?' <span class="muted" style="font-size:.85em;">(משובץ למשמרת אחרת באותו יום)</span>':""}</label>`).join("")}
+            : S2.cands.map(c=>`<label class="portal-opt"><input type="radio" name="swh" data-action="portal-swapm-hsel" data-w="${c.id}" ${S2.hsel===c.id?"checked":""}> ${esc(c.name)}${c.busy_same_day?' <span class="muted" style="font-size:.85em;">(משובץ למשמרת אחרת באותו יום)</span>':""}${(c.warnings&&c.warnings.length)?` <span style="font-size:.85em;color:#b45309;">⚠ ${esc(c.warnings.join(", "))}</span>`:""}</label>`).join("")}
           <div class="flexbar" style="margin-top:8px;"><button class="btn ok" data-action="portal-swapm-resolve" data-id="${r.id}" ${PV.busy?"disabled":""}>שמור ועדכן את הסידור</button>
           <button class="btn secondary" data-action="portal-swapm-hclose">ביטול</button></div></div>` : ""}`).join("")}</div><hr style="border:none;border-top:1px solid #e3e9f0;margin:14px 0;">` : "";
     if(S2.hist===undefined){ S2.hist = null; const today = App.fmtDate(new Date());
@@ -1699,7 +1713,7 @@ function renderSection(App, view){
 function mgrTeams(App, ids){
   return (ids||[]).map(App.teamById).filter(Boolean).sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
 }
-/* התראות לטלפון למנהלים (2026-10-11) - לא חובה, כרטיס קטן בבית המנהל עד שמפעילים */
+/* התראות לטלפון למנהלים (2026-10-11) - חובה, ראו mgrPushGate */
 const MN = { state:null, busy:false, error:null };
 async function checkMgrPush(App, ms){
   try{
@@ -1724,16 +1738,6 @@ async function enableMgrPush(App, ms){
     MN.state = "on";
   }catch(e){ MN.error = "לא הצלחנו להפעיל התראות: " + e.message; }
   MN.busy = false; App.render();
-}
-function mgrPushCard(App, ms){
-  if(MN.state===null){ MN.state = "checking"; checkMgrPush(App, ms); return ""; }
-  if(MN.state==="on" || MN.state==="checking" || MN.state==="unsupported") return "";
-  const body = MN.state==="ios-install" ? `<p style="margin:6px 0;">באייפון: שיתוף ⬆️ ← "הוסף למסך הבית", ואז לפתוח מהאייקון ולהפעיל.</p>`
-    : MN.state==="denied" ? `<p style="margin:6px 0;">ההתראות חסומות בדפדפן — יש לאפשר אותן בהגדרות ולרענן.</p>`
-    : `<p style="margin:6px 0;">קבלו התראה מיד כשמאבטח מבקש חילוף או כשמשמרת מוחלפת.</p>
-       <button class="btn ok" data-action="portal-mgr-push-enable" ${MN.busy?"disabled":""}>🔔 הפעלת התראות</button>
-       <p style="margin-top:8px;font-weight:800;">המערכת לא אוספת מהטלפון מידע אישי או מיקום</p>${MN.error?`<p class="shortage">${App.escapeHtml(MN.error)}</p>`:""}`;
-  return `<div class="card" style="border-color:#0c3a6e;"><h3 style="margin-top:0;">📲 התראות לטלפון</h3>${body}</div>`;
 }
 function mgrScopeGroups(App, ms){
   const ids = new Set([].concat(ms.schedule_team_ids||[], ms.logistics_team_ids||[]));
@@ -1777,6 +1781,7 @@ function mgrViewCard(App, ms, sched){
 }
 function renderManagerHome(App, ms){
   const esc = App.escapeHtml;
+  const gate = mgrPushGate(App, ms); if(gate) return gate;
   if(!P.checkedMgr){
     P.checkedMgr = true;
     App.apiRpc("manager_session_info", {p_token: ms.token}).then(info=>{
@@ -1800,7 +1805,6 @@ function renderManagerHome(App, ms){
       <button class="btn small secondary" data-action="portal-mgr-logout">יציאה</button>
     </div>
   </div>
-  ${mgrPushCard(App, ms)}
   ${sched.length? `<div class="card">
     <h3>סידור עבודה</h3>
     <p class="muted" style="margin-top:-6px;">${names(sched)}</p>
@@ -1944,6 +1948,7 @@ function onClick(App, a, el){
   if(a==="portal-unpick"){ P.selectedId = null; P.code=""; P.error=null; return App.render(); }
   if(a==="portal-login") return doLogin(App);
   if(a==="portal-push-recheck"){ N.state = null; return App.render(); }
+  if(a==="portal-mgr-push-recheck"){ MN.state = null; return App.render(); }
   if(a==="portal-push-enable"){ const ss = loadSession(App); if(ss && !N.busy) enablePush(App, ss); return; }
   if(a==="portal-managers"){ S.view = "managers"; S.ui = {}; return App.render(); }
   if(a==="portal-logout"){
