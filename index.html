@@ -436,7 +436,15 @@ function isCityPoolTeam(t){ return !!t && (t.sectors||[]).some(x=>x==="סובב 
 function cityPrefSelectsHtml(prefix, current){
   const cur = current || [];
   return `<div class="row" style="gap:8px;flex-wrap:wrap;">${CITY_PRIORITY_LABELS.map((lab,i)=>`<div class="field" style="min-width:130px;"><label>${lab}</label>
-    <select id="${prefix}_${i}"><option value="">ללא העדפה</option>${POOLED_CITY_SECTORS.map(c=>`<option value="${escapeHtml(c)}" ${cur[i]===c?"selected":""}>${escapeHtml(c)}</option>`).join("")}</select></div>`).join("")}</div>`;
+    <select id="${prefix}_${i}" data-action="city-pref" data-prefix="${prefix}"><option value="">ללא העדפה</option>${POOLED_CITY_SECTORS.map(c=>`<option value="${escapeHtml(c)}" ${cur[i]===c?"selected":""} ${cur[i]!==c && cur.slice(0, CITY_PRIORITY_LABELS.length).includes(c)?"disabled":""}>${escapeHtml(c)}</option>`).join("")}</select></div>`).join("")}</div>`;
+}
+/* עיר שכבר נבחרה באחת העדיפויות לא ניתנת לבחירה בעדיפות אחרת (2026-10-12) */
+function syncCityPrefs(prefix){
+  const sels = CITY_PRIORITY_LABELS.map((_,i)=>document.getElementById(prefix+"_"+i)).filter(Boolean);
+  const chosen = sels.map(x=>x.value);
+  sels.forEach((sel,i)=>{
+    Array.from(sel.options).forEach(o=>{ o.disabled = !!o.value && chosen.some((v,j)=>j!==i && v===o.value); });
+  });
 }
 /* קורא את הבחירות לפי הסדר עד ה"ללא העדפה" הראשון - מה שאחריו לא נחשב. בלי בחירה בכלל = null (זמין לכל הערים) */
 function readCityPrefs(prefix){
@@ -3001,6 +3009,7 @@ function attachHandlers(){
 
 function onAppChange(e){
   const t = e.target;
+  if(t.dataset.action==="city-pref") return syncCityPrefs(t.dataset.prefix);
   if(t.dataset.action==="manual-check") return; // נקרא בזמן שמירה
   if(t.dataset.action==="admin-role-select"){
     const id = t.dataset.id, role = t.value || null;
