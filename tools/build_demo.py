@@ -37,7 +37,7 @@ assert "wcbnkrtxdzfygyyanasx" in s and "hcejwcxsqhpiufaakalj" not in s
 # ---- portal + publish patches ----
 rep("""<script>
 (function(){
-"use strict";""","""<script src="portal.js?v=27"></script>
+"use strict";""","""<script src="portal.js?v=28"></script>
 <script>
 (function(){
 "use strict";""")
@@ -162,7 +162,33 @@ rep("""  else if(S.view==="pview" && window.Portal) html = window.Portal.renderP
 rep("""    (S.view==="pview" && window.Portal) ? window.Portal.pvTitle() :""","""    (S.view==="pview" && window.Portal) ? window.Portal.pvTitle() :
     S.view==="mgrview" ? "סידור עבודה (צפייה בלבד)" :""")
 rep("""    <button class="btn secondary" data-action="close-print">סגור</button>""","""    ${S.view==="mgrview" ? "" : `<button class="btn secondary" data-action="close-print">סגור</button>`}""")
-rep("""/* --------- פרסום סידור לעובדים (דמו, 2026-10-07)""","""/* --------- צפייה בלבד בסידור עבודה - למנהלים בלי הרשאת עריכה (דמו, 2026-10-11): אותו פלט כמו "הפקת פלט
+rep("""/* --------- פרסום סידור לעובדים (דמו, 2026-10-07)""","""/* --------- חילופי משמרות (דמו, 2026-10-11): עותק מקורי של הסידור שפורסם, ותיעוד ההחלפות שבוצעו --------- */
+function renderOriginalPrint(team){
+  const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
+  if(ui.origAssignments===undefined){
+    ui.origAssignments = null;
+    apiRpc("schedule_original", {p_sectors: group.citySectors, p_from: dates[0], p_to: dates[dates.length-1]})
+      .then(r=>{ ui.origAssignments = r || []; render(); }).catch(()=>{ ui.origAssignments = []; render(); });
+  }
+  if(ui.origAssignments===null) return `<p class="muted">טוען...</p>`;
+  if(!ui.origAssignments.length) return `<p class="muted">אין עדיין החלפות בתקופה הזו — הסידור המקורי זהה לעדכני.</p>` + renderPrintView(team);
+  const saved = ui.assignments; ui.assignments = ui.origAssignments;
+  try{ return `<p class="muted no-print">מוצג הסידור כפי שפורסם במקור, לפני החלפות.</p>` + renderPrintView(team); } finally { ui.assignments = saved; }
+}
+function renderSwapHistoryBox(group, dates){
+  const ui = S.ui;
+  const key = group.citySectors.join(",") + "|" + dates[0];
+  if(ui.swapHistKey !== key){
+    ui.swapHistKey = key; ui.swapHist = null;
+    apiRpc("swap_history", {p_sectors: group.citySectors, p_from: dates[0], p_to: dates[dates.length-1]})
+      .then(r=>{ ui.swapHist = r || []; render(); }).catch(()=>{ ui.swapHist = []; });
+  }
+  if(!ui.swapHist || !ui.swapHist.length) return "";
+  return `<div class="card no-print" style="margin-top:12px;"><h3 style="margin-top:0;">🔁 תיעוד החלפות בתקופה</h3>
+    <div class="muted" style="font-size:.9em;line-height:1.9;">${ui.swapHist.map(r=>`<div>✔ ${fmtDateHeb(r.entry_date)} · ${escapeHtml(SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${escapeHtml(r.sector)}: ${escapeHtml(r.from_name)} ← <b>${escapeHtml(r.to_name||"")}</b> <span style="font-size:.85em;">(${r.by_kind==="m"?"סומן ע״י "+escapeHtml(r.by_name||""):"לקח בעצמו"})</span></div>`).join("")}</div></div>`;
+}
+
+/* --------- צפייה בלבד בסידור עבודה - למנהלים בלי הרשאת עריכה (דמו, 2026-10-11): אותו פלט כמו "הפקת פלט
    סידור", בלי שום כפתור עריכה. רק סידור שפורסם - טיוטות לא מוצגות (לבקשת סרגיי). --------- */
 function renderMgrScheduleView(){
   const ui = S.ui;
@@ -179,19 +205,29 @@ function renderMgrScheduleView(){
       <button class="btn small secondary" data-action="mgrview-next">תקופה הבאה ▶</button>
       <button class="btn small" data-action="portal-pv" data-page="swap-mgr" data-id="${team.id}" style="margin-inline-start:auto;">🔁 מבקש חילוף</button>
     </div>
-    ${published ? renderPrintView(team)
+    ${published ? `
+      <div class="chip-opts no-print" style="margin:4px 0 10px;">
+        <div class="chip ${ui.showOriginal?"":"on"}" data-action="mgrview-current">הסידור העדכני</div>
+        <div class="chip ${ui.showOriginal?"on":""}" data-action="mgrview-original">הסידור המקורי (לפני החלפות)</div>
+      </div>
+      ${ui.showOriginal ? renderOriginalPrint(team) : renderPrintView(team)}
+      ${renderSwapHistoryBox(group, periodDates(ui.periodStart, team))}`
       : `<p class="muted" style="margin-top:12px;">הסידור לתקופה ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(periodDates(ui.periodStart, team).slice(-1)[0])} עדיין לא פורסם. הוא יופיע כאן מיד אחרי הפרסום.</p>`}
   </div>`;
 }
 
 /* --------- פרסום סידור לעובדים (דמו, 2026-10-07)""")
 rep("""  if(a==="managers-back"){""","""  if(a==="mgrview-back"){ S.view = "home"; S.ui = {}; return render(); }
+  if(a==="mgrview-original"){ ui.showOriginal = true; return render(); }
+  if(a==="mgrview-current"){ ui.showOriginal = false; return render(); }
   if(a==="mgrview-prev" || a==="mgrview-next"){
     const t = teamById(ui.teamId);
     ui.periodStart = fmtDate(addDays(parseDate(ui.periodStart), (a==="mgrview-next"?1:-1) * periodLength(t)));
-    ui.loaded = false; return render();
+    ui.loaded = false; ui.origAssignments = undefined; ui.showOriginal = false; return render();
   }
   if(a==="managers-back"){""")
+rep("""    ${shabbatNoteHtml(group, dates)}""","""    ${shabbatNoteHtml(group, dates)}
+    ${renderSwapHistoryBox(group, dates)}""")
 # ---- מפתחות localStorage נפרדים לדמו (הדמו והחי באותו origin) ----
 for k in ["identity","pin","team_access"]:
     s = s.replace('"cst_%s"' % k, '"cstdemo_%s"' % k)

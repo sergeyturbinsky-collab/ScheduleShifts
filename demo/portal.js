@@ -118,11 +118,27 @@ async function loadShifts(App, session){
    בקשת חילוף (לבקשת סרגיי, 2026-10-11, שלב 1): כפתור "מבקש חילוף" - העובד בוחר משמרת מתוך המשמרות
    שלו בסידור שפורסם (מהיום והלאה), אפשר להוסיף הערה. הבקשה נשמרת (swap_requests) וגלויה לקב"ט/מנהל.
    ================================================================ */
-const SW = { open:false, list:null, sel:null, busy:false, msg:null, error:null };
+const SW = { open:false, list:null, board:null, sel:null, busy:false, msg:null, error:null, confirm:null };
 function swKey(a){ return `${a.sector}|${a.entry_date}|${a.shift_type}`; }
 function loadSwaps(App, session){
   SW.list = [];
-  App.apiRpc("worker_swap_list", {p_token: session.token}).then(r=>{ SW.list = r || []; App.render(); }).catch(()=>{});
+  App.apiRpc("worker_swap_board", {p_token: session.token}).then(r=>{ SW.board = r || {}; SW.list = (r && r.mine) || []; App.render(); }).catch(()=>{});
+}
+function swShiftTxt(App, r){ return `${App.fmtDateHeb(r.entry_date)} · ${App.escapeHtml(App.SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${App.escapeHtml(r.sector)}`; }
+/* משמרות שמחפשות מחליף במסגרת של העובד + תיעוד החלפות (2026-10-11) */
+function renderSwapBoard(App){
+  const esc = App.escapeHtml, B = SW.board || {};
+  const open = B.open || [], hist = B.history || [];
+  let h = "";
+  if(open.length) h += `<h4 style="margin:14px 0 6px;">🔁 מחפשים מחליף</h4><div class="portal-tasks">${open.map(r=>`<div class="portal-task portal-unread">
+      <span class="portal-task-icon">🔁</span>
+      <span style="flex:1;"><b>${esc(r.worker_name)}</b> — ${swShiftTxt(App, r)}${r.note?` <span class="muted" style="font-size:.85em;">· ${esc(r.note)}</span>`:""}</span>
+      ${r.already ? `<span class="muted" style="font-size:.85em;">כבר משובץ באותה משמרת</span>`
+        : SW.confirm===r.id ? `<button class="btn small ok" data-action="portal-swap-take" data-id="${r.id}" ${SW.busy?"disabled":""}>כן, אני לוקח</button> <button class="btn small secondary" data-action="portal-swap-take-no">לא</button>`
+        : `<button class="btn small ok" data-action="portal-swap-take-ask" data-id="${r.id}">לוקח את המשמרת</button>`}
+    </div>`).join("")}</div>`;
+  if(hist.length) h += `<h4 style="margin:14px 0 6px;">תיעוד החלפות</h4><div class="muted" style="font-size:.9em;line-height:1.9;">${hist.map(r=>`<div>✔ ${swShiftTxt(App, r)}: ${esc(r.from_name)} ← <b>${esc(r.to_name||"")}</b></div>`).join("")}</div>`;
+  return h;
 }
 function renderSwapPanel(App, session, rows){
   const esc = App.escapeHtml;
@@ -147,7 +163,8 @@ function renderMyShifts(App, session){
   const esc = App.escapeHtml;
   if(P.shifts===null){ loadShifts(App, session); return `<p class="muted">טוען...</p>`; }
   if(P.shiftsError) return `<p class="shortage">${esc(P.shiftsError)}</p>`;
-  if(!P.shifts.length) return `<p class="muted">אין כרגע משמרות בסידור שפורסם. כשהסידור יפורסם, המשמרות שלך יופיעו כאן.</p>`;
+  if(SW.list===null) loadSwaps(App, session);
+  if(!P.shifts.length) return `${SW.msg?`<p style="color:#1b7f3b;font-weight:600;">${esc(SW.msg)}</p>`:""}<p class="muted">אין כרגע משמרות בסידור שפורסם. כשהסידור יפורסם, המשמרות שלך יופיעו כאן.</p>${renderSwapBoard(App)}`;
   // משמרת שחוצה שני בלוקים נשמרת כשתי שורות עם אותן שעות - מוצגת פעם אחת
   const seen = new Set();
   const rows = P.shifts.filter(a=>{
@@ -158,6 +175,7 @@ function renderMyShifts(App, session){
   if(SW.list===null) loadSwaps(App, session);
   const openReq = {}; (SW.list||[]).forEach(r=>openReq[swKey(r)] = r);
   return `${SW.msg?`<p style="color:#1b7f3b;font-weight:600;">${esc(SW.msg)}</p>`:""}
+  ${(!SW.open && SW.error)?`<p class="shortage">${esc(SW.error)}</p>`:""}
   ${SW.open ? renderSwapPanel(App, session, rows) : ""}
   <div style="overflow-x:auto;"><table>
     <thead><tr><th>תאריך</th><th>משמרת</th><th>שעות</th><th>גזרה</th><th></th></tr></thead>
@@ -171,7 +189,7 @@ function renderMyShifts(App, session){
       if(req) notes.push(`<span style="color:#8a5a00;font-weight:600;">⏳ ביקשת חילוף</span> <button class="btn small secondary" data-action="portal-swap-cancel" data-id="${req.id}">בטל בקשה</button>`);
       return `<tr><td>${App.fmtDateHeb(a.entry_date)}</td><td>${esc(label)}</td><td>${hoursOf(App, a)}</td><td>${esc(a.sector)}</td><td class="muted">${notes.join(" · ")}</td></tr>`;
     }).join("")}</tbody>
-  </table></div>`;
+  </table></div>${renderSwapBoard(App)}`;
 }
 
 /* ================================================================
@@ -1135,11 +1153,22 @@ function renderPView(App){
         <span class="portal-task-icon">🔁</span>
         <span style="flex:1;"><b>${esc(r.worker_name)}</b> — ${App.fmtDateHeb(r.entry_date)} · ${esc(App.SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${esc(r.sector)}
           <span class="muted" style="font-size:.85em;display:block;">${r.requested_by_kind==="w"?"ביקש בעצמו":"נפתח ע\"י "+esc(r.requested_by_name||"מנהל")}${r.note?` · ${esc(r.note)}`:""}</span></span>
-        <button class="btn small secondary" data-action="portal-swapm-cancel" data-id="${r.id}">בטל</button></div>`).join("")}</div><hr style="border:none;border-top:1px solid #e3e9f0;margin:14px 0;">` : "";
+        <button class="btn small ok" data-action="portal-swapm-handle" data-id="${r.id}">טופל</button>
+        <button class="btn small secondary" data-action="portal-swapm-cancel" data-id="${r.id}">בטל</button></div>
+        ${S2.handle===r.id ? `<div class="portal-qbox" style="margin-top:-4px;">
+          <div style="font-weight:700;margin-bottom:6px;">מי החליף את ${esc(r.worker_name)}?</div>
+          ${S2.cands===null ? `<p class="muted">טוען...</p>` : !S2.cands.length ? `<p class="muted">אין עובדים זמינים בגזרה.</p>`
+            : S2.cands.map(c=>`<label class="portal-opt"><input type="radio" name="swh" data-action="portal-swapm-hsel" data-w="${c.id}" ${S2.hsel===c.id?"checked":""}> ${esc(c.name)}${c.busy_same_day?' <span class="muted" style="font-size:.85em;">(משובץ למשמרת אחרת באותו יום)</span>':""}</label>`).join("")}
+          <div class="flexbar" style="margin-top:8px;"><button class="btn ok" data-action="portal-swapm-resolve" data-id="${r.id}" ${PV.busy?"disabled":""}>שמור ועדכן את הסידור</button>
+          <button class="btn secondary" data-action="portal-swapm-hclose">ביטול</button></div></div>` : ""}`).join("")}</div><hr style="border:none;border-top:1px solid #e3e9f0;margin:14px 0;">` : "";
+    if(S2.hist===undefined){ S2.hist = null; const today = App.fmtDate(new Date());
+      const secs = S2.teamId ? App.sectorGroupForTeam(App.teamById(S2.teamId)).citySectors : [].concat(...mgrScopeGroups(App, ms).map(g=>App.sectorGroupForTeam(App.teamById(g.id)).citySectors));
+      App.apiRpc("swap_history", {p_sectors: secs, p_from: App.fmtDate(App.addDays(new Date(), -14)), p_to: App.fmtDate(App.addDays(new Date(), 90))}).then(r=>{ S2.hist = r||[]; App.render(); }).catch(()=>{ S2.hist = []; }); }
+    const histHtml = (S2.hist && S2.hist.length) ? `<h3 style="margin-top:18px;">תיעוד החלפות</h3><div class="muted" style="font-size:.9em;line-height:1.9;">${S2.hist.map(r=>`<div>✔ ${App.fmtDateHeb(r.entry_date)} · ${esc(App.SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${esc(r.sector)}: ${esc(r.from_name)} ← <b>${esc(r.to_name||"")}</b> <span style="font-size:.85em;">(${r.by_kind==="m"?"סומן ע\"י "+esc(r.by_name||""):"לקח בעצמו"})</span></div>`).join("")}</div>` : "";
     if(!S2.teamId){
       const groups = mgrScopeGroups(App, ms);
-      return wrap(`<h2>🔁 מבקש חילוף</h2>${msgs}${openHtml}<p class="muted">בחרו קבוצת גזרות:</p>
-        <div class="grid-teams">${groups.map(g=>`<div class="team-tile" data-action="portal-swapm-team" data-id="${g.id}">${esc(g.label)}</div>`).join("")}</div>`);
+      return wrap(`<h2>🔁 מבקש חילוף</h2>${msgs}${openHtml}<p class="muted">לפתיחת בקשה חדשה — בחרו קבוצת גזרות:</p>
+        <div class="grid-teams">${groups.map(g=>`<div class="team-tile" data-action="portal-swapm-team" data-id="${g.id}">${esc(g.label)}</div>`).join("")}</div>${histHtml}`);
     }
     const team = App.teamById(S2.teamId), group = App.sectorGroupForTeam(team);
     const sectors = group.citySectors;
@@ -1161,7 +1190,7 @@ function renderPView(App){
     }
     return wrap(`<h2>🔁 מבקש חילוף — ${esc(group.label)}</h2>${msgs}${openHtml}
       ${sectors.length>1 ? `<div class="chip-opts" style="margin-bottom:10px;">${sectors.map(c=>`<div class="chip ${S2.sector===c?"on":""}" data-action="portal-swapm-sector" data-s="${esc(c)}">${esc(c)}</div>`).join("")}</div>` : ""}
-      ${S2.sector ? `<p class="muted" style="margin-top:0;">בחרו את המשמרת להחלפה (סידור שפורסם, מהיום והלאה):</p>${body}` : `<p class="muted">בחרו גזרה.</p>`}`);
+      ${S2.sector ? `<p class="muted" style="margin-top:0;">בחרו את המשמרת להחלפה (סידור שפורסם, מהיום והלאה):</p>${body}` : `<p class="muted">בחרו גזרה.</p>`}${histHtml}`);
   }
   if(pg==="trn-results"){
     if(needLoad("trn_results_recent", {p_token:tok})) return loading();
@@ -1617,6 +1646,7 @@ async function onChangeTraining(App, e){
   const t = e.target, a = t.dataset.action;
   if(a==="portal-swap-sel"){ SW.sel = t.dataset.k; SW.error = null; return; }
   if(a==="portal-swapm-sel"){ if(PV.swap) PV.swap.sel = t.dataset.k; PV.error = null; return; }
+  if(a==="portal-swapm-hsel"){ if(PV.swap) PV.swap.hsel = t.dataset.w; PV.error = null; return; }
   if(a==="portal-quiz-answer"){ if(T.quiz){ T.quiz.answers[+t.dataset.q] = +t.dataset.o; T.quiz.error = null; } return; }
   const ms = loadMgr(App); if(!ms) return;
   if(a==="portal-quiz-file"){ return loadQuizFile(App, t.files && t.files[0]); }
@@ -1668,6 +1698,42 @@ function renderSection(App, view){
    ================================================================ */
 function mgrTeams(App, ids){
   return (ids||[]).map(App.teamById).filter(Boolean).sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
+}
+/* התראות לטלפון למנהלים (2026-10-11) - לא חובה, כרטיס קטן בבית המנהל עד שמפעילים */
+const MN = { state:null, busy:false, error:null };
+async function checkMgrPush(App, ms){
+  try{
+    if(!pushSupported()){ MN.state = (isIOS() && !isStandalone()) ? "ios-install" : "unsupported"; return App.render(); }
+    if(Notification.permission==="denied"){ MN.state = "denied"; return App.render(); }
+    const reg = await swReg(); const sub = await reg.pushManager.getSubscription();
+    MN.state = (sub && Notification.permission==="granted" && await App.apiRpc("manager_push_status", {p_token:ms.token, p_endpoint:sub.endpoint})) ? "on" : "off";
+  }catch(e){ MN.state = "off"; }
+  App.render();
+}
+async function enableMgrPush(App, ms){
+  MN.busy = true; MN.error = null; App.render();
+  try{
+    const perm = await Notification.requestPermission();
+    if(perm !== "granted"){ MN.state = perm==="denied" ? "denied" : "off"; MN.busy = false; return App.render(); }
+    const key = await App.apiRpc("push_public_key", {});
+    const reg = await swReg(); await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if(!sub) sub = await reg.pushManager.subscribe({userVisibleOnly:true, applicationServerKey:b64ToU8(key)});
+    const j = sub.toJSON();
+    await App.apiRpc("manager_push_subscribe", {p_token:ms.token, p_endpoint:j.endpoint, p_p256dh:j.keys.p256dh, p_auth:j.keys.auth});
+    MN.state = "on";
+  }catch(e){ MN.error = "לא הצלחנו להפעיל התראות: " + e.message; }
+  MN.busy = false; App.render();
+}
+function mgrPushCard(App, ms){
+  if(MN.state===null){ MN.state = "checking"; checkMgrPush(App, ms); return ""; }
+  if(MN.state==="on" || MN.state==="checking" || MN.state==="unsupported") return "";
+  const body = MN.state==="ios-install" ? `<p style="margin:6px 0;">באייפון: שיתוף ⬆️ ← "הוסף למסך הבית", ואז לפתוח מהאייקון ולהפעיל.</p>`
+    : MN.state==="denied" ? `<p style="margin:6px 0;">ההתראות חסומות בדפדפן — יש לאפשר אותן בהגדרות ולרענן.</p>`
+    : `<p style="margin:6px 0;">קבלו התראה מיד כשמאבטח מבקש חילוף או כשמשמרת מוחלפת.</p>
+       <button class="btn ok" data-action="portal-mgr-push-enable" ${MN.busy?"disabled":""}>🔔 הפעלת התראות</button>
+       <p style="margin-top:8px;font-weight:800;">המערכת לא אוספת מהטלפון מידע אישי או מיקום</p>${MN.error?`<p class="shortage">${App.escapeHtml(MN.error)}</p>`:""}`;
+  return `<div class="card" style="border-color:#0c3a6e;"><h3 style="margin-top:0;">📲 התראות לטלפון</h3>${body}</div>`;
 }
 function mgrScopeGroups(App, ms){
   const ids = new Set([].concat(ms.schedule_team_ids||[], ms.logistics_team_ids||[]));
@@ -1734,6 +1800,7 @@ function renderManagerHome(App, ms){
       <button class="btn small secondary" data-action="portal-mgr-logout">יציאה</button>
     </div>
   </div>
+  ${mgrPushCard(App, ms)}
   ${sched.length? `<div class="card">
     <h3>סידור עבודה</h3>
     <p class="muted" style="margin-top:-6px;">${names(sched)}</p>
@@ -1853,10 +1920,25 @@ function onClick(App, a, el){
       .then(()=>{ PV.busy = false; PV.msg = "בקשת החילוף נשמרה."; S2.sel = null; S2.list = null; App.render(); })
       .catch(e=>{ PV.busy = false; PV.error = e.message; App.render(); });
   }
+  if(a==="portal-swapm-handle"){
+    const ms = loadMgr(App); const S2 = PV.swap; if(!ms || !S2) return App.render();
+    S2.handle = el.dataset.id; S2.cands = null; S2.hsel = null; PV.error = null; App.render();
+    return App.apiRpc("mgr_swap_candidates", {p_token:ms.token, p_id:el.dataset.id}).then(r=>{ S2.cands = r||[]; App.render(); }).catch(e=>{ S2.cands = []; PV.error = e.message; App.render(); });
+  }
+  if(a==="portal-swapm-hclose"){ if(PV.swap){ PV.swap.handle = null; } return App.render(); }
+  if(a==="portal-swapm-resolve"){
+    const ms = loadMgr(App); const S2 = PV.swap; if(!ms || !S2) return App.render();
+    if(!S2.hsel){ PV.error = "יש לבחור מי החליף"; PV.msg = null; return App.render(); }
+    PV.busy = true; PV.error = null; App.render();
+    return App.apiRpc("mgr_swap_resolve", {p_token:ms.token, p_id:el.dataset.id, p_new_worker:S2.hsel})
+      .then(r=>{ PV.busy = false; PV.msg = `טופל — ${r && r.new_worker ? r.new_worker + " שובץ במשמרת, והסידור עודכן." : "הסידור עודכן."}`; S2.handle = null; S2.list = null; S2.hist = undefined; S2.rows = null; App.render(); })
+      .catch(e=>{ PV.busy = false; PV.error = e.message; App.render(); });
+  }
   if(a==="portal-swapm-cancel"){
     const ms = loadMgr(App); if(!ms) return App.render();
     return App.apiRpc("mgr_swap_cancel", {p_token:ms.token, p_id:el.dataset.id}).then(()=>{ if(PV.swap) PV.swap.list = null; PV.msg = "הבקשה בוטלה."; App.render(); }).catch(e=>{ PV.error = e.message; App.render(); });
   }
+  if(a==="portal-mgr-push-enable"){ const ms = loadMgr(App); if(ms && !MN.busy) enableMgrPush(App, ms); return; }
   if(a==="portal-mgr-view"){ if(!loadMgr(App)) return App.render(); S.view = "mgrview"; S.ui = {teamId: el.dataset.id}; return App.render(); }
   if(a==="portal-pick"){ P.selectedId = el.dataset.id; P.code=""; P.error=null; return App.render(); }
   if(a==="portal-unpick"){ P.selectedId = null; P.code=""; P.error=null; return App.render(); }
@@ -1881,7 +1963,7 @@ function onClick(App, a, el){
   if(a==="portal-mgr-logout"){
     const ms = loadMgr(App);
     if(ms) App.apiRpc("manager_logout", {p_token: ms.token}).catch(()=>{});
-    saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null;
+    saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null; MN.state = null;
     S.view = "home"; S.ui = {};
     return App.render();
   }
@@ -1896,6 +1978,15 @@ function onClick(App, a, el){
     return App.apiRpc("worker_swap_request", {p_token:s.token, p_sector:sector, p_date:date, p_shift_type:shiftType, p_note: noteEl ? noteEl.value : ""})
       .then(()=>{ SW.busy = false; SW.open = false; SW.msg = "בקשת החילוף נשלחה."; SW.list = null; App.render(); })
       .catch(e=>{ SW.busy = false; SW.error = e.message; App.render(); });
+  }
+  if(a==="portal-swap-take-ask"){ SW.confirm = el.dataset.id; return App.render(); }
+  if(a==="portal-swap-take-no"){ SW.confirm = null; return App.render(); }
+  if(a==="portal-swap-take"){
+    const s = loadSession(App); if(!s) return App.render();
+    SW.busy = true; App.render();
+    return App.apiRpc("worker_swap_take", {p_token:s.token, p_id:el.dataset.id})
+      .then(()=>{ SW.busy = false; SW.confirm = null; SW.msg = "✔ המשמרת עברה אליך ועודכנה בסידור."; SW.list = null; P.shifts = null; App.render(); })
+      .catch(e=>{ SW.busy = false; SW.confirm = null; SW.msg = null; SW.error = e.message; SW.list = null; App.render(); });
   }
   if(a==="portal-swap-cancel"){
     const s = loadSession(App); if(!s) return App.render();
