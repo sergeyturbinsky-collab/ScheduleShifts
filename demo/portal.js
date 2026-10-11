@@ -1014,14 +1014,15 @@ function renderIsraelDashboard(App, ms){
 /* ---------- עמודי משנה (view "pview") ---------- */
 const PV_TITLES = { "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
-  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום" };
+  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
 function pvGo(App, page, args, push){
   if(push !== false && App.S.view==="pview" && PV.page) PV.stack.push({page:PV.page, args:PV.args});
   if(App.S.view!=="pview") PV.stack = [];
   PV.page = page; PV.args = args||{}; PV.data = null; PV.posts = null; PV.seenSent = false; PV.msg = null; PV.error = null; PV.busy = false;
   if(page==="trn-control-new" || page==="trn-post-new") PV.form = {};
-  if(page==="trn-quiz-new") PV.quiz = null;
+  if(page==="trn-quiz-new" || page==="trn-quiz-edit") PV.quiz = null;
+  PV.delAsk = false;
   if(page==="swap-mgr") PV.swap = null;
   App.S.view = "pview"; App.S.ui = {};
   App.render();
@@ -1080,6 +1081,17 @@ function renderPView(App){
     const done = ws.filter(w=>w.passed).length;
     return wrap(`<h2>${esc(r.training?r.training.title:"")}</h2>
       <p class="muted">פורסמה ${fmtD(App, r.training&&r.training.published_at)} · <b>${pct(done, ws.length)}%</b> ביצעו (${done} מתוך ${ws.length})</p>
+      ${msgs}
+      ${r.training && r.training.active===false ? `<div class="note-box">🗂 הבוחן נמחק${r.training.deleted_by?` ע"י ${esc(r.training.deleted_by)}`:""} ב-${fmtDT(App, r.training.deleted_at)} — המאבטחים לא רואים אותו. <span class="backlink" data-action="portal-pv" data-page="trn-quiz-view" data-id="${a.id}">לעותק השמור ולשחזור</span></div>` : `
+      <div class="flexbar" style="gap:6px;flex-wrap:wrap;margin:4px 0 6px;">
+        <button class="btn small" data-action="portal-pv" data-page="trn-quiz-edit" data-id="${a.id}">✏️ עריכת הבוחן</button>
+        <button class="btn small secondary" data-action="portal-pv" data-page="trn-quiz-view" data-id="${a.id}">👁 צפייה בשאלות ובגרסאות</button>
+        ${PV.delAsk ? `<span style="font-weight:600;">להוריד את הבוחן מהמאבטחים?</span>
+            <button class="btn small" style="background:#b42318;border-color:#b42318;" data-action="portal-quiz-delete" data-id="${a.id}" ${PV.busy?"disabled":""}>כן, מחק</button>
+            <button class="btn small secondary" data-action="portal-quiz-delete-no">לא</button>`
+          : `<button class="btn small secondary" data-action="portal-quiz-delete-ask">🗑 מחיקת הבוחן</button>`}
+      </div>
+      <p class="muted" style="font-size:.85em;margin-top:0;">מחיקה מורידה את הבוחן מהמאבטחים. עותק של הבוחן, התוצאות וכל הניסיונות נשמר בהיסטוריה, ואפשר לשחזר.</p>`}
       <h3 style="margin-bottom:0;">מי שטרם ביצע</h3>
       ${notDoneByKabatHtml(App, ws, w=>w.passed, "טרם ביצעו")}`);
   }
@@ -1227,39 +1239,86 @@ function renderPView(App){
           <div class="portal-dtile-n">${cs.length}</div><div class="portal-dtile-s">${cs.length?`צפייה ממוצעת ${avg(cs,p=>p.viewed||0,p=>p.workers_total||0)}%`:"עדיין אין תכנים"}</div></div>
       </div>`);
   }
-  if(pg==="trn-quiz-new"){
+  if(pg==="trn-quiz-new" || pg==="trn-quiz-edit"){
+    const isEdit = pg==="trn-quiz-edit";
+    if(isEdit){
+      if(needLoad("trn_quiz_get", {p_token:tok, p_id:a.id})) return loading();
+      const r = PV.data.r;
+      if(!r || !r.questions) return wrap(`<h2>עריכת בוחן</h2><p class="muted">לבוחן הזה אין שאלות לעריכה.</p>`);
+      if(!r.active) return wrap(`<h2>עריכת בוחן</h2><p class="shortage">הבוחן נמחק. כדי לערוך — קודם לשחזר אותו (בעמוד הצפייה בבוחן).</p>`);
+      if(!PV.quiz || PV.quiz.editId!==a.id) PV.quiz = {editId:a.id, title:r.title||"", questions: JSON.parse(JSON.stringify(r.questions)), fileName:"", busy:false, passed:r.passed||0};
+    }
     const Q = PV.quiz || (PV.quiz = {title:"", questions:null, fileName:"", busy:false});
     const qs = Q.questions;
     const missing = qs ? qs.map((q,i)=>q.correct==null?i+1:0).filter(Boolean) : [];
-    return wrap(`<h2>בוחן חדש מקובץ וורד</h2>${msgs}
+    return wrap(`<h2>${isEdit?"עריכת בוחן":"בוחן חדש מקובץ וורד"}</h2>${msgs}
       <div class="field"><label>שם הבוחן</label><input type="text" id="quizTitle" maxlength="200" value="${esc(Q.title)}" placeholder="למשל: נהלי שער צפוני"></div>
       <div class="portal-drop" data-drop="quiz">
-        <div style="font-weight:700;">גררו לכאן קובץ וורד (docx) של שאלות ותשובות</div>
+        <div style="font-weight:700;">${isEdit?"להחלפת כל השאלות — גררו לכאן קובץ וורד חדש (לא חובה)":"גררו לכאן קובץ וורד (docx) של שאלות ותשובות"}</div>
         <div class="muted" style="font-size:.85em;margin:4px 0 8px;">בכל שאלה — סמנו את התשובה הנכונה בהדגשה, בצבע/מרקר, בקו תחתון, או בכוכבית (*) לפניה או אחריה. התשובות יכולות להיות כל אחת בשורה משלה או באותה שורה (א. ... ב. ... ג. ...)</div>
         <label class="btn small secondary" style="cursor:pointer;">בחרו קובץ<input type="file" accept=".docx" data-action="portal-quiz-file" style="display:none;"></label>
         ${Q.fileName?`<div style="margin-top:8px;">📄 ${esc(Q.fileName)}</div>`:""}
       </div>
       ${Q.busy?'<p class="muted">קורא את הקובץ...</p>':""}
+      ${!qs && !isEdit ? `<p style="margin-top:10px;"><button class="btn small secondary" data-action="portal-quiz-addq">✍️ או כתיבת בוחן ידנית, בלי קובץ</button></p>` : ""}
       ${qs ? `
-        <h3 style="margin-top:16px;">בדיקה לפני פרסום — ${qs.length} שאלות</h3>
-        <p class="muted" style="margin-top:-6px;">התשובה הנכונה מסומנת בירוק, כפי שזוהתה בקובץ. אפשר לתקן בלחיצה על תשובה אחרת. המאבטחים לא יראו את הסימון.</p>
-        ${missing.length?`<p class="shortage">לא זוהתה תשובה נכונה בשאלות: ${missing.join(", ")} — סמנו אותה ידנית.</p>`:""}
+        <h3 style="margin-top:16px;">${isEdit?"השאלות":"בדיקה לפני פרסום"} — ${qs.length} שאלות</h3>
+        <p class="muted" style="margin-top:-6px;">העיגול הירוק = התשובה הנכונה. אפשר לשנות אותה בלחיצה, לתקן כל טקסט, להוסיף או להסיר שאלות ותשובות. המאבטחים לא יראו את הסימון.</p>
+        ${missing.length?`<p class="shortage">לא סומנה תשובה נכונה בשאלות: ${missing.join(", ")} — סמנו אותה.</p>`:""}
         ${qs.map((q,i)=>`<div class="portal-qbox${q.correct==null?" bad":""}">
-          <div class="flexbar" style="justify-content:space-between;align-items:flex-start;">
-            <div style="font-weight:700;">${i+1}. ${esc(q.q)}</div>
-            <button class="btn small secondary" data-action="portal-quiz-del" data-q="${i}">הסר</button>
+          <div class="flexbar" style="gap:6px;align-items:flex-start;">
+            <b style="padding-top:6px;">${i+1}.</b>
+            <textarea id="qzq_${i}" rows="2" style="flex:1;min-width:0;">${esc(q.q)}</textarea>
+            <button class="btn small secondary" data-action="portal-quiz-del" data-q="${i}">הסר שאלה</button>
           </div>
-          ${q.options.map((o,j)=>`<label class="portal-opt${q.correct===j?" right":""}"><input type="radio" name="qzc_${i}" data-action="portal-quiz-correct" data-q="${i}" data-o="${j}" ${q.correct===j?"checked":""}> ${esc(o)}</label>`).join("")}
-          ${q.options.length<2?'<p class="shortage" style="margin:4px 0 0;">פחות משתי תשובות — בדקו את הקובץ</p>':""}
+          ${q.options.map((o,j)=>`<div class="portal-opt${q.correct===j?" right":""}" style="display:flex;gap:6px;align-items:center;">
+            <input type="radio" name="qzc_${i}" data-action="portal-quiz-correct" data-q="${i}" data-o="${j}" ${q.correct===j?"checked":""} title="התשובה הנכונה">
+            <input type="text" id="qzo_${i}_${j}" value="${esc(o)}" style="flex:1;min-width:0;">
+            ${q.options.length>2?`<button class="btn small secondary" data-action="portal-quiz-delopt" data-q="${i}" data-o="${j}" title="הסר תשובה">✕</button>`:""}
+          </div>`).join("")}
+          ${q.options.length<10?`<button class="btn small secondary" data-action="portal-quiz-addopt" data-q="${i}" style="margin-top:4px;">+ תשובה</button>`:""}
         </div>`).join("")}
-        <p class="muted">שום דבר לא עולה ולא נשלח עד הלחיצה על "פרסם".</p>
-        <button class="btn ok" data-action="portal-quiz-publish" ${PV.busy||missing.length||!qs.length?"disabled":""}>📢 פרסם בוחן</button>` : ""}`);
+        <button class="btn small secondary" data-action="portal-quiz-addq">+ שאלה חדשה</button>
+        ${isEdit ? `
+          <label style="display:block;margin:14px 0 6px;"><input type="checkbox" id="quizReset" ${Q.reset?"checked":""}> לחייב את כל המאבטחים לענות מחדש${Q.passed?` (כרגע ${Q.passed} עברו)`:""}</label>
+          <p class="muted" style="font-size:.85em;">בלי הסימון — מי שכבר עבר נשאר "עבר". הגרסה הקודמת של הבוחן נשמרת בהיסטוריה.</p>
+          <div class="flexbar" style="gap:6px;"><button class="btn ok" data-action="portal-quiz-save" ${PV.busy||missing.length||!qs.length?"disabled":""}>💾 שמור שינויים</button>
+          <button class="btn secondary" data-action="portal-pv-back">ביטול</button></div>`
+        : `<p class="muted">שום דבר לא עולה ולא נשלח עד הלחיצה על "פרסם".</p>
+        <button class="btn ok" data-action="portal-quiz-publish" ${PV.busy||missing.length||!qs.length?"disabled":""}>📢 פרסם בוחן</button>`}` : ""}`);
+  }
+  if(pg==="trn-quiz-view"){
+    if(needLoad("trn_quiz_get", {p_token:tok, p_id:a.id, p_version: a.ver ? Number(a.ver) : null})) return loading();
+    const r = PV.data.r;
+    if(!r) return wrap(`<p class="muted">הבוחן לא נמצא.</p>`);
+    const qs = r.questions || [];
+    return wrap(`<h2>${esc(r.title||"")}</h2>${msgs}
+      <p class="muted" style="margin-top:-6px;">פורסם ${fmtD(App, r.published_at)}${r.updated_at?` · נערך ${fmtDT(App, r.updated_at)}`:""} · ${r.passed||0} עברו · ${r.attempts||0} ניסיונות</p>
+      ${!r.active ? `<div class="note-box">🗂 הבוחן נמחק${r.deleted_by?` ע"י ${esc(r.deleted_by)}`:""}${r.deleted_at?` ב-${fmtDT(App, r.deleted_at)}`:""}. המאבטחים לא רואים אותו. זה העותק השמור.
+          <div style="margin-top:6px;"><button class="btn small ok" data-action="portal-quiz-restore" data-id="${r.id}" ${PV.busy?"disabled":""}>♻️ שחזר והחזר למאבטחים</button></div></div>` : ""}
+      ${r.version ? `<div class="note-box">גרסה קודמת — נשמרה ${fmtDT(App, r.version.saved_at)}${r.version.saved_by?` ע"י ${esc(r.version.saved_by)}`:""} (${esc(r.version.reason||"")}). <span class="backlink" data-action="portal-pv" data-page="trn-quiz-view" data-id="${r.id}">לגרסה הנוכחית</span></div>` : ""}
+      ${r.active && !r.version ? `<div class="flexbar" style="gap:6px;margin-bottom:8px;"><button class="btn small" data-action="portal-pv" data-page="trn-quiz-edit" data-id="${r.id}">✏️ עריכה</button></div>` : ""}
+      ${qs.map((q,i)=>`<div class="portal-qbox"><div style="font-weight:700;">${i+1}. ${esc(q.q)}</div>
+        ${(q.options||[]).map((o,j)=>`<div class="portal-opt${q.correct===j?" right":""}">${q.correct===j?"✔ ":""}${esc(o)}</div>`).join("")}</div>`).join("") || '<p class="muted">אין שאלות.</p>'}
+      ${(r.versions||[]).length ? `<h3 style="margin-top:16px;">גרסאות קודמות</h3><div class="portal-tasks">${r.versions.map(v=>`<div class="portal-task" data-action="portal-pv" data-page="trn-quiz-view" data-id="${r.id}" data-ver="${v.id}">
+          <span class="portal-task-icon">🕘</span><span>${fmtDT(App, v.saved_at)} · ${esc(v.title||"")} <span class="muted" style="font-size:.85em;">${v.count} שאלות · ${esc(v.reason||"")}${v.saved_by?` · ${esc(v.saved_by)}`:""}</span></span></div>`).join("")}</div>` : ""}`);
+  }
+  if(pg==="trn-quiz-history"){
+    if(needLoad("trn_quiz_history", {p_token:tok})) return loading();
+    const hs = PV.data.r || [];
+    return wrap(`<h2>היסטוריית בחנים שנמחקו</h2>${msgs}
+      <p class="muted" style="margin-top:-6px;">בחנים שהורדו מהמאבטחים. העותק המלא — השאלות, התוצאות והניסיונות — נשמר כאן, ואפשר לשחזר.</p>
+      ${hs.length ? `<div class="portal-tasks">${hs.map(h=>`<div class="portal-task" data-action="portal-pv" data-page="trn-quiz-view" data-id="${h.id}">
+        <span class="portal-task-icon">🗂</span>
+        <span><span style="font-weight:600;">${esc(h.title)}</span> <span class="muted" style="font-size:.85em;display:block;">פורסם ${fmtD(App,h.published_at)} · נמחק ${fmtDT(App,h.deleted_at)}${h.deleted_by?` ע"י ${esc(h.deleted_by)}`:""} · ${h.questions} שאלות · ${h.passed} עברו · ${h.attempts} ניסיונות</span></span></div>`).join("")}</div>`
+        : `<p class="muted">אין בחנים שנמחקו.</p>`}`);
   }
   if(pg==="trn-lomdas"){
     if(needLoad("trn_overview", {p_token:tok})) return loading();
     const trs = (PV.data.r && PV.data.r.trainings) || [];
     return wrap(`<div class="flexbar" style="justify-content:space-between;"><h2 style="margin:0;">לומדה ובחנים</h2>
-      <button class="btn small" data-action="portal-pv" data-page="trn-quiz-new">+ בוחן חדש מקובץ וורד</button></div><div style="height:10px;"></div>
+      <span class="flexbar" style="gap:6px;"><button class="btn small" data-action="portal-pv" data-page="trn-quiz-new">+ בוחן חדש מקובץ וורד</button>
+      <button class="btn small secondary" data-action="portal-pv" data-page="trn-quiz-history">🗂 בחנים שנמחקו</button></span></div><div style="height:10px;"></div>
       ${trs.length ? `<div class="portal-tasks">${trs.map(t=>`<div class="portal-task" data-action="portal-pv" data-page="trn-training" data-id="${t.id}">
         <span class="portal-pct">${pct(t.passed,t.eligible)}%</span>
         <span><span style="font-weight:600;">${esc(t.title)}</span> <span class="muted" style="font-size:.85em;">${t.passed} מתוך ${t.eligible} מאבטחים ביצעו · פורסמה ${fmtD(App,t.published_at)}</span></span></div>`).join("")}</div>`
@@ -1538,10 +1597,31 @@ async function parseQuizDocx(buf){
   return parseQuizParagraphs(docxParagraphs(files["word/document.xml"], docxNumFormats(files["word/numbering.xml"])));
 }
 
+/* קורא את מה שהוקלד בעורך הבוחן (כותרת, שאלות, תשובות) לתוך PV.quiz - לפני כל פעולה שמרנדרת מחדש */
+function syncQuiz(){
+  const Q = PV.quiz; if(!Q) return null;
+  const tEl = document.getElementById("quizTitle"); if(tEl) Q.title = tEl.value;
+  const rEl = document.getElementById("quizReset"); if(rEl) Q.reset = rEl.checked;
+  (Q.questions||[]).forEach((q,i)=>{
+    const qe = document.getElementById("qzq_"+i); if(qe) q.q = qe.value;
+    q.options = q.options.map((o,j)=>{ const oe = document.getElementById(`qzo_${i}_${j}`); return oe ? oe.value : o; });
+  });
+  return Q;
+}
+function quizProblem(Q){
+  if(!Q.title.trim()) return "יש לתת שם לבוחן";
+  for(let i=0;i<Q.questions.length;i++){
+    const q = Q.questions[i];
+    if(!String(q.q).trim()) return `שאלה ${i+1}: חסר טקסט לשאלה`;
+    if(q.options.length<2) return `שאלה ${i+1}: צריך לפחות שתי תשובות`;
+    if(q.options.some(o=>!String(o).trim())) return `שאלה ${i+1}: יש תשובה ריקה`;
+    if(q.correct==null) return `שאלה ${i+1}: לא סומנה תשובה נכונה`;
+  }
+  return null;
+}
 async function loadQuizFile(App, file){
   if(!file) return;
-  const Q = PV.quiz || (PV.quiz = {title:"", questions:null, fileName:"", busy:false});
-  const tEl = document.getElementById("quizTitle"); if(tEl) Q.title = tEl.value;
+  const Q = syncQuiz() || (PV.quiz = {title:"", questions:null, fileName:"", busy:false});
   PV.error = null; PV.msg = null;
   if(!/\.docx$/i.test(file.name)){ PV.error = "יש לבחור קובץ וורד מסוג docx (בוורד: שמירה בשם ← Word Document)"; return App.render(); }
   Q.busy = true; Q.fileName = file.name; App.render();
@@ -1563,17 +1643,34 @@ async function trnAction(App, a, el){
       PV.data = null; I.data = null; PV.msg = null; return App.render();
     }
     if(a==="portal-quiz-publish"){
-      const Q = PV.quiz; if(!Q || !Q.questions) return;
-      const tEl = document.getElementById("quizTitle"); if(tEl) Q.title = tEl.value;
-      if(!Q.title.trim()){ PV.error = "יש לתת שם לבוחן"; return App.render(); }
+      const Q = syncQuiz(); if(!Q || !Q.questions) return;
+      const prob = quizProblem(Q); if(prob){ PV.error = prob; return App.render(); }
       PV.busy = true; PV.error = null; App.render();
       await App.apiRpc("trn_training_create", {p_token:tok, p_title:Q.title, p_questions: Q.questions.map(q=>({q:q.q, options:q.options, correct:q.correct}))});
       PV.busy = false; PV.quiz = null; I.data = null;
       pvBack(App); PV.msg = "הבוחן פורסם. המאבטחים קיבלו אותו כמשימה."; return App.render();
     }
     if(a==="portal-quiz-del"){
-      const Q = PV.quiz; const tEl = document.getElementById("quizTitle"); if(tEl) Q.title = tEl.value;
-      Q.questions.splice(+el.dataset.q, 1); return App.render();
+      const Q = syncQuiz(); Q.questions.splice(+el.dataset.q, 1); return App.render();
+    }
+    if(a==="portal-quiz-save"){
+      const Q = syncQuiz(); if(!Q || !Q.questions || !Q.editId) return;
+      const prob = quizProblem(Q); if(prob){ PV.error = prob; return App.render(); }
+      PV.busy = true; PV.error = null; App.render();
+      const r = await App.apiRpc("trn_training_update", {p_token:tok, p_id:Q.editId, p_title:Q.title, p_questions: Q.questions.map(q=>({q:String(q.q).trim(), options:q.options.map(o=>String(o).trim()), correct:q.correct})), p_reset: !!Q.reset});
+      PV.busy = false; PV.quiz = null; I.data = null;
+      pvBack(App); PV.msg = "הבוחן עודכן." + (Q.reset ? ` כל המאבטחים יצטרכו לענות מחדש (אופס ל-${(r&&r.reset)||0}), ונשלחה להם התראה.` : "") + " הגרסה הקודמת נשמרה בהיסטוריה."; return App.render();
+    }
+    if(a==="portal-quiz-delete"){
+      PV.busy = true; PV.error = null; App.render();
+      await App.apiRpc("trn_training_delete", {p_token:tok, p_id:el.dataset.id});
+      PV.busy = false; PV.delAsk = false; I.data = null;
+      pvBack(App); PV.msg = "הבוחן הוסר מהמאבטחים. עותק נשמר ב\"בחנים שנמחקו\"."; return App.render();
+    }
+    if(a==="portal-quiz-restore"){
+      PV.busy = true; PV.error = null; App.render();
+      await App.apiRpc("trn_training_restore", {p_token:tok, p_id:el.dataset.id});
+      PV.busy = false; PV.data = null; I.data = null; PV.msg = "הבוחן שוחזר וחזר למאבטחים."; return App.render();
     }
     if(a==="portal-onb-complete"){
       el.disabled = true;
@@ -1645,7 +1742,7 @@ function onDrag(App, e){
   e.preventDefault();
   if(e.type==="dragover"){ zone.classList.add("over"); return; }
   if(e.type==="dragleave"){ zone.classList.remove("over"); return; }
-  if(e.type==="drop"){ zone.classList.remove("over"); if(PV.page==="trn-post-new" && !PV.busy) addPostFiles(App, e.dataTransfer && e.dataTransfer.files); if(PV.page==="trn-quiz-new") loadQuizFile(App, e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]); }
+  if(e.type==="drop"){ zone.classList.remove("over"); if(PV.page==="trn-post-new" && !PV.busy) addPostFiles(App, e.dataTransfer && e.dataTransfer.files); if(PV.page==="trn-quiz-new" || PV.page==="trn-quiz-edit") loadQuizFile(App, e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]); }
 }
 async function openAttachment(App, el){
   const tok = el.dataset.who==="w" ? (loadSession(App)||{}).token : (loadMgr(App)||{}).token;
@@ -1664,7 +1761,7 @@ async function onChangeTraining(App, e){
   if(a==="portal-quiz-answer"){ if(T.quiz){ T.quiz.answers[+t.dataset.q] = +t.dataset.o; T.quiz.error = null; } return; }
   const ms = loadMgr(App); if(!ms) return;
   if(a==="portal-quiz-file"){ return loadQuizFile(App, t.files && t.files[0]); }
-  if(a==="portal-quiz-correct"){ const Q = PV.quiz; const tEl = document.getElementById("quizTitle"); if(tEl) Q.title = tEl.value; Q.questions[+t.dataset.q].correct = +t.dataset.o; return App.render(); }
+  if(a==="portal-quiz-correct"){ const Q = syncQuiz(); Q.questions[+t.dataset.q].correct = +t.dataset.o; return App.render(); }
   if(a==="portal-trn-upload"){
     const files = Array.from(t.files||[]); if(!files.length) return;
     PV.busy = true; PV.error = null; PV.msg = null; App.render();
@@ -2037,13 +2134,18 @@ function onClick(App, a, el){
     const d = el.dataset;
     if(d.page==="trn-onboarding" && d.open==="1") PV.onlyOpen = true;
     if(d.page==="k-controls"){ const ms = loadMgr(App); if(ms) App.apiRpc("kabat_controls_seen", {p_token:ms.token}).catch(()=>{}); K.data = null; }
-    return pvGo(App, d.page, {id:d.id, kind:d.kind, from:d.from, name:d.name, program:d.program});
+    return pvGo(App, d.page, {id:d.id, kind:d.kind, from:d.from, name:d.name, program:d.program, ver:d.ver});
   }
   if(a==="portal-pv-back") return pvBack(App);
+  if(a==="portal-quiz-addopt"){ const Q = syncQuiz(); if(Q){ Q.questions[+el.dataset.q].options.push(""); } return App.render(); }
+  if(a==="portal-quiz-delopt"){ const Q = syncQuiz(); if(Q){ const q = Q.questions[+el.dataset.q], o = +el.dataset.o; q.options.splice(o,1); if(q.correct===o) q.correct = null; else if(q.correct>o) q.correct--; } return App.render(); }
+  if(a==="portal-quiz-addq"){ const Q = syncQuiz(); if(Q){ (Q.questions = Q.questions||[]).push({q:"", options:["",""], correct:null}); } return App.render(); }
+  if(a==="portal-quiz-delete-ask"){ PV.delAsk = true; return App.render(); }
+  if(a==="portal-quiz-delete-no"){ PV.delAsk = false; return App.render(); }
   if(a==="portal-trn-more"){ I.showAll = !I.showAll; return App.render(); }
   if(a==="portal-att-open") return openAttachment(App, el);
   if(a==="portal-post-file-remove"){ savePostFields(); (PV.form.files||[]).splice(Number(el.dataset.idx),1); return App.render(); }
-  if(a==="portal-prog-set" || a==="portal-onb-save" || a==="portal-onb-complete" || a==="portal-quiz-publish" || a==="portal-quiz-del" || a==="portal-ctl-send" || a==="portal-post-send") return trnAction(App, a, el);
+  if(a==="portal-prog-set" || a==="portal-onb-save" || a==="portal-onb-complete" || a==="portal-quiz-publish" || a==="portal-quiz-del" || a==="portal-quiz-save" || a==="portal-quiz-delete" || a==="portal-quiz-restore" || a==="portal-ctl-send" || a==="portal-post-send") return trnAction(App, a, el);
   if(a==="portal-pw-load") return pwLoad(App);
   if(a==="portal-pw-save") return pwSave(App, el.dataset.id);
   if(a==="portal-mgr-tile"){ M.tile = el.dataset.id; M.code=null; M.list=null; M.error=null; M.msg=null; return App.render(); }

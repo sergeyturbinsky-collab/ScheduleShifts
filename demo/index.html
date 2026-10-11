@@ -149,7 +149,7 @@
 <main id="app"></main>
 <footer>מערכת פנימית · חברת אבטחה · סביבת דמו</footer>
 
-<script src="portal.js?v=29"></script>
+<script src="portal.js?v=30"></script>
 <script>
 (function(){
 "use strict";
@@ -267,13 +267,17 @@ function submitOptionsForTeamDay(team, dateStr){
    זמן כניסת השבת מחושב כאן בכל פתיחה, לכל עיר בנפרד: שקיעה (חישוב אסטרונומי, NOAA) פחות דקות הדלקת
    נרות לפי המקובל בעיר (ירושלים 40, חיפה 30, שאר הערים 18 - כמו בלוחות השנה הנפוצים).
    ================================================================ */
+/* כניסת שבת לפי Google (לבקשת סרגיי, 2026-10-11: "לפי מה שכתוב כשמזינים בגוגל כניסת שבת"):
+   ירושלים 40 דק' לפני השקיעה, חיפה/בית שמש/ביתר עילית/מודיעין עילית 30, באר שבע 22 - כמו שמופיע בכרטיס של Google.
+   Google מחשב שקיעה עם תיקון גובה; elev הוא "גובה אפקטיבי" שכויל מול Google ב-19 תאריכים
+   (16/10/26, 18/12/26, 19/3/27, 18/6/27) - כולם יצאו זהים לדקה. adj = תיקון זעיר בדקות. */
 const SHABBAT_CITIES = {
-  "ירושלים":       {lat:31.778, lng:35.235, before:40},
-  "בית שמש":       {lat:31.747, lng:34.988, before:18},
-  "ביתר עילית":    {lat:31.696, lng:35.116, before:18},
-  "מודיעין עילית": {lat:31.932, lng:35.044, before:18},
-  "חיפה":          {lat:32.794, lng:34.989, before:30},
-  "באר שבע":       {lat:31.252, lng:34.791, before:18}
+  "ירושלים":       {lat:31.778, lng:35.235, before:40, elev:500},
+  "בית שמש":       {lat:31.747, lng:34.988, before:30, elev:100},
+  "ביתר עילית":    {lat:31.696, lng:35.116, before:30, elev:500},
+  "מודיעין עילית": {lat:31.932, lng:35.044, before:30, elev:200},
+  "חיפה":          {lat:32.794, lng:34.989, before:30, elev:0, adj:-0.15},
+  "באר שבע":       {lat:31.252, lng:34.791, before:22, elev:150}
 };
 function israelUtcOffsetMin(dateUtc){
   const parts = new Intl.DateTimeFormat("en-US", {timeZone:"Asia/Jerusalem", hour12:false, year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit"}).formatToParts(dateUtc);
@@ -281,27 +285,34 @@ function israelUtcOffsetMin(dateUtc){
   const asUtc = Date.UTC(g("year"), g("month")-1, g("day"), g("hour")%24, g("minute"));
   return Math.round((asUtc - dateUtc.getTime())/60000);
 }
-/* שקיעה (שעון ישראל, בדקות מחצות) לתאריך "YYYY-MM-DD" - אלגוריתם NOAA, דיוק של כדקה */
-function sunsetLocalMinutes(dateStr, lat, lng){
+/* שקיעה (שעון ישראל, בדקות מחצות, עם שבר) לתאריך "YYYY-MM-DD" - אלגוריתם NOAA המלא + תיקון גובה */
+function sunsetLocalMinutes(dateStr, lat, lng, elev){
   const [Y,M,D] = dateStr.split("-").map(Number);
   const rad = Math.PI/180;
-  const jd = Date.UTC(Y, M-1, D, 12) / 86400000 + 2440587.5;
-  const n = jd - 2451545.0 + 0.0008;
-  const Jstar = n - lng/360;
-  const Mdeg = (357.5291 + 0.98560028*Jstar) % 360;
-  const C = 1.9148*Math.sin(Mdeg*rad) + 0.02*Math.sin(2*Mdeg*rad) + 0.0003*Math.sin(3*Mdeg*rad);
-  const lambda = (Mdeg + C + 180 + 102.9372) % 360;
-  const Jtransit = 2451545.0 + Jstar + 0.0053*Math.sin(Mdeg*rad) - 0.0069*Math.sin(2*lambda*rad);
-  const decl = Math.asin(Math.sin(lambda*rad) * Math.sin(23.4397*rad));
-  const cosH = (Math.sin(-0.833*rad) - Math.sin(lat*rad)*Math.sin(decl)) / (Math.cos(lat*rad)*Math.cos(decl));
-  const H = Math.acos(Math.max(-1, Math.min(1, cosH))) / rad;
-  const Jset = Jtransit + H/360;
-  const setUtc = new Date((Jset - 2440587.5) * 86400000);
-  return (setUtc.getUTCHours()*60 + setUtc.getUTCMinutes() + setUtc.getUTCSeconds()/60 + israelUtcOffsetMin(setUtc) + 1440) % 1440;
+  const alt = -0.8333 - 2.076*Math.sqrt(elev||0)/60;
+  let t = 18*60 - lng*4; // דקות UTC, ניחוש התחלתי
+  for(let it=0; it<3; it++){
+    const jd = Date.UTC(Y, M-1, D)/86400000 + 2440587.5 + t/1440;
+    const T = (jd - 2451545)/36525;
+    const L0 = (280.46646 + T*(36000.76983 + T*0.0003032)) % 360;
+    const Mm = 357.52911 + T*(35999.05029 - 0.0001537*T);
+    const e = 0.016708634 - T*(0.000042037 + 0.0000001267*T);
+    const C = Math.sin(Mm*rad)*(1.914602 - T*(0.004817 + 0.000014*T)) + Math.sin(2*Mm*rad)*(0.019993 - 0.000101*T) + Math.sin(3*Mm*rad)*0.000289;
+    const om = 125.04 - 1934.136*T;
+    const lam = L0 + C - 0.00569 - 0.00478*Math.sin(om*rad);
+    const eps = 23 + (26 + (21.448 - T*(46.815 + T*(0.00059 - T*0.001813)))/60)/60 + 0.00256*Math.cos(om*rad);
+    const decl = Math.asin(Math.sin(eps*rad)*Math.sin(lam*rad));
+    const y = Math.tan(eps/2*rad)**2;
+    const eqt = 4/rad*(y*Math.sin(2*L0*rad) - 2*e*Math.sin(Mm*rad) + 4*e*y*Math.sin(Mm*rad)*Math.cos(2*L0*rad) - 0.5*y*y*Math.sin(4*L0*rad) - 1.25*e*e*Math.sin(2*Mm*rad));
+    const cosH = (Math.sin(alt*rad) - Math.sin(lat*rad)*Math.sin(decl)) / (Math.cos(lat*rad)*Math.cos(decl));
+    t = 720 - 4*lng - eqt + 4*Math.acos(Math.max(-1, Math.min(1, cosH)))/rad;
+  }
+  const setUtc = new Date(Date.UTC(Y, M-1, D) + Math.floor(t)*60000); // דקה שלמה - כדי שחישוב הפרש השעון לא יאבד שניות
+  return (t + israelUtcOffsetMin(setUtc) + 1440) % 1440;
 }
 function candleLightingMinutes(dateStr, sector){
   const c = SHABBAT_CITIES[sector]; if(!c) return null;
-  return Math.floor(sunsetLocalMinutes(dateStr, c.lat, c.lng)) - c.before;
+  return Math.round(sunsetLocalMinutes(dateStr, c.lat, c.lng, c.elev) + (c.adj||0)) - c.before;
 }
 function fmtMinutes(m){ const h = Math.floor(m/60), mm = Math.round(m%60); return `${String(h).padStart(2,"0")}:${String(mm).padStart(2,"0")}`; }
 /* סיום משמרת שישי בוקר: שעתיים לפני כניסת שבת, בחצאי שעות (לבקשת סרגיי, 2026-10-09):
