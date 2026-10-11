@@ -1,4 +1,4 @@
-/* Service worker של "איזור אישי" (דמו): מאפשר התקנה למסך הבית ומציג התראות פוש.
+/* Service worker של "איזור אישי": מאפשר התקנה למסך הבית ומציג התראות פוש.
    לא שומר עותק של האתר (תמיד נטען מהרשת), כדי שעדכונים יופיעו מיד. */
 self.addEventListener("install", e => self.skipWaiting());
 self.addEventListener("activate", e => e.waitUntil(self.clients.claim()));
