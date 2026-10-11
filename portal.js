@@ -1874,7 +1874,7 @@ async function loadSwapRows(App, S2){
 }
 /* צפייה בלבד בסידור עבודה (2026-10-11): למנהלים בלי הרשאת עריכה. קב"ט - הצוותים שלו; ישראל - כל הצוותים */
 function mgrViewCard(App, ms, sched){
-  if(sched.length) return ""; // מי שבונה סידור כבר רואה אותו
+  if(sched.length && !ms.edit_as_button) return ""; // מי שבונה סידור כבר רואה אותו
   const teams = ms.can_training ? (App.S.teams||[]).slice().sort((a,b)=>(a.sort_order||0)-(b.sort_order||0)) : mgrTeams(App, ms.logistics_team_ids);
   const seen = new Set(), tiles = [];
   teams.forEach(t=>{ const g = App.sectorGroupForTeam(t); if(seen.has(g.label)) return; seen.add(g.label); tiles.push({id:t.id, label:g.label}); });
@@ -1912,7 +1912,7 @@ function renderManagerHome(App, ms){
       <button class="btn small secondary" data-action="portal-mgr-logout">יציאה</button>
     </div>
   </div>
-  ${sched.length? `<div class="card">
+  ${sched.length && !ms.edit_as_button? `<div class="card">
     <h3>סידור עבודה</h3>
     <p class="muted" style="margin-top:-6px;">${names(sched)}</p>
     <div class="grid-teams">
@@ -1943,6 +1943,10 @@ function renderManagerHome(App, ms){
   </div>` : ""}
   ${mgrViewCard(App, ms, sched)}
   ${ms.can_training ? renderIsraelDashboard(App, ms) : ""}
+  ${sched.length && ms.edit_as_button ? `<div class="card" style="text-align:center;">
+    <button class="btn" data-action="portal-mh-agg" style="font-size:1.05em;padding:12px 26px;">✏️ ערוך סידור</button>
+    <p class="muted" style="margin:8px 0 0;font-size:.85em;">שיבוץ ידני ואוטומטי, פרסום ופלט — ${names(sched)}</p>
+  </div>`:""}
   ${!sched.length && !logi.length && !ms.can_training ? `<div class="card"><p class="muted">אין עדיין הרשאות לממשק הזה.</p></div>`:""}`;
 }
 function enterMgrSchedule(App, ms, which){
