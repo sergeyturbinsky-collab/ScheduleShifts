@@ -425,12 +425,33 @@ function sectorGroupForTeam(team){
 /* עדכון (2026-10-08, לבקשת סרגיי): עובד של "אביחי קדוש" (סובב ירושלים) שעדיין לא הוגדרה לו עיר - משובץ
    רק בערי סובב ירושלים (בית שמש / מודיעין עילית / ביתר עילית), לא בירושלים. עובדי "דניאל כתב" - רק ירושלים. */
 const SOVEV_CITY_SECTORS = ["בית שמש","מודיעין עילית","ביתר עילית"];
+/* עדכון (2026-10-12, לבקשת סרגיי): סדר עדיפויות ערים זהה לעובדי דניאל כתב ולעובדי אביחי קדוש -
+   "עדיפות ראשונה/שנייה/שלישית/רביעית" מתוך 4 ערי האזור. עובד בלי העדפות ("ללא העדפה") = זמין לכל הערים.
+   (כל העובדים הקיימים כבר מוגדרים במפורש, כך שאין שינוי בשיבוץ שלהם.) */
 function computeWorkerCities(w){
-  if(w.city_sectors && w.city_sectors.length) return w.city_sectors;
-  const team = S.teams.find(t=>t.id===w.team_id);
-  if(team && team.sectors && team.sectors.length===1 && POOLED_CITY_SECTORS.includes(team.sectors[0])) return [team.sectors[0]];
-  if(team && (team.sectors||[]).includes("סובב ירושלים")) return SOVEV_CITY_SECTORS.slice();
-  return null;
+  return (w.city_sectors && w.city_sectors.length) ? w.city_sectors : null;
+}
+const CITY_PRIORITY_LABELS = ["עדיפות ראשונה","עדיפות שנייה","עדיפות שלישית","עדיפות רביעית"];
+function isCityPoolTeam(t){ return !!t && (t.sectors||[]).some(x=>x==="סובב ירושלים" || POOLED_CITY_SECTORS.includes(x)); }
+function cityPrefSelectsHtml(prefix, current){
+  const cur = current || [];
+  return `<div class="row" style="gap:8px;flex-wrap:wrap;">${CITY_PRIORITY_LABELS.map((lab,i)=>`<div class="field" style="min-width:130px;"><label>${lab}</label>
+    <select id="${prefix}_${i}"><option value="">ללא העדפה</option>${POOLED_CITY_SECTORS.map(c=>`<option value="${escapeHtml(c)}" ${cur[i]===c?"selected":""}>${escapeHtml(c)}</option>`).join("")}</select></div>`).join("")}</div>`;
+}
+/* קורא את הבחירות לפי הסדר עד ה"ללא העדפה" הראשון - מה שאחריו לא נחשב. בלי בחירה בכלל = null (זמין לכל הערים) */
+function readCityPrefs(prefix){
+  const out = [];
+  for(let i=0;i<CITY_PRIORITY_LABELS.length;i++){
+    const el = document.getElementById(prefix+"_"+i);
+    const v = el ? el.value : "";
+    if(!v) break;
+    if(out.includes(v)) return {error: `"${v}" נבחרה פעמיים בסדר העדיפויות`};
+    out.push(v);
+  }
+  return {cities: out.length ? out : null};
+}
+function cityPrefsText(w){
+  return (w.city_sectors && w.city_sectors.length) ? w.city_sectors.map((c,i)=>`${i+1}. ${c}`).join(" · ") : "ללא העדפה (כל הערים)";
 }
 
 /* כפתורי בחירת קב"ט למסכים שונים: מאחד קבוצות מאוגדות (כמו ירושלים+סובב ירושלים) לכפתור אחד */
@@ -1784,7 +1805,7 @@ function renderMokedTemplateGrid(group, dates, ui, mode){
 function renderAddWorkerForm(sector, group, role){
   const ui = S.ui;
   const pooled = group.teamIds.length>1; // כרגע רק "מאיר אזרואל"
-  const showCityBoxes = pooled && sector!=="ירושלים";
+  const showCityBoxes = pooled;
   return `
   <div class="card" style="margin-top:8px;background:#f7f7f9;">
     <h4 style="margin-top:0;">הוספת עובד חדש</h4>
@@ -1794,13 +1815,9 @@ function renderAddWorkerForm(sector, group, role){
     </div>
     ${showCityBoxes? `
     <div class="field" style="margin-top:6px;">
-      <label>שיוך עיר (ברירת מחדל)</label>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:4px;">
-        <label><input type="checkbox" name="tmplNewWorkerCity" value="בית שמש" ${sector==="בית שמש"?"checked":""}> בית שמש</label>
-        <label><input type="checkbox" name="tmplNewWorkerCity" value="מודיעין עילית" ${sector==="מודיעין עילית"?"checked":""}> מודיעין עילית</label>
-        <label><input type="checkbox" name="tmplNewWorkerCity" value="ביתר עילית" ${sector==="ביתר עילית"?"checked":""}> ביתר עילית</label>
-      </div>
-      <p class="muted">אפשר לסמן יותר מעיר אחת אם העובד גמיש. סומן כברירת מחדל העיר של המשבצת הנוכחית.</p>
+      <label>סדר עדיפות ערים</label>
+      ${cityPrefSelectsHtml("tmplNewCity", null)}
+      <p class="muted">"ללא העדפה" בכולן = זמין לכל הערים. אם מולאו רק חלק מהעדיפויות (למשל ראשונה ושנייה), העובד ישובץ רק בערים שנבחרו.</p>
     </div>`:""}
     <div class="row" style="margin-top:8px;">
       <button class="btn" data-action="tmpl-add-worker-save" data-sector="${escapeHtml(sector)}" data-role="${role?escapeHtml(role):""}">שמור והוסף</button>
@@ -2873,7 +2890,7 @@ function renderAdmin(){
   const teams = ui.teamIds.map(teamById);
   const merged = teams.length>1;
   const anyMoked = teams.some(isMokedTeam);
-  const avihaiTeam = teams.find(t=>(t.sectors||[]).includes("סובב ירושלים"));
+  const avihaiTeam = teams.find(t=>isCityPoolTeam(t)); // צוותי מאיר אזרואל (דניאל כתב / אביחי קדוש) - עמודת עדיפות ערים
   return `<div class="card">
     <span class="backlink" data-action="admin-back">${(typeof S.pin==="string" && S.pin.startsWith("mgr:") && !ui.mgrPick) ? "◀ חזרה" : "◀ נמען אחר"}</span>
     <h2>ניהול עובדים — ${escapeHtml(ui.recipientLabel)}</h2>
@@ -2898,7 +2915,13 @@ function renderAdmin(){
           const exemptCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-auto-exempt" data-id="${w.id}" ${w.auto_assign_exempt?"checked":""}></td>`;
           const shadowCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-shadow" data-id="${w.id}" ${w.shadow_trainee?"checked":""}></td>`;
           const shabbatCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-shabbat" data-id="${w.id}" ${w.shabbat_observer?"checked":""}></td>`;
-          return `<tr><td>${escapeHtml(w.name)}</td>${shadowCell}${shabbatCell}<td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${(w.city_sectors&&w.city_sectors.length) ? escapeHtml(w.city_sectors.join(" ← ")) : (w.team_id===avihaiTeam.id ? "כל סובב ירושלים" : "-")}</td>`:""}${roleCell}${exemptCell}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>`;
+          return `<tr><td>${escapeHtml(w.name)}</td>${shadowCell}${shabbatCell}<td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${isCityPoolTeam(teamById(w.team_id)) ? `${escapeHtml(cityPrefsText(w))} <button class="btn small secondary" data-action="admin-city-edit" data-id="${w.id}">✏️ שינוי</button>` : "-"}</td>`:""}${roleCell}${exemptCell}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>${ui.cityEditId===w.id ? `<tr><td colspan="${1+1+1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1+1}" style="background:#f7f9fc;">
+            <div style="font-weight:700;margin-bottom:4px;">סדר עדיפות ערים — ${escapeHtml(w.name)}</div>
+            ${cityPrefSelectsHtml("cityEdit", w.city_sectors)}
+            <p class="muted" style="margin:4px 0;">"ללא העדפה" בכולן = זמין לכל הערים. עדיפות שאחרי "ללא העדפה" לא נחשבת.</p>
+            <div class="row"><button class="btn small" data-action="admin-city-save" data-id="${w.id}">שמור</button><button class="btn small secondary" data-action="admin-city-cancel">ביטול</button></div>
+            ${ui.cityEditMsg? `<p class="shortage">${escapeHtml(ui.cityEditMsg)}</p>`:""}
+          </td></tr>` : ""}`;
         }).join("") || `<tr><td colspan="${1+1+1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1+1}" class="muted">אין עדיין עובדים</td></tr>`}
       </tbody>
     </table>
@@ -2924,15 +2947,11 @@ function renderAdmin(){
     </div>
     ${avihaiTeam? `
     <div class="field" style="margin-top:8px;">
-      <label>שיוך עיר (רלוונטי רק כשהגזרה שנבחרה למעלה היא "אביחי קדוש")</label>
-      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px;">
-        <label><input type="checkbox" name="adminNewCity" value="בית שמש"> בית שמש</label>
-        <label><input type="checkbox" name="adminNewCity" value="מודיעין עילית"> מודיעין עילית</label>
-        <label><input type="checkbox" name="adminNewCity" value="ביתר עילית"> ביתר עילית</label>
-      </div>
-      <p class="muted">אפשר לסמן יותר מעיר אחת (עובד גמיש). אם לא מסמנים כלום, העובד ייחשב זמין לכל האזור — כדאי לסמן בשביל שהשיבוץ האוטומטי/הידני יכבד את העיר שהוא באמת עובד בה.</p>
+      <label>סדר עדיפות ערים (לעובדי דניאל כתב ואביחי קדוש)</label>
+      ${cityPrefSelectsHtml("adminNewCity", null)}
+      <p class="muted">"ללא העדפה" בכולן = זמין לכל הערים. אם נבחרו רק חלק מהעדיפויות (למשל ראשונה ושנייה), העובד ישובץ רק בערים שנבחרו, לפי הסדר. בעדכון עובד קיים בלי לבחור ערים - הסדר הקיים שלו נשמר; לשינוי הסדר יש כפתור "✏️ שינוי" בטבלה.</p>
     </div>`:""}
-    <p class="muted">הוספה/עדכון של עובד עם שם שכבר קיים ${merged?"באותה גזרה":"בצוות"} מעדכנת את הקוד (ואת התפקיד, במוקד, ואת שיוך העיר, באביחי קדוש) שלו.${merged?" עובד חדש נכנס לגזרה שנבחרה למעלה — הרשימה כאן מציגה את שני הצוותים יחד, אך כל עובד עדיין שייך לגזרה אחת בפועל.":""}</p>
+    <p class="muted">הוספה/עדכון של עובד עם שם שכבר קיים ${merged?"באותה גזרה":"בצוות"} מעדכנת את הקוד (ואת התפקיד, במוקד, ואת סדר הערים) שלו.${merged?" עובד חדש נכנס לגזרה שנבחרה למעלה — הרשימה כאן מציגה את שני הצוותים יחד, אך כל עובד עדיין שייך לגזרה אחת בפועל.":""}</p>
     ${ui.adminMsg? `<p>${escapeHtml(ui.adminMsg)}</p>`:""}
   </div>`;
 }
@@ -3179,9 +3198,10 @@ function onAppClick(e){
       } else {
         const svTeam = S.teams.find(t=>(t.sectors||[]).includes("סובב ירושלים"));
         targetTeamId = svTeam ? svTeam.id : group.teamIds[0];
-        const vals = Array.from(document.querySelectorAll('input[name="tmplNewWorkerCity"]:checked')).map(b=>b.value);
-        citySectors = vals.length ? vals : null;
       }
+      const pr = readCityPrefs("tmplNewCity");
+      if(pr.error){ ui.tmplAddWorkerMsg = pr.error; return render(); }
+      citySectors = pr.cities;
     } else {
       targetTeamId = group.teamIds[0];
     }
@@ -3296,6 +3316,20 @@ function onAppClick(e){
       }catch(err){ ui.teamCodeMsg = "שגיאה: "+err.message; render(); }
     })();
   }
+  if(a==="admin-city-edit"){ ui.cityEditId = el.dataset.id; ui.cityEditMsg = null; return render(); }
+  if(a==="admin-city-cancel"){ ui.cityEditId = null; ui.cityEditMsg = null; return render(); }
+  if(a==="admin-city-save"){
+    const pr = readCityPrefs("cityEdit");
+    if(pr.error){ ui.cityEditMsg = pr.error; return render(); }
+    const wid = el.dataset.id;
+    return (async()=>{
+      try{
+        await apiRpc("admin_update_worker_cities", {p_pin:S.pin, p_worker_id:wid, p_cities:pr.cities});
+        const w = (ui.workers||[]).find(x=>x.id===wid); if(w) w.city_sectors = pr.cities;
+        ui.cityEditId = null; ui.cityEditMsg = null; ui.adminMsg = "סדר הערים נשמר."; render();
+      }catch(err){ ui.cityEditMsg = "שגיאה: " + err.message; render(); }
+    })();
+  }
   if(a==="admin-add"){
     const name = document.getElementById("adminNewName").value;
     const code = document.getElementById("adminNewCode").value;
@@ -3307,17 +3341,15 @@ function onAppClick(e){
     // כדי לא "לדרוס" בטעות שיוך עיר על עובד של דניאל כתב/ירושלים, שם השיוך נגזר מהצוות עצמו.
     let citySectors = null;
     const targetTeam = teamById(targetTeamId);
-    if(targetTeam && (targetTeam.sectors||[]).includes("סובב ירושלים")){
-      const vals = Array.from(document.querySelectorAll('input[name="adminNewCity"]:checked')).map(b=>b.value);
-      citySectors = vals.length ? vals : null;
+    if(isCityPoolTeam(targetTeam)){
+      const pr = readCityPrefs("adminNewCity");
+      if(pr.error){ ui.adminMsg = pr.error; return render(); }
+      citySectors = pr.cities;
     }
-    /* עדכון עובד קיים לא מוחק את רשימת עדיפות הערים שלו (סדר העדיפות לא נשמר בתיבות הסימון) -
-       אם לא נבחרו ערים, או שנבחרו בדיוק אותן ערים, נשמרת הרשימה הקיימת עם הסדר שלה. (2026-10-08) */
+    /* עדכון עובד קיים בלי בחירת ערים לא מוחק את סדר העדיפויות שלו (2026-10-12) - שינוי סדר / "ללא העדפה"
+       לעובד קיים נעשה בכפתור "✏️ שינוי" בטבלה. */
     const existing = (ui.workers||[]).find(w=>w.team_id===targetTeamId && w.name===name.trim());
-    if(existing && existing.city_sectors && existing.city_sectors.length){
-      const same = citySectors && citySectors.length===existing.city_sectors.length && citySectors.every(c=>existing.city_sectors.includes(c));
-      if(!citySectors || same) citySectors = existing.city_sectors;
-    }
+    if(existing && !citySectors && existing.city_sectors && existing.city_sectors.length) citySectors = existing.city_sectors;
     if(!name||!code){ ui.adminMsg = "יש למלא שם וקוד"; return render(); }
     return (async()=>{
       try{ await apiRpc("admin_upsert_worker",{p_pin:S.pin,p_team_id:targetTeamId,p_name:name,p_code:code,p_role:role,p_city_sectors:citySectors}); ui.adminMsg="נשמר."; ui.workers=null; render(); }
