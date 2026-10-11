@@ -1593,6 +1593,19 @@ function renderSection(App, view){
 function mgrTeams(App, ids){
   return (ids||[]).map(App.teamById).filter(Boolean).sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
 }
+/* צפייה בלבד בסידור עבודה (2026-10-11): למנהלים בלי הרשאת עריכה. קב"ט - הצוותים שלו; ישראל - כל הצוותים */
+function mgrViewCard(App, ms, sched){
+  if(sched.length) return ""; // מי שבונה סידור כבר רואה אותו
+  const teams = ms.can_training ? (App.S.teams||[]).slice().sort((a,b)=>(a.sort_order||0)-(b.sort_order||0)) : mgrTeams(App, ms.logistics_team_ids);
+  const seen = new Set(), tiles = [];
+  teams.forEach(t=>{ const g = App.sectorGroupForTeam(t); if(seen.has(g.label)) return; seen.add(g.label); tiles.push({id:t.id, label:g.label}); });
+  if(!tiles.length) return "";
+  return `<div class="card">
+    <h3>סידור עבודה</h3>
+    <p class="muted" style="margin-top:-6px;">צפייה בלבד</p>
+    <div class="grid-teams">${tiles.map(t=>`<div class="team-tile" data-action="portal-mgr-view" data-id="${t.id}">${App.escapeHtml(t.label)}</div>`).join("")}</div>
+  </div>`;
+}
 function renderManagerHome(App, ms){
   const esc = App.escapeHtml;
   if(!P.checkedMgr){
@@ -1642,6 +1655,7 @@ function renderManagerHome(App, ms){
       <div class="team-tile" data-action="portal-pv" data-page="k-feed"><div style="font-size:1.1em;font-weight:700;">תכנים והודעות</div><div class="muted" style="font-size:.85em;margin-top:4px;">מקב"ט ההדרכות</div></div>
     </div>
   </div>`:""}
+  ${mgrViewCard(App, ms, sched)}
   ${ms.can_training ? renderIsraelDashboard(App, ms) : ""}
   ${!sched.length && !logi.length && !ms.can_training ? `<div class="card"><p class="muted">אין עדיין הרשאות לממשק הזה.</p></div>`:""}`;
 }
@@ -1723,6 +1737,7 @@ async function doLogin(App){
 
 function onClick(App, a, el){
   const S = App.S;
+  if(a==="portal-mgr-view"){ if(!loadMgr(App)) return App.render(); S.view = "mgrview"; S.ui = {teamId: el.dataset.id}; return App.render(); }
   if(a==="portal-pick"){ P.selectedId = el.dataset.id; P.code=""; P.error=null; return App.render(); }
   if(a==="portal-unpick"){ P.selectedId = null; P.code=""; P.error=null; return App.render(); }
   if(a==="portal-login") return doLogin(App);

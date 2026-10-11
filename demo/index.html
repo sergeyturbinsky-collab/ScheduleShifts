@@ -147,7 +147,7 @@
 <main id="app"></main>
 <footer>מערכת פנימית · חברת אבטחה · סביבת דמו</footer>
 
-<script src="portal.js?v=25"></script>
+<script src="portal.js?v=26"></script>
 <script>
 (function(){
 "use strict";
@@ -468,6 +468,7 @@ function render(){
     S.view==="equipreq" ? "בקשות ציוד" :
     S.view==="mgrpw" ? "סיסמאות מנהלים" :
     (S.view==="pview" && window.Portal) ? window.Portal.pvTitle() :
+    S.view==="mgrview" ? "סידור עבודה (צפייה בלבד)" :
     S.view==="training" ? "הדרכה" :
     S.view==="logistics" ? "לוגיסטי" :
     S.view==="updates" ? "עדכונים והודעות" :
@@ -483,6 +484,7 @@ function render(){
   else if(S.view==="equipreq" && window.Portal) html = window.Portal.renderManagerRequests(App);
   else if(S.view==="mgrpw" && window.Portal) html = window.Portal.renderManagerPasswords(App);
   else if(S.view==="pview" && window.Portal) html = window.Portal.renderPView(App);
+  else if(S.view==="mgrview" && window.Portal) html = renderMgrScheduleView();
   else if(S.view==="submit") html = renderSubmit();
   else if(S.view==="aggregate") html = renderAggregate();
   else if(S.view==="admin") html = renderAdmin();
@@ -838,7 +840,7 @@ function renderPrintView(team){
   return `
   <div class="row no-print" style="margin-bottom:10px;">
     <button class="btn ok" data-action="do-print">🖨️ הדפס / שמור כ-PDF</button>
-    <button class="btn secondary" data-action="close-print">סגור</button>
+    ${S.view==="mgrview" ? "" : `<button class="btn secondary" data-action="close-print">סגור</button>`}
   </div>
   <div id="printArea">
     <div class="print-header">
@@ -2285,6 +2287,27 @@ async function confirmPin(){
   }
 }
 
+/* --------- צפייה בלבד בסידור עבודה - למנהלים בלי הרשאת עריכה (דמו, 2026-10-11): אותו פלט כמו "הפקת פלט
+   סידור", בלי שום כפתור עריכה. מציג גם אם התקופה כבר פורסמה לעובדים או שזו עדיין טיוטה. --------- */
+function renderMgrScheduleView(){
+  const ui = S.ui;
+  const team = teamById(ui.teamId);
+  if(!team){ S.view = "home"; S.ui = {}; return renderHome(); }
+  if(!ui.periodStart) ui.periodStart = currentPeriodStart(team);
+  if(!ui.loaded){ loadAggregateData(team); return `<div class="card"><p>טוען...</p></div>`; }
+  const group = sectorGroupForTeam(team);
+  const published = isSchedulePublished(group, ui);
+  return `<div class="card">
+    <span class="backlink no-print" data-action="mgrview-back">◀ חזרה</span>
+    <div class="flexbar no-print" style="margin-bottom:8px;">
+      <button class="btn small secondary" data-action="mgrview-prev">◀ תקופה קודמת</button>
+      <button class="btn small secondary" data-action="mgrview-next">תקופה הבאה ▶</button>
+    </div>
+    <div class="banner ${published?"open":"notyet"} no-print">${published ? "✅ הסידור לתקופה הזו פורסם לעובדים." : "📝 טיוטה — הסידור לתקופה הזו עדיין לא פורסם לעובדים ועשוי להשתנות."}</div>
+    ${renderPrintView(team)}
+  </div>`;
+}
+
 /* --------- פרסום סידור לעובדים (דמו, 2026-10-07): עד הפרסום העובדים לא רואים את השיבוצים של התקופה --------- */
 function isSchedulePublished(group, ui){
   const pubs = ui.publications || [];
@@ -2863,6 +2886,12 @@ function onAppClick(e){
     return window.Portal.onClick(App, a, el);
   }
   if(a==="go-mgrpw" && window.Portal){ window.Portal.resetPasswordsScreen(); S.view="mgrpw"; S.ui={}; return render(); }
+  if(a==="mgrview-back"){ S.view = "home"; S.ui = {}; return render(); }
+  if(a==="mgrview-prev" || a==="mgrview-next"){
+    const t = teamById(ui.teamId);
+    ui.periodStart = fmtDate(addDays(parseDate(ui.periodStart), (a==="mgrview-next"?1:-1) * periodLength(t)));
+    ui.loaded = false; return render();
+  }
   if(a==="managers-back"){ S.managerMode = false; S.view="home"; S.ui={}; return render(); }
   if(a==="go-submit"){ S.view="submit"; S.ui={}; return render(); }
   if(a==="go-aggregate"){ S.view="aggregate"; S.ui={}; return render(); }

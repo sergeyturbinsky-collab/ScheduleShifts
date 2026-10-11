@@ -37,7 +37,7 @@ assert "wcbnkrtxdzfygyyanasx" in s and "hcejwcxsqhpiufaakalj" not in s
 # ---- portal + publish patches ----
 rep("""<script>
 (function(){
-"use strict";""","""<script src="portal.js?v=25"></script>
+"use strict";""","""<script src="portal.js?v=26"></script>
 <script>
 (function(){
 "use strict";""")
@@ -156,6 +156,41 @@ rep("""    S.view==="mgrpw" ? "סיסמאות מנהלים" :""","""    S.view==
 rep("""  app.onchange = onAppChange;
   app.oninput""","""  app.onchange = e=>{ const act = e.target && e.target.dataset ? String(e.target.dataset.action||"") : ""; if(window.Portal && act.startsWith("portal-")) return window.Portal.onChange(App, e); return onAppChange(e); };
   app.oninput""")
+# ---- צפייה בסידור עבודה למנהלים בלי הרשאת עריכה (2026-10-11) ----
+rep("""  else if(S.view==="pview" && window.Portal) html = window.Portal.renderPView(App);""","""  else if(S.view==="pview" && window.Portal) html = window.Portal.renderPView(App);
+  else if(S.view==="mgrview" && window.Portal) html = renderMgrScheduleView();""")
+rep("""    (S.view==="pview" && window.Portal) ? window.Portal.pvTitle() :""","""    (S.view==="pview" && window.Portal) ? window.Portal.pvTitle() :
+    S.view==="mgrview" ? "סידור עבודה (צפייה בלבד)" :""")
+rep("""    <button class="btn secondary" data-action="close-print">סגור</button>""","""    ${S.view==="mgrview" ? "" : `<button class="btn secondary" data-action="close-print">סגור</button>`}""")
+rep("""/* --------- פרסום סידור לעובדים (דמו, 2026-10-07)""","""/* --------- צפייה בלבד בסידור עבודה - למנהלים בלי הרשאת עריכה (דמו, 2026-10-11): אותו פלט כמו "הפקת פלט
+   סידור", בלי שום כפתור עריכה. מציג גם אם התקופה כבר פורסמה לעובדים או שזו עדיין טיוטה. --------- */
+function renderMgrScheduleView(){
+  const ui = S.ui;
+  const team = teamById(ui.teamId);
+  if(!team){ S.view = "home"; S.ui = {}; return renderHome(); }
+  if(!ui.periodStart) ui.periodStart = currentPeriodStart(team);
+  if(!ui.loaded){ loadAggregateData(team); return `<div class="card"><p>טוען...</p></div>`; }
+  const group = sectorGroupForTeam(team);
+  const published = isSchedulePublished(group, ui);
+  return `<div class="card">
+    <span class="backlink no-print" data-action="mgrview-back">◀ חזרה</span>
+    <div class="flexbar no-print" style="margin-bottom:8px;">
+      <button class="btn small secondary" data-action="mgrview-prev">◀ תקופה קודמת</button>
+      <button class="btn small secondary" data-action="mgrview-next">תקופה הבאה ▶</button>
+    </div>
+    <div class="banner ${published?"open":"notyet"} no-print">${published ? "✅ הסידור לתקופה הזו פורסם לעובדים." : "📝 טיוטה — הסידור לתקופה הזו עדיין לא פורסם לעובדים ועשוי להשתנות."}</div>
+    ${renderPrintView(team)}
+  </div>`;
+}
+
+/* --------- פרסום סידור לעובדים (דמו, 2026-10-07)""")
+rep("""  if(a==="managers-back"){""","""  if(a==="mgrview-back"){ S.view = "home"; S.ui = {}; return render(); }
+  if(a==="mgrview-prev" || a==="mgrview-next"){
+    const t = teamById(ui.teamId);
+    ui.periodStart = fmtDate(addDays(parseDate(ui.periodStart), (a==="mgrview-next"?1:-1) * periodLength(t)));
+    ui.loaded = false; return render();
+  }
+  if(a==="managers-back"){""")
 # ---- מפתחות localStorage נפרדים לדמו (הדמו והחי באותו origin) ----
 for k in ["identity","pin","team_access"]:
     s = s.replace('"cst_%s"' % k, '"cstdemo_%s"' % k)
