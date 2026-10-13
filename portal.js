@@ -1376,7 +1376,8 @@ function incMokedHtml(App, mk){
 
 function renderIncident(App, ms, pg, a, wrap, loading, msgs){
   const esc = App.escapeHtml;
-  const isAdmin = !!ms.is_admin;
+  const canWrite = !!ms.is_admin || ((ms.logistics_team_ids||[]).length > 0);
+  const isAdmin = !!ms.is_admin || !canWrite; // מנהל יחידה רואה את כל הדו"חות ואת שם הקב"ט
   if(pg==="inc-list"){
     if(!PV.data){
       PV.data = {loading:true};
@@ -1387,7 +1388,7 @@ function renderIncident(App, ms, pg, a, wrap, loading, msgs){
     }
     if(PV.data.loading) return loading();
     const rs = PV.data.r||[], deb = PV.data.deb||[];
-    const debRow = d=>`<tr class="portal-click" data-action="portal-inc-debrief" data-id="${d.id}">
+    const debRow = d=>`<tr${canWrite?` class="portal-click" data-action="portal-inc-debrief" data-id="${d.id}"`:""}>
         <td>${d.report_id ? (d.report_mine ? '<span style="color:#7a5c00;font-weight:700;">📝 בטיפולך</span>' : `<span class="muted">בטיפול ${esc(d.report_author||"")}</span>`) : '<span style="color:#b42318;font-weight:700;">🆕 חדש</span>'}</td>
         <td>${d.event_at?esc(fmtDT(App, d.event_at)):esc(fmtDT(App, d.created_at))}</td>
         <td style="text-align:right;">${esc(d.sector||d.team||"")}</td><td>${esc(d.event_no||"")}</td>
@@ -1402,8 +1403,8 @@ function renderIncident(App, ms, pg, a, wrap, loading, msgs){
     return wrap(`<div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;">
         <h2 style="margin:0;">🚨 דו"חות אירוע חריג</h2>
         <div class="flexbar" style="gap:6px;">
-          ${isAdmin?'<button class="btn small secondary" data-action="portal-pv" data-page="inc-opts">⚙️ עריכת רשימות</button>':""}
-          <button class="btn" data-action="portal-inc-new">➕ דו"ח חדש</button>
+          ${ms.is_admin?'<button class="btn small secondary" data-action="portal-pv" data-page="inc-opts">⚙️ עריכת רשימות</button>':""}
+          ${canWrite?'<button class="btn" data-action="portal-inc-new">➕ דו"ח חדש</button>':""}
         </div></div>
       ${msgs}
       ${deb.length?`<h3>🔔 אירועים מהמוקד שממתינים לתחקיר (${deb.length})</h3>
@@ -1413,7 +1414,7 @@ function renderIncident(App, ms, pg, a, wrap, loading, msgs){
       ${sent.length?`<table>${head}<tbody>${sent.map(row).join("")}</tbody></table>`:'<p class="muted">עדיין אין דו"חות.</p>'}`);
   }
   if(pg==="inc-opts"){
-    if(!isAdmin) return wrap(`<p class="muted">אין הרשאה.</p>`);
+    if(!ms.is_admin) return wrap(`<p class="muted">אין הרשאה.</p>`);
     if(INC.loadedFor!=="opts"){ INC.loadedFor = "opts"; INC.opts = null; App.apiRpc("inc_options_get", {p_token:ms.token}).then(o=>{ INC.opts = o||{}; App.render(); }).catch(e=>{ INC.error = e.message; App.render(); }); }
     if(!INC.opts) return loading();
     return wrap(`<h2>⚙️ עריכת רשימות — דו"ח אירוע חריג</h2>
@@ -1590,10 +1591,129 @@ async function incAddImages(App, files){
   INC.busy = false; App.render();
 }
 
+/* ================================================================
+   מנהל יחידה (2026-10-13) - לבקשת סרגיי: עמוד למנהל היחידה.
+   - סידורי עבודה (צפייה בלבד, לכל הגזרות).
+   - סטטוס משימות המאבטחים לפי משימה, בחלוקה לקב"טים (בלי שמות מאבטחים).
+   - סטטוס תחקירי אירועים לפי קב"טים. כל האירועים מהמוקד מגיעים גם אליו (inc_scope_team_ids).
+   - הצעות שלי: מדדים בראש העמוד, פרסום סידור אחרון לכל גזרה, בקשות ציוד ממתינות וחילופים פתוחים.
+   הנתונים מהשרת: unit_dashboard (מנהל יחידה או מנהל מערכת בלבד).
+   ================================================================ */
+const U = { data:null, loading:false, error:null };
+function unitPct(done, n){ return n ? Math.round(done*100/n) : null; }
+function unitCell(c){
+  if(!c || !c.n) return `<td class="muted">—</td>`;
+  const p = unitPct(c.done, c.n);
+  const bg = p>=90 ? "#e3f4e8" : p>=60 ? "#fff6dc" : "#fde7e5";
+  return `<td style="background:${bg};"><b>${p}%</b><div class="muted" style="font-size:.78em;">${c.done}/${c.n}</div></td>`;
+}
+function unitLoad(App, ms){
+  U.loading = true; U.error = null;
+  App.apiRpc("unit_dashboard", {p_token:ms.token})
+    .then(d=>{ U.data = d; U.loading = false; App.render(); })
+    .catch(e=>{ U.error = e.message; U.loading = false; App.render(); });
+}
+function unitAge(App, iso){
+  if(!iso) return "";
+  const h = (Date.now() - new Date(iso).getTime())/3600000;
+  const txt = h < 1 ? "פחות משעה" : h < 48 ? `${Math.round(h)} שעות` : `${Math.round(h/24)} ימים`;
+  return `<span style="color:${h>48?"#b42318":"inherit"};font-weight:${h>48?700:400};">${txt}</span>`;
+}
+function renderUnitDashboard(App, ms){
+  const esc = App.escapeHtml;
+  if(!U.data && !U.loading && !U.error) unitLoad(App, ms);
+  if(U.error) return `<div class="card"><p class="shortage">${esc(U.error)}</p><button class="btn small" data-action="portal-unit-refresh">נסה שוב</button></div>`;
+  if(!U.data) return `<div class="card"><p class="muted">טוען את לוח מנהל היחידה...</p></div>`;
+  const d = U.data, teams = d.teams||[], guardTeams = teams.filter(t=>t.guards);
+  const sum = (obj, f)=>Object.keys(obj||{}).reduce((s,k)=>s+(f?f(obj[k]):Number(obj[k])||0),0);
+  const head = list=>`<tr><th style="text-align:right;">משימה</th>${list.map(t=>`<th>${esc(t.kabat||t.name)}${t.sectors&&t.sectors.length?`<div class="muted" style="font-size:.75em;font-weight:400;">${esc(t.sectors.join(" / "))}</div>`:""}</th>`).join("")}<th>סה"כ</th></tr>`;
+  const rowOf = (label, sub, per, list)=>{
+    let tn = 0, td = 0;
+    const cells = list.map(t=>{ const c = (per||{})[t.id]; if(c){ tn += c.n; td += c.done; } return unitCell(c); }).join("");
+    return `<tr><td style="text-align:right;">${esc(label)}${sub?`<div class="muted" style="font-size:.78em;">${esc(sub)}</div>`:""}</td>${cells}${unitCell({n:tn, done:td})}</tr>`;
+  };
+  const secRow = (title, list)=>`<tr><td colspan="${list.length+2}" style="text-align:right;background:#eef3f8;font-weight:700;">${esc(title)}</td></tr>`;
+
+  // מדדים
+  const inc = d.incidents||{};
+  const openNew = sum(inc, x=>x.new||0), openProg = sum(inc, x=>x.progress||0), done30 = sum(inc, x=>(x.done30||0)+(x.manual30||0));
+  let trN = 0, trD = 0; (d.trainings||[]).forEach(tr=>Object.values(tr.per_team||{}).forEach(c=>{ trN += c.n; trD += c.done; }));
+  const equip = sum(d.equipment), swaps = sum(d.swaps);
+  const kpi = (big, title, sub, page)=>`<div class="portal-dtile"${page?` data-action="portal-pv" data-page="${page}"`:""}><div class="portal-dtile-t">${title}</div><div class="portal-dtile-n">${big}</div><div class="portal-dtile-s">${sub||""}</div></div>`;
+
+  // סידורי עבודה - אריח לכל קבוצת גזרות, עם תאריך הסידור האחרון שפורסם
+  const seen = new Set(), schedTiles = [];
+  (App.S.teams||[]).slice().sort((a,b)=>(a.sort_order||0)-(b.sort_order||0)).forEach(t=>{
+    const g = App.sectorGroupForTeam(t); if(seen.has(g.label)) return; seen.add(g.label);
+    const ends = (g.citySectors||[]).map(s=>(d.published||{})[s]).filter(Boolean).sort();
+    const last = ends.length===(g.citySectors||[]).length && ends.length ? ends[0] : null;
+    const soon = !last || (new Date(last+"T23:59:59") - Date.now()) < 7*86400000;
+    schedTiles.push(`<div class="team-tile" data-action="portal-mgr-view" data-id="${t.id}">
+      <div style="font-weight:700;">${esc(g.label)}</div>
+      <div style="font-size:.8em;margin-top:4px;color:${soon?"#b42318":"#1b7f3b"};">${last?`פורסם עד ${esc(App.fmtDateHeb(last))}`:"אין סידור שפורסם"}</div></div>`);
+  });
+
+  const incRows = guardTeams.map(t=>{ const x = inc[t.id]||{}; return `<tr>
+      <td style="text-align:right;"><b>${esc(t.kabat||t.name)}</b><div class="muted" style="font-size:.78em;">${esc((t.sectors||[]).join(" / "))}</div></td>
+      <td style="${x.new?"color:#b42318;font-weight:700;":""}">${x.new||0}</td><td>${x.progress||0}</td><td>${(x.done30||0)}</td><td>${x.manual30||0}</td>
+      <td>${x.avg_hours!=null?`${x.avg_hours} ש'`:"—"}</td><td>${x.oldest_open?unitAge(App, x.oldest_open):"—"}</td></tr>`; }).join("");
+
+  const tr = d.trainings||[], pr = d.programs||[], po = d.posts||[];
+  const kindLbl = {all:"הודעה לכלל המאבטחים", content:"תוכן עיוני / סרטון"};
+  return `
+  <div class="card">
+    <div class="flexbar" style="justify-content:space-between;"><h3 style="margin:0;">📊 תמונת מצב</h3><button class="btn small secondary" data-action="portal-unit-refresh">🔄 רענון</button></div>
+    <div class="portal-grid3" style="margin-top:10px;">
+      ${kpi(openNew+openProg, "🔔 אירועים פתוחים", openNew?`${openNew} עוד לא נפתחו`:"כולם בטיפול", "inc-list")}
+      ${kpi(done30, "📝 תחקירים שהושלמו", "ב-30 הימים האחרונים", "inc-list")}
+      ${kpi(trN?unitPct(trD,trN)+"%":"—", "🎓 ביצוע לומדות", trN?`${trD}/${trN}`:"אין לומדות פעילות")}
+      ${kpi(equip, "📦 בקשות ציוד", "ממתינות לטיפול")}
+      ${kpi(swaps, "🔁 חילופים פתוחים", "מחפשים מחליף")}
+      ${kpi(guardTeams.reduce((s,t)=>s+(t.workers||0),0), "👮 מאבטחים", `${guardTeams.length} גזרות`)}
+    </div>
+  </div>
+  <div class="card">
+    <h3>📅 סידורי עבודה</h3>
+    <p class="muted" style="margin-top:-6px;">צפייה בלבד, בסידור שפורסם. באדום: אין סידור מפורסם לשבוע הקרוב.</p>
+    <div class="grid-teams">${schedTiles.join("")}</div>
+  </div>
+  <div class="card">
+    <div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;"><h3 style="margin:0;">🚨 תחקירי אירועים לפי קב"ט</h3>
+      <button class="btn small" data-action="portal-pv" data-page="inc-list">📋 כל דו"חות התחקיר</button></div>
+    <div style="overflow-x:auto;margin-top:8px;"><table>
+      <thead><tr><th style="text-align:right;">קב"ט</th><th>חדשים מהמוקד</th><th>בטיפול</th><th>הושלמו (30 יום)</th><th>דו"חות ידניים (30 יום)</th><th>זמן ממוצע לתחקיר</th><th>הוותיק שפתוח</th></tr></thead>
+      <tbody>${incRows}</tbody></table></div>
+  </div>
+  <div class="card">
+    <h3>✅ סטטוס משימות המאבטחים לפי קב"ט</h3>
+    <p class="muted" style="margin-top:-6px;">אחוז המאבטחים שביצעו כל משימה. ירוק 90%+, צהוב 60-89%, אדום מתחת ל-60%.</p>
+    <div style="overflow-x:auto;"><table>
+      <thead>${head(teams)}</thead>
+      <tbody>
+        ${secRow("לומדות ובחנים", teams)}
+        ${tr.length ? tr.map(x=>rowOf(x.title, x.published_at?`פורסם ${App.fmtDateHeb(String(x.published_at).slice(0,10))}`:"", x.per_team, teams)).join("") : `<tr><td colspan="${teams.length+2}" class="muted">אין לומדות פעילות</td></tr>`}
+        ${secRow("קריאת הודעות ותכנים", teams)}
+        ${po.length ? po.map(x=>rowOf(x.title, kindLbl[x.kind]||"", x.per_team, teams)).join("") : `<tr><td colspan="${teams.length+2}" class="muted">אין פרסומים</td></tr>`}
+        ${secRow("סיכומי תרגיל — נקראו ע\"י המאבטח (30 יום)", teams)}
+        ${rowOf("סיכומי תרגיל", "", d.controls, teams)}
+      </tbody></table></div>
+    ${pr.length?`<div style="overflow-x:auto;margin-top:10px;"><table>
+      <thead>${head(guardTeams)}</thead>
+      <tbody>${secRow("תוכניות הדרכה", guardTeams)}${pr.map(x=>rowOf(x.name, "", x.per_team, guardTeams)).join("")}</tbody></table></div>`:""}
+  </div>
+  <div class="card">
+    <h3>📦 לוגיסטיקה וחילופים</h3>
+    <div style="overflow-x:auto;"><table>
+      <thead><tr><th style="text-align:right;">קב"ט</th><th>בקשות ציוד ממתינות</th><th>חילופי משמרות פתוחים</th></tr></thead>
+      <tbody>${guardTeams.map(t=>`<tr><td style="text-align:right;">${esc(t.kabat||t.name)} <span class="muted" style="font-size:.8em;">${esc((t.sectors||[]).join(" / "))}</span></td>
+        <td>${(d.equipment||{})[t.id]||0}</td><td>${(t.sectors||[]).reduce((s,sec)=>s+(Number((d.swaps||{})[sec])||0),0)}</td></tr>`).join("")}</tbody></table></div>
+  </div>`;
+}
+
 /* ---------- עמודי משנה (view "pview") ---------- */
 const PV_TITLES = { "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
-  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות" };
+  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
 function pvGo(App, page, args, push){
   if(push !== false && App.S.view==="pview" && PV.page) PV.stack.push({page:PV.page, args:PV.args});
@@ -1654,6 +1774,7 @@ function renderPView(App){
   const needLoad = (fn, args)=>{ if(!PV.data){ pvLoad(App, fn, args); return true; } return !!PV.data.loading; };
   if(PV.data && PV.data.error) return wrap(`<p class="shortage">${esc(PV.data.error)}</p>`);
   if(pg && pg.indexOf("inc-")===0) return renderIncident(App, ms, pg, a, wrap, loading, msgs);
+  if(pg==="unit-dash") return `<div class="card">${back}<h2 style="margin-bottom:0;">📊 לוח מנהל יחידה</h2><p class="muted">כך רואה את המערכת מנהל היחידה.</p></div>` + renderUnitDashboard(App, ms);
 
   if(pg==="trn-training"){
     if(needLoad("trn_training_detail", {p_token:tok, p_training_id:a.id})) return loading();
@@ -2498,7 +2619,8 @@ function renderManagerHome(App, ms){
   </div>` : ""}
   ${ms.is_admin ? `<div class="card">
     <h3>🔑 ניהול מערכת</h3>
-    <div class="grid-teams">${tile("portal-mh-codes", "🔑 עריכת קודים של מנהלים", "קביעה ושינוי קוד אישי לכל מנהל")}</div>
+    <div class="grid-teams">${tile("portal-mh-codes", "🔑 עריכת קודים של מנהלים", "קביעה ושינוי קוד אישי לכל מנהל")}
+      <div class="team-tile" data-action="portal-pv" data-page="unit-dash"><div style="font-size:1.1em;font-weight:700;">📊 לוח מנהל יחידה</div><div class="muted" style="font-size:.85em;margin-top:4px;">תמונת מצב כמו שמנהל היחידה רואה</div></div></div>
   </div>` : ""}
   ${sched.length && !ms.edit_as_button? `<div class="card">
     <h3>סידור עבודה</h3>
@@ -2531,7 +2653,7 @@ function renderManagerHome(App, ms){
     <button class="btn" data-action="portal-mh-agg" style="font-size:1.05em;padding:12px 26px;">✏️ ערוך סידור</button>
     <p class="muted" style="margin:8px 0 0;font-size:.85em;">שיבוץ ידני ואוטומטי, פרסום ופלט — ${names(sched)}</p>
   </div>`:""}
-  ${!sched.length && !logi.length && !ms.can_training ? `<div class="card"><p class="muted">אין עדיין הרשאות לממשק הזה.</p></div>`:""}`;
+  ${!sched.length && !logi.length && !ms.can_training && !ms.is_admin ? (U.error && /אין הרשאה/.test(U.error) ? `<div class="card"><p class="muted">אין עדיין הרשאות לממשק הזה.</p></div>` : renderUnitDashboard(App, ms)) : ""}`;
 }
 function enterMgrSchedule(App, ms, which){
   const S = App.S;
@@ -2693,7 +2815,7 @@ function onClick(App, a, el){
   if(a==="portal-mgr-logout"){
     const ms = loadMgr(App);
     if(ms) App.apiRpc("manager_logout", {p_token: ms.token}).catch(()=>{});
-    saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null; MN.state = null; INC.pendCount = undefined; INC.opts = null;
+    saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null; MN.state = null; INC.pendCount = undefined; INC.opts = null; U.data = null; U.error = null; U.loading = false;
     S.view = "home"; S.ui = {};
     return App.render();
   }
@@ -2766,6 +2888,7 @@ function onClick(App, a, el){
   }
   if(a==="portal-pv-back") return pvBack(App);
   if(a.indexOf("portal-inc-")===0) return incClick(App, a, el);
+  if(a==="portal-unit-refresh"){ U.data = null; U.error = null; U.loading = false; return App.render(); }
   if(a==="portal-quiz-addopt"){ const Q = syncQuiz(); if(Q){ Q.questions[+el.dataset.q].options.push(""); } return App.render(); }
   if(a==="portal-quiz-delopt"){ const Q = syncQuiz(); if(Q){ const q = Q.questions[+el.dataset.q], o = +el.dataset.o; q.options.splice(o,1); if(q.correct===o) q.correct = null; else if(q.correct>o) q.correct--; } return App.render(); }
   if(a==="portal-quiz-addq"){ const Q = syncQuiz(); if(Q){ (Q.questions = Q.questions||[]).push({q:"", options:["",""], correct:null}); } return App.render(); }
