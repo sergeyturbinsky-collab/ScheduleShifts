@@ -1033,10 +1033,300 @@ function renderIsraelDashboard(App, ms){
   </div>`;
 }
 
+/* ================================================================
+   דו"ח תחקיר אירוע חריג (2026-10-13) - לבקשת סרגיי.
+   - כל קב"ט (מנהל עם צוותי לוגיסטי) ומנהל המערכת יכולים ליצור דו"ח. שמירת טיוטה, ושליחה שנועלת את הדו"ח.
+   - רואים את הדו"ח: הקב"ט שכתב, סרגיי, ובהמשך מנהל היחידה (טבלת incident_viewers). טיוטות - רק הכותב.
+   - הרובריקות לפי הטופס שסרגיי שלח. כל שדות המלל החופשי בסוף הטופס.
+   - הרשימות (עיר, סיווג, מקור קריאה, מפעיל, גיל, מגדר) נערכות ע"י סרגיי במסך "עריכת רשימות".
+   - בהמשך: פרטי האירוע יגיעו אוטומטית מקובץ ה-PDF שהמוקד מעלה (עמודת moked_data בשרת).
+   ================================================================ */
+const INC_LISTS = { city:"עיר", classification:"סיווג האירוע", call_source:"מקור הקריאה", operator:"שם מפעיל", attacker_age:"גיל התוקף", attacker_gender:"מגדר התוקף" };
+const INC_SECTIONS = [
+  { title:"פרטי האירוע", fields:[
+    {k:"city", l:"עיר", t:"select", req:true},
+    {k:"saveyu", l:"מספר אירוע ב-SAVEYU", t:"num", req:true, hint:"לקחת מהמוקד"},
+    {k:"classification", l:"סיווג האירוע", t:"select", req:true},
+    {k:"call_source", l:"מקור הקריאה", t:"select", req:true},
+    {k:"operator", l:"שם מפעיל", t:"select", req:true},
+    {k:"bus_line", l:"קו אוטובוס", t:"num", req:true} ]},
+  { title:"פרטי התוקף", fields:[
+    {k:"attacker_age", l:"גיל", t:"select", req:true},
+    {k:"attacker_gender", l:"מגדר", t:"select", req:true} ]},
+  { title:"זמני אירוע", fields:[
+    {k:"date", l:"תאריך האירוע", t:"date", req:true},
+    {k:"call_time", l:"שעת קבלת הקריאה", t:"time", req:true},
+    {k:"response_time", l:"שעת הגעת צוות התגובה", t:"time", req:true} ]},
+  { title:"מספרי אירוע", fields:[
+    {k:"mda", l:"מד\"א", t:"num"},
+    {k:"police", l:"משטרה", t:"num"},
+    {k:"fire", l:"כב\"א", t:"num"} ]},
+  { title:"דוח האירוע", fields:[
+    {k:"hot_spot", l:"נקודה חמה", t:"area", req:true, hint:"נקודה חמה בה המאבטח היה צריך להיות בשעת האירוע. כתובת מלאה: רחוב + עיר"},
+    {k:"location", l:"מיקום האירוע", t:"area", req:true, hint:"כתובת מלאה: רחוב + עיר"},
+    {k:"general", l:"כללי", t:"area", req:true, hint:"לפרט בצורה כללית"},
+    {k:"details", l:"פרטי האירוע", t:"area", req:true, hint:"לפרט בצורה מפורטת"},
+    {k:"conclusions", l:"מסקנות", t:"area", hint:"במידה ויש"},
+    {k:"lessons", l:"לקחים", t:"area", hint:"במידה ויש"} ]}
+];
+const INC_FIELDS = INC_SECTIONS.reduce((a,s)=>a.concat(s.fields), []);
+const INC = { opts:null, id:null, status:null, data:{}, notes:{}, openNotes:{}, images:[], missing:{}, busy:false, error:null, msg:null, confirm:null, loadedFor:undefined, report:null };
+
+function incReset(id){
+  Object.assign(INC, { id:id||null, status:null, data:{}, notes:{}, openNotes:{}, images:[], missing:{}, busy:false, error:null, msg:null, confirm:null, loadedFor:undefined, report:null });
+}
+function incSync(){
+  INC_FIELDS.forEach(f=>{
+    const el = document.getElementById("inc_"+f.k); if(el) INC.data[f.k] = el.value;
+    const ne = document.getElementById("inc_note_"+f.k); if(ne) INC.notes[f.k] = ne.value;
+  });
+}
+function incClean(obj){ const o = {}; Object.keys(obj||{}).forEach(k=>{ const v = String(obj[k]==null?"":obj[k]).trim(); if(v) o[k] = v; }); return o; }
+function incStatusChip(st){
+  return st==="submitted" ? '<span style="color:#1b7f3b;font-weight:700;">✔ נשלח</span>'
+       : st==="pending" ? '<span style="color:#b25e00;font-weight:700;">🕒 ממתין למילוי</span>'
+       : '<span style="color:#7a5c00;font-weight:700;">📝 טיוטה</span>';
+}
+function incFmtDate(App, d){ return d ? App.fmtDateHeb(String(d).slice(0,10)) : ""; }
+async function incLoadForm(App, ms){
+  INC.loadedFor = INC.id;
+  try{
+    const [opts, rep] = await Promise.all([
+      INC.opts ? Promise.resolve(INC.opts) : App.apiRpc("inc_options_get", {p_token:ms.token}),
+      INC.id ? App.apiRpc("inc_get", {p_token:ms.token, p_id:INC.id}) : Promise.resolve(null)
+    ]);
+    INC.opts = opts || {};
+    if(rep){
+      INC.report = rep; INC.status = rep.status; INC.data = Object.assign({}, rep.data||{}); INC.notes = Object.assign({}, rep.notes||{}); INC.images = rep.images||[];
+      Object.keys(INC.notes).forEach(k=>{ if(INC.notes[k]) INC.openNotes[k] = true; });
+    }
+  }catch(e){ INC.error = e.message; }
+  App.render();
+}
+
+function incFieldHtml(App, f, ro){
+  const esc = App.escapeHtml, v = INC.data[f.k]==null ? "" : String(INC.data[f.k]);
+  const star = f.req ? '<span style="color:#b42318;">*</span> ' : "";
+  const miss = INC.missing[f.k] ? ' style="border:2px solid #b42318;"' : "";
+  let input = "";
+  if(ro){
+    const shown = f.t==="date" ? incFmtDate(App, v) : v;
+    input = `<div style="white-space:pre-wrap;padding:6px 0;font-weight:${f.t==="area"?400:600};">${shown?esc(shown):'<span class="muted">—</span>'}</div>`;
+    const note = INC.notes[f.k];
+    return `<div class="inc-card"><div class="inc-label">${esc(f.l)}</div>${input}${note?`<div class="muted" style="font-size:.9em;">💬 ${esc(note)}</div>`:""}</div>`;
+  }
+  if(f.t==="select"){
+    const list = (INC.opts && INC.opts[f.k]) || [];
+    const all = (v && list.indexOf(v)<0) ? list.concat([v]) : list;
+    input = `<select id="inc_${f.k}"><option value="">בחר</option>${all.map(o=>`<option value="${esc(o)}" ${o===v?"selected":""}>${esc(o)}</option>`).join("")}</select>`;
+  } else if(f.t==="area"){
+    input = `<textarea id="inc_${f.k}" rows="${f.k==="details"?6:3}" placeholder="הזן טקסט" style="width:100%;box-sizing:border-box;">${esc(v)}</textarea>`;
+  } else if(f.t==="num"){
+    input = `<input type="text" inputmode="numeric" id="inc_${f.k}" value="${esc(v)}" placeholder="הזן מספר" autocomplete="off">`;
+  } else if(f.t==="date"){
+    input = `<div class="flexbar" style="gap:6px;"><input type="date" id="inc_${f.k}" value="${esc(v)}"><button class="btn small secondary" data-action="portal-inc-today" data-k="${f.k}">📅 היום</button></div>`;
+  } else if(f.t==="time"){
+    input = `<div class="flexbar" style="gap:6px;"><input type="time" id="inc_${f.k}" value="${esc(v)}"><button class="btn small secondary" data-action="portal-inc-now" data-k="${f.k}">🕒 עכשיו</button></div>`;
+  }
+  const noteOpen = INC.openNotes[f.k];
+  return `<div class="inc-card"${miss}>
+    <div class="inc-label">${star}${esc(f.l)}</div>
+    ${f.hint?`<div class="muted" style="font-size:.88em;margin:-2px 0 6px;">${esc(f.hint)}</div>`:""}
+    ${input}
+    ${noteOpen ? `<textarea id="inc_note_${f.k}" rows="2" placeholder="הערה" style="width:100%;box-sizing:border-box;margin-top:6px;">${esc(INC.notes[f.k]||"")}</textarea>`
+               : `<button class="btn small secondary" style="margin-top:6px;" data-action="portal-inc-note" data-k="${f.k}">💬 הערה</button>`}
+  </div>`;
+}
+const INC_CSS = `<style>
+  .inc-card{background:#f5f7fb;border:1px solid #e3e9f0;border-radius:10px;padding:10px 12px;margin:8px 0;}
+  .inc-label{font-weight:700;margin-bottom:6px;}
+  .inc-card select,.inc-card input[type=text],.inc-card input[type=date],.inc-card input[type=time]{min-width:200px;max-width:100%;}
+  .inc-sec{color:#1f6fb2;margin:18px 0 4px;text-align:center;}
+  .inc-imgs{display:flex;flex-wrap:wrap;gap:8px;}
+  .inc-imgs .inc-img{position:relative;}
+  .inc-imgs img{width:130px;height:130px;object-fit:cover;border-radius:8px;border:1px solid #e3e9f0;}
+  @media print{ .inc-card{break-inside:avoid;background:#fff;} .inc-imgs img{width:45%;height:auto;} }
+</style>`;
+
+function renderIncident(App, ms, pg, a, wrap, loading, msgs){
+  const esc = App.escapeHtml;
+  const isAdmin = !!ms.is_admin;
+  if(pg==="inc-list"){
+    if(!PV.data){ pvLoad(App, "inc_list", {p_token:ms.token}); return loading(); }
+    if(PV.data.loading) return loading();
+    const rs = PV.data.r||[];
+    const drafts = rs.filter(r=>r.mine && r.status!=="submitted"), sent = rs.filter(r=>r.status==="submitted");
+    const row = r=>`<tr class="portal-click" data-action="portal-inc-open" data-id="${r.id}" data-edit="${r.mine && r.status!=="submitted"?1:0}">
+        <td>${incStatusChip(r.status)}</td><td>${esc(incFmtDate(App, r.date))||'<span class="muted">—</span>'}</td>
+        <td style="text-align:right;">${esc(r.city||"")}</td><td style="text-align:right;">${esc(r.classification||"")}</td>
+        <td>${esc(r.saveyu||"")}</td>${isAdmin?`<td style="text-align:right;">${esc(r.author||"")}</td>`:""}
+        <td>${r.images?`📷 ${r.images}`:""}</td></tr>`;
+    const head = `<thead><tr><th>מצב</th><th>תאריך</th><th style="text-align:right;">עיר</th><th style="text-align:right;">סיווג</th><th>SAVEYU</th>${isAdmin?'<th style="text-align:right;">קב"ט</th>':""}<th></th></tr></thead>`;
+    return wrap(`<div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;">
+        <h2 style="margin:0;">🚨 דו"חות אירוע חריג</h2>
+        <div class="flexbar" style="gap:6px;">
+          ${isAdmin?'<button class="btn small secondary" data-action="portal-pv" data-page="inc-opts">⚙️ עריכת רשימות</button>':""}
+          <button class="btn" data-action="portal-inc-new">➕ דו"ח חדש</button>
+        </div></div>
+      ${msgs}
+      ${drafts.length?`<h3>הטיוטות שלי (${drafts.length})</h3><table>${head}<tbody>${drafts.map(row).join("")}</tbody></table>`:""}
+      <h3>${isAdmin?"דו\"חות שנשלחו":"דו\"חות שנשלחו"} (${sent.length})</h3>
+      ${sent.length?`<table>${head}<tbody>${sent.map(row).join("")}</tbody></table>`:'<p class="muted">עדיין אין דו"חות.</p>'}`);
+  }
+  if(pg==="inc-opts"){
+    if(!isAdmin) return wrap(`<p class="muted">אין הרשאה.</p>`);
+    if(INC.loadedFor!=="opts"){ INC.loadedFor = "opts"; INC.opts = null; App.apiRpc("inc_options_get", {p_token:ms.token}).then(o=>{ INC.opts = o||{}; App.render(); }).catch(e=>{ INC.error = e.message; App.render(); }); }
+    if(!INC.opts) return loading();
+    return wrap(`<h2>⚙️ עריכת רשימות — דו"ח אירוע חריג</h2>
+      <p class="muted">כל שורה = אפשרות אחת ברשימה הנפתחת. הסדר כאן הוא הסדר שיופיע לקב"ט. שינוי לא משנה דו"חות שכבר נשלחו.</p>
+      ${INC.error?`<p class="shortage">${esc(INC.error)}</p>`:""}${INC.msg?`<p style="color:#1b7f3b;font-weight:600;">${esc(INC.msg)}</p>`:""}
+      ${Object.keys(INC_LISTS).map(k=>`<div class="inc-card">
+        <div class="inc-label">${esc(INC_LISTS[k])}</div>
+        <textarea id="incopt_${k}" rows="${Math.min(12, Math.max(4, ((INC.opts[k]||[]).length)+1))}" style="width:100%;box-sizing:border-box;">${esc((INC.opts[k]||[]).join("\n"))}</textarea>
+        <button class="btn small" style="margin-top:6px;" data-action="portal-inc-opts-save" data-k="${k}">שמור</button>
+      </div>`).join("")}`);
+  }
+  if(pg==="inc-form" || pg==="inc-view"){
+    const id = a.id || null;
+    if(INC.loadedFor!==id){ const keepOpts = INC.opts; incReset(id); INC.opts = keepOpts; incLoadForm(App, ms); return loading(); }
+    if(!INC.opts || (id && !INC.report && !INC.error)) return loading();
+    if(INC.error && !INC.report && id) return wrap(`<p class="shortage">${esc(INC.error)}</p>`);
+    const rep = INC.report || {};
+    const editable = pg==="inc-form" && (!id || (rep.mine && rep.status!=="submitted"));
+    const err = INC.error?`<p class="shortage">${esc(INC.error)}</p>`:"";
+    const ok = INC.msg?`<p style="color:#1b7f3b;font-weight:600;">${esc(INC.msg)}</p>`:"";
+    if(!editable){
+      const imgs = INC.images.map(i=>`<img src="${i.image_data}" alt="">`).join("");
+      return `${INC_CSS}<div class="card" id="printArea">
+        <div class="no-print flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;">
+          <span class="backlink" data-action="portal-pv-back">◀ חזרה</span>
+          <div class="flexbar" style="gap:6px;">
+            ${rep.can_reopen && rep.status==="submitted"?(INC.confirm==="reopen"
+              ? `<span style="font-weight:600;">לפתוח לקב"ט לתיקון?</span><button class="btn small" data-action="portal-inc-reopen">כן</button><button class="btn small secondary" data-action="portal-inc-confirm-no">לא</button>`
+              : `<button class="btn small secondary" data-action="portal-inc-reopen-ask">✏️ פתח לתיקון</button>`):""}
+            <button class="btn small" data-action="portal-inc-print">🖨️ הדפסה / PDF</button>
+          </div>
+        </div>
+        <h2 style="text-align:center;margin:6px 0;">דו"ח תחקיר אירוע חריג</h2>
+        <p class="muted" style="text-align:center;margin-top:0;">${incStatusChip(rep.status)} · נכתב ע"י ${esc(rep.author||"")}${rep.submitted_at?` · נשלח ${fmtDT(App, rep.submitted_at)}`:""}${rep.reopened_by?` · נפתח לתיקון ע"י ${esc(rep.reopened_by)} ${fmtDT(App, rep.reopened_at)}`:""}</p>
+        ${err}${ok}
+        ${INC_SECTIONS.map(s=>`<h3 class="inc-sec">${esc(s.title)}</h3>${s.fields.map(f=>incFieldHtml(App, f, true)).join("")}`).join("")}
+        ${INC.images.length?`<h3 class="inc-sec">תמונות</h3><div class="inc-imgs">${imgs}</div>`:""}
+      </div>`;
+    }
+    const imgs = INC.images.map(i=>`<div class="inc-img"><img src="${i.image_data}" alt=""><button class="btn small secondary" style="position:absolute;top:4px;left:4px;padding:2px 7px;" data-action="portal-inc-img-del" data-id="${i.id}" title="הסר">✕</button></div>`).join("");
+    const nMissing = Object.keys(INC.missing).length;
+    return `${INC_CSS}<div class="card">
+      <div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;">
+        <span class="backlink" data-action="portal-pv-back">◀ חזרה</span>
+        ${INC.id ? (INC.confirm==="discard"
+          ? `<span><b>למחוק את הטיוטה?</b> <button class="btn small" style="background:#b42318;border-color:#b42318;" data-action="portal-inc-discard">כן, מחק</button> <button class="btn small secondary" data-action="portal-inc-confirm-no">לא</button></span>`
+          : `<button class="btn small secondary" data-action="portal-inc-discard-ask">🗑 מחיקת טיוטה</button>`) : ""}
+      </div>
+      <h2 style="text-align:center;margin:6px 0;">דו"ח אירוע חריג</h2>
+      ${rep.reopened_by?`<div class="note-box">הדו"ח נפתח לתיקון ע"י ${esc(rep.reopened_by)} ב-${fmtDT(App, rep.reopened_at)}. אחרי התיקון לוחצים "שלח" שוב.</div>`:""}
+      ${err}${ok}
+      ${INC_SECTIONS.map(s=>`<h3 class="inc-sec">${esc(s.title)}</h3>${s.fields.map(f=>incFieldHtml(App, f, false)).join("")}`).join("")}
+      <h3 class="inc-sec">תמונות</h3>
+      <div class="inc-card">
+        <div class="muted" style="margin-bottom:6px;">במידה ויש תמונות ניתן להעלות כאן (עד 20)</div>
+        <div class="inc-imgs">${imgs}
+          <label class="btn secondary" style="cursor:pointer;width:130px;height:130px;display:flex;align-items:center;justify-content:center;font-size:2em;">📷➕<input type="file" accept="image/*" multiple data-action="portal-inc-img-add" style="display:none;"></label>
+        </div>
+      </div>
+      ${nMissing?`<p class="shortage">חסרים ${nMissing} שדות חובה — מסומנים באדום.</p>`:""}
+      <div class="flexbar" style="gap:8px;justify-content:center;margin-top:14px;position:sticky;bottom:0;background:#fff;padding:10px 0;">
+        ${INC.confirm==="send"
+          ? `<b>לשלוח? אחרי השליחה הדו"ח ננעל לעריכה.</b> <button class="btn" data-action="portal-inc-send" ${INC.busy?"disabled":""}>כן, שלח</button> <button class="btn secondary" data-action="portal-inc-confirm-no">לא</button>`
+          : `<button class="btn" data-action="portal-inc-send-ask" ${INC.busy?"disabled":""} style="min-width:120px;">שלח</button>
+             <button class="btn secondary" data-action="portal-inc-save" ${INC.busy?"disabled":""}>💾 שמור טיוטה</button>`}
+        ${INC.busy?'<span class="muted">שומר...</span>':""}
+      </div>
+    </div>`;
+  }
+  return wrap(`<p class="muted">לא נמצא.</p>`);
+}
+
+async function incSave(App, ms, submit){
+  incSync();
+  const data = incClean(INC.data), notes = incClean(INC.notes);
+  if(submit){
+    INC.missing = {};
+    INC_FIELDS.forEach(f=>{ if(f.req && !data[f.k]) INC.missing[f.k] = true; });
+    if(Object.keys(INC.missing).length){ INC.confirm = null; INC.error = null; INC.msg = null; App.render(); const first = document.querySelector('.inc-card[style*="b42318"]'); if(first && first.scrollIntoView) first.scrollIntoView({behavior:"smooth", block:"center"}); return null; }
+  }
+  INC.busy = true; INC.error = null; INC.msg = null; App.render();
+  try{
+    const id = await App.apiRpc("inc_save", {p_token:ms.token, p_id:INC.id, p_data:data, p_notes:notes, p_submit:!!submit});
+    INC.busy = false; INC.confirm = null;
+    const wasNew = !INC.id; INC.id = id; INC.loadedFor = id; PV.args = Object.assign({}, PV.args, {id});
+    if(submit){
+      INC.report = null; INC.loadedFor = undefined; PV.page = "inc-view";
+      App.render(); return id;
+    }
+    INC.status = "draft"; if(!INC.report) INC.report = {mine:true, status:"draft"};
+    INC.msg = wasNew ? "הטיוטה נשמרה." : "הטיוטה עודכנה."; App.render();
+    return id;
+  }catch(e){ INC.busy = false; INC.confirm = null; INC.error = e.message; App.render(); return null; }
+}
+async function incClick(App, a, el){
+  const ms = loadMgr(App); if(!ms) return;
+  if(a==="portal-inc-new"){ incReset(null); INC.loadedFor = undefined; return pvGo(App, "inc-form", {id:null}); }
+  if(a==="portal-inc-open"){ incReset(el.dataset.id); INC.loadedFor = undefined; return pvGo(App, el.dataset.edit==="1" ? "inc-form" : "inc-view", {id:el.dataset.id}); }
+  if(a==="portal-inc-today"){ const e = document.getElementById("inc_"+el.dataset.k); if(e){ e.value = App.fmtDate(new Date()); } return; }
+  if(a==="portal-inc-now"){ const e = document.getElementById("inc_"+el.dataset.k); if(e){ const d = new Date(), p = n=>String(n).padStart(2,"0"); e.value = p(d.getHours())+":"+p(d.getMinutes()); } return; }
+  if(a==="portal-inc-note"){ incSync(); INC.openNotes[el.dataset.k] = true; App.render(); const n = document.getElementById("inc_note_"+el.dataset.k); if(n) n.focus(); return; }
+  if(a==="portal-inc-save") return incSave(App, ms, false);
+  if(a==="portal-inc-send-ask"){ incSync(); INC.confirm = "send"; INC.error = null; return App.render(); }
+  if(a==="portal-inc-send") return incSave(App, ms, true);
+  if(a==="portal-inc-confirm-no"){ incSync(); INC.confirm = null; return App.render(); }
+  if(a==="portal-inc-discard-ask"){ incSync(); INC.confirm = "discard"; return App.render(); }
+  if(a==="portal-inc-discard"){
+    try{ await App.apiRpc("inc_discard_draft", {p_token:ms.token, p_id:INC.id}); incReset(null); pvBack(App); PV.msg = "הטיוטה נמחקה."; App.render(); }
+    catch(e){ INC.error = e.message; INC.confirm = null; App.render(); }
+    return;
+  }
+  if(a==="portal-inc-img-del"){
+    incSync();
+    try{ await App.apiRpc("inc_hide_image", {p_token:ms.token, p_image_id:el.dataset.id}); INC.images = INC.images.filter(i=>i.id!==el.dataset.id); }
+    catch(e){ INC.error = e.message; }
+    return App.render();
+  }
+  if(a==="portal-inc-print"){ window.print(); return; }
+  if(a==="portal-inc-reopen-ask"){ INC.confirm = "reopen"; return App.render(); }
+  if(a==="portal-inc-reopen"){
+    try{ await App.apiRpc("inc_reopen", {p_token:ms.token, p_id:INC.id}); incReset(null); pvBack(App); PV.msg = "הדו\"ח נפתח לתיקון. הקב\"ט קיבל התראה, והדו\"ח יחזור לרשימה אחרי שישלח אותו שוב."; App.render(); }
+    catch(e){ INC.error = e.message; INC.confirm = null; App.render(); }
+    return;
+  }
+  if(a==="portal-inc-opts-save"){
+    const k = el.dataset.k, t = document.getElementById("incopt_"+k);
+    const list = (t?t.value:"").split("\n").map(s=>s.trim()).filter(Boolean);
+    try{ await App.apiRpc("inc_options_set", {p_token:ms.token, p_key:k, p_options:list}); INC.opts = await App.apiRpc("inc_options_get", {p_token:ms.token}); INC.msg = `הרשימה "${INC_LISTS[k]}" נשמרה.`; INC.error = null; }
+    catch(e){ INC.error = e.message; INC.msg = null; }
+    return App.render();
+  }
+}
+async function incAddImages(App, files){
+  const ms = loadMgr(App); if(!ms || !files.length) return;
+  incSync();
+  if(!INC.id){ const id = await incSave(App, ms, false); if(!id) return; }
+  INC.busy = true; INC.error = null; INC.msg = null; App.render();
+  try{
+    for(const f of files){
+      const data = await compressImage(f);
+      const id = await App.apiRpc("inc_add_image", {p_token:ms.token, p_id:INC.id, p_image_data:data});
+      INC.images.push({id, image_data:data});
+    }
+    INC.msg = files.length>1 ? `${files.length} תמונות נוספו.` : "התמונה נוספה.";
+  }catch(e){ INC.error = e.message; }
+  INC.busy = false; App.render();
+}
+
 /* ---------- עמודי משנה (view "pview") ---------- */
 const PV_TITLES = { "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
-  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום" };
+  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
 function pvGo(App, page, args, push){
   if(push !== false && App.S.view==="pview" && PV.page) PV.stack.push({page:PV.page, args:PV.args});
@@ -1096,6 +1386,7 @@ function renderPView(App){
   const pg = PV.page, a = PV.args;
   const needLoad = (fn, args)=>{ if(!PV.data){ pvLoad(App, fn, args); return true; } return !!PV.data.loading; };
   if(PV.data && PV.data.error) return wrap(`<p class="shortage">${esc(PV.data.error)}</p>`);
+  if(pg && pg.indexOf("inc-")===0) return renderIncident(App, ms, pg, a, wrap, loading, msgs);
 
   if(pg==="trn-training"){
     if(needLoad("trn_training_detail", {p_token:tok, p_training_id:a.id})) return loading();
@@ -1797,6 +2088,7 @@ async function onChangeTraining(App, e){
     return App.render();
   }
   if(a==="portal-post-files"){ return addPostFiles(App, t.files); }
+  if(a==="portal-inc-img-add"){ const fs = Array.from(t.files||[]); t.value = ""; return incAddImages(App, fs); }
   if(a==="portal-onb-open"){ PV.onlyOpen = t.checked; const l = document.getElementById("onbList"); if(l) l.innerHTML = onbListHtml(App); }
 }
 
@@ -1924,6 +2216,13 @@ function renderManagerHome(App, ms){
       <button class="btn small secondary" data-action="portal-mgr-logout">יציאה</button>
     </div>
   </div>
+  ${(logi.length || ms.is_admin) ? `<div class="card">
+    <h3>🚨 דו"ח אירוע חריג</h3>
+    <div class="grid-teams">
+      <div class="team-tile" data-action="portal-inc-new"><div style="font-size:1.1em;font-weight:700;">➕ דו"ח חדש</div><div class="muted" style="font-size:.85em;margin-top:4px;">תחקיר אירוע חריג</div></div>
+      <div class="team-tile" data-action="portal-pv" data-page="inc-list"><div style="font-size:1.1em;font-weight:700;">📋 ${ms.is_admin?"כל הדו\"חות":"הדו\"חות שלי"}</div><div class="muted" style="font-size:.85em;margin-top:4px;">טיוטות ודו"חות שנשלחו</div></div>
+    </div>
+  </div>` : ""}
   ${ms.is_admin ? `<div class="card">
     <h3>🔑 ניהול מערכת</h3>
     <div class="grid-teams">${tile("portal-mh-codes", "🔑 עריכת קודים של מנהלים", "קביעה ושינוי קוד אישי לכל מנהל")}</div>
@@ -2193,6 +2492,7 @@ function onClick(App, a, el){
     return pvGo(App, d.page, {id:d.id, kind:d.kind, from:d.from, name:d.name, program:d.program, ver:d.ver});
   }
   if(a==="portal-pv-back") return pvBack(App);
+  if(a.indexOf("portal-inc-")===0) return incClick(App, a, el);
   if(a==="portal-quiz-addopt"){ const Q = syncQuiz(); if(Q){ Q.questions[+el.dataset.q].options.push(""); } return App.render(); }
   if(a==="portal-quiz-delopt"){ const Q = syncQuiz(); if(Q){ const q = Q.questions[+el.dataset.q], o = +el.dataset.o; q.options.splice(o,1); if(q.correct===o) q.correct = null; else if(q.correct>o) q.correct--; } return App.render(); }
   if(a==="portal-quiz-addq"){ const Q = syncQuiz(); if(Q){ (Q.questions = Q.questions||[]).push({q:"", options:["",""], correct:null}); } return App.render(); }
