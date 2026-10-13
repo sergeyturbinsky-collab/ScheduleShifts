@@ -1070,10 +1070,10 @@ const INC_SECTIONS = [
     {k:"lessons", l:"לקחים", t:"area", hint:"במידה ויש"} ]}
 ];
 const INC_FIELDS = INC_SECTIONS.reduce((a,s)=>a.concat(s.fields), []);
-const INC = { opts:null, id:null, status:null, data:{}, notes:{}, openNotes:{}, images:[], missing:{}, busy:false, error:null, msg:null, confirm:null, loadedFor:undefined, report:null };
+const INC = { opts:null, id:null, status:null, data:{}, notes:{}, openNotes:{}, images:[], missing:{}, busy:false, error:null, msg:null, confirm:null, loadedFor:undefined, report:null, moked:null };
 
 function incReset(id){
-  Object.assign(INC, { id:id||null, status:null, data:{}, notes:{}, openNotes:{}, images:[], missing:{}, busy:false, error:null, msg:null, confirm:null, loadedFor:undefined, report:null });
+  Object.assign(INC, { id:id||null, status:null, data:{}, notes:{}, openNotes:{}, images:[], missing:{}, busy:false, error:null, msg:null, confirm:null, loadedFor:undefined, report:null, moked:null });
 }
 function incSync(){
   INC_FIELDS.forEach(f=>{
@@ -1097,7 +1097,7 @@ async function incLoadForm(App, ms){
     ]);
     INC.opts = opts || {};
     if(rep){
-      INC.report = rep; INC.status = rep.status; INC.data = Object.assign({}, rep.data||{}); INC.notes = Object.assign({}, rep.notes||{}); INC.images = rep.images||[];
+      INC.report = rep; INC.status = rep.status; INC.data = Object.assign({}, rep.data||{}); INC.notes = Object.assign({}, rep.notes||{}); INC.images = rep.images||[]; INC.moked = rep.moked_data || null;
       Object.keys(INC.notes).forEach(k=>{ if(INC.notes[k]) INC.openNotes[k] = true; });
     }
   }catch(e){ INC.error = e.message; }
@@ -1147,6 +1147,188 @@ const INC_CSS = `<style>
   .inc-imgs img{width:130px;height:130px;object-fit:cover;border-radius:8px;border:1px solid #e3e9f0;}
   @media print{ .inc-card{break-inside:avoid;background:#fff;} .inc-imgs img{width:45%;height:auto;} }
 </style>`;
+
+/* ---------- קריאת דו"ח SayVU (PDF של המוקד) ----------
+   pages: [{items:[{s, x, y, w}]}] - x,y בנקודות PDF (y מלמטה), w רוחב. title = כותרת המסמך (מטא-דאטה).
+   מחזיר את הפרטים היבשים של האירוע. נבנה לפי דו"ח לדוגמה של סרגיי (אירוע 212301, 06/09/2026). */
+function sayvuParse(pages, title){
+  const norm = s=>String(s||"").replace(/[‎‏‪-‮]/g,"").replace(/\s+/g," ").trim();
+  const lab = s=>norm(s).replace(/:/g,"").trim();
+  const out = { source:"SayVU", title:norm(title) };
+  const body = p=>p.items.filter(i=>norm(i.s) && i.y > 70 && i.y < 800);
+  // שורות: פריטים באותו גובה (±3), מימין לשמאל
+  const linesOf = items=>{
+    const sorted = items.slice().sort((a,b)=>b.y-a.y || b.x-a.x);
+    const lines = [];
+    sorted.forEach(it=>{
+      const l = lines.find(L=>Math.abs(L.y-it.y)<=3);
+      if(l) l.items.push(it); else lines.push({y:it.y, items:[it]});
+    });
+    lines.forEach(L=>{ L.items.sort((a,b)=>b.x-a.x); L.text = norm(L.items.map(i=>i.s).join(" ")).replace(/\s+,/g,",").replace(/\s+:/g,":"); });
+    return lines.sort((a,b)=>b.y-a.y);
+  };
+  const t = norm(title);
+  let m = t.match(/SayVU Report\s*-\s*(\d+)/i); if(m) out.event_no = m[1];
+  m = t.match(/(9725\d{8}|05\d{8})/); if(m) out.reporter_phone = m[1];
+  // תווית -> הערך הקרוב משמאל באותה שורה
+  const valueOf = (items, label)=>{
+    const L = items.filter(i=>lab(i.s)===label);
+    for(const li of L){
+      const row = items.filter(i=>Math.abs(i.y-li.y)<=3 && i.x < li.x - 1 && lab(i.s)!=="" && lab(i.s)!==label).sort((a,b)=>b.x-a.x);
+      const labels = ["דווח על ידי","תפקיד המדווח/ת","תאריך הדיווח","שעת הדיווח","קטגוריית החירום","תת קטגוריה","סטטוס","מוקד","מפעיל","מספר הטלפון של","המדווח/ת"];
+      const vals = [];
+      for(const r of row){ if(labels.indexOf(lab(r.s))>=0) break; vals.push(norm(r.s)); }
+      if(vals.length) return norm(vals.join(" "));
+    }
+    return "";
+  };
+  pages.forEach((p, pi)=>{
+    const items = body(p);
+    const all = items.map(i=>lab(i.s));
+    if(all.indexOf("מידע כללי")>=0 || all.indexOf("תאריך הדיווח")>=0){
+      out.reported_by = valueOf(items, "דווח על ידי") || out.reported_by;
+      out.reporter_role = valueOf(items, "תפקיד המדווח/ת") || out.reporter_role;
+      const d = valueOf(items, "תאריך הדיווח"); const dm = d.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if(dm) out.date = `${dm[3]}-${dm[2].padStart(2,"0")}-${dm[1].padStart(2,"0")}`;
+      const h = valueOf(items, "שעת הדיווח"); const hm = h.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+      if(hm) out.call_time = `${hm[1].padStart(2,"0")}:${hm[2]}`, out.call_time_full = hm[0];
+      out.category = valueOf(items, "קטגוריית החירום") || out.category;
+      out.sub_category = valueOf(items, "תת קטגוריה") || out.sub_category;
+      out.status = valueOf(items, "סטטוס") || out.status;
+      out.center = valueOf(items, "מוקד") || out.center;
+      const ph = items.map(i=>norm(i.s).replace(/\D/g,"")).find(x=>/^9725\d{8}$/.test(x));
+      if(ph) out.reporter_phone = ph;
+      if(!out.event_no){ const en = items.map(i=>norm(i.s)).find(x=>/^\d{5,8}$/.test(x)); if(en) out.event_no = en; }
+    }
+    const lines = linesOf(items);
+    // מיקום
+    const li = lines.findIndex(L=>lab(L.text)==="מיקום");
+    if(li>=0){
+      for(let k=li+1; k<Math.min(lines.length, li+4); k++){
+        const tx = lines[k].text;
+        const cm = tx.match(/(-?\d{1,3}\.\d{3,}),\s*(-?\d{1,3}\.\d{3,})/);
+        if(cm){ out.lat = +cm[1]; out.lng = +cm[2]; continue; }
+        if(!out.address && !/google maps|פתח מיקום/i.test(tx)) out.address = tx;
+      }
+      if(out.address){ const parts = out.address.split(","); if(parts.length>1) out.city = norm(parts[parts.length-1]); }
+    }
+    // הערות מוקד פנימיות + תמלול הודעות קוליות
+    const sections = [["הערות מוקד פנימיות","הערה"],["תמלול הודעות קוליות","תמלול הודעה"]];
+    sections.forEach(([head, noteLab])=>{
+      const hi = lines.findIndex(L=>lab(L.text)===head); if(hi<0) return;
+      let cur = null;
+      for(let k=hi+1; k<lines.length; k++){
+        const L = lines[k], tx = L.text;
+        if(sections.some(s=>lab(tx)===s[0])) break;
+        if(/^נוצר:/.test(tx) || /נוצר:?$/.test(tx) || L.items.some(i=>lab(i.s)==="נוצר")){
+          const dt = tx.match(/(\d{2}:\d{2}:\d{2})\s+(\d{2}\/\d{2}\/\d{4})/) || tx.match(/(\d{2}\/\d{2}\/\d{4})\s+(\d{2}:\d{2}:\d{2})/);
+          const by = (tx.split(/נשלח על ידי:?/)[1]||"").trim();
+          cur = { at: dt ? (dt[1].indexOf(":")>0 ? dt[1] : dt[2]) : "", by, text:"" };
+          (out[noteLab==="הערה"?"notes":"voice"] = out[noteLab==="הערה"?"notes":"voice"]||[]).push(cur);
+          continue;
+        }
+        if(!cur) continue;
+        const txt = tx.replace(/^[:\s]+/, "").replace(new RegExp("^"+noteLab+"[:\\s]*"), "").replace(new RegExp("[:\\s]*"+noteLab+":?$"), "").replace(/^No text results$/i, "");
+        cur.text = norm((cur.text ? cur.text+" " : "") + txt);
+      }
+    });
+    // נתוני הזנקה
+    if(all.indexOf("נתוני הזנקה")>=0){
+      const hdr = n=>items.find(i=>norm(i.s)===n);
+      const arrH = items.filter(i=>norm(i.s)==="הגיע").sort((a,b)=>b.x-a.x)[0];
+      const cols = { name:hdr("שם"), role:hdr("תפקיד"), team:hdr("צוות תגובה"), recv:hdr("הדיווח התקבל"), dist:hdr("מרחק"), arr:arrH,
+                     diff:hdr("הבדל") || items.find(i=>/^הגיע\s*[()]/.test(norm(i.s))) };
+      if(cols.arr && cols.team){
+        const cx = i=>i.x + (i.w||0)/2;
+        const centers = Object.keys(cols).filter(k=>cols[k]).map(k=>({k, c:cx(cols[k])}));
+        const colOf = i=>{ let best=null, bd=1e9; centers.forEach(c=>{ const d = Math.abs(cx(i)-c.c); if(d<bd){ bd=d; best=c.k; } }); return best; };
+        const hy = cols.arr.y;
+        // מאחדים פריטים צמודים באותה שורה (למשל "בית שמש" + "3")
+        const raw = items.filter(i=>i.y < hy-8).sort((a,b)=>b.y-a.y || b.x-a.x), merged = [];
+        raw.forEach(it=>{
+          const last = merged[merged.length-1];
+          if(last && Math.abs(last.y-it.y)<=1 && (norm(it.s).length<=2 || norm(last.s).length<=2) && /\S/.test(it.s) && last.x - (it.x + (it.w||0)) < 6 && last.x - (it.x + (it.w||0)) > -2){
+            last.s = last.s + " " + it.s; last.w = (last.x + (last.w||0)) - it.x; last.x = it.x;
+          } else merged.push({s:it.s, x:it.x, y:it.y, w:it.w});
+        });
+        const cells = merged.map(i=>({i, col:colOf(i)}));
+        const times = cells.filter(c=>c.col==="arr" && /^\d{2}:\d{2}:\d{2}$/.test(norm(c.i.s)));
+        out.dispatch = times.map(tc=>{
+          const y0 = tc.i.y;
+          const inBand = c=>c.i.y >= y0-12 && c.i.y <= y0+28;
+          const txt = col=>norm(cells.filter(c=>c.col===col && inBand(c)).sort((a,b)=>b.i.y-a.i.y || b.i.x-a.i.x).map(c=>c.i.s).join(" "));
+          return { name:txt("name"), role:txt("role"), team:txt("team"), received:(txt("recv").match(/\d{2}:\d{2}:\d{2}/)||[""])[0],
+                   distance:txt("dist").replace(/קבלה/,"").trim(), arrived:norm(tc.i.s), diff:txt("diff") };
+        }).sort((a,b)=>a.arrived.localeCompare(b.arrived));
+        out.dispatch_text = norm(items.filter(i=>i.y < hy-8).map(i=>i.s).join(" "));
+        const ours = out.dispatch.filter(d=>/מאבטח/.test(d.team));
+        const pick = (ours.length ? ours : out.dispatch)[0];
+        if(pick) out.response_time = pick.arrived.slice(0,5), out.response_by = [pick.name, pick.role].filter(Boolean).join(" · ");
+      }
+    }
+  });
+  return out;
+}
+
+let PDFJS_P = null;
+function loadPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if(!PDFJS_P) PDFJS_P = new Promise((res, rej)=>{
+    const sc = document.createElement("script");
+    sc.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    sc.onload = ()=>{ try{ window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"; res(window.pdfjsLib); }catch(e){ PDFJS_P = null; rej(e); } };
+    sc.onerror = ()=>{ PDFJS_P = null; rej(new Error("לא הצלחתי לטעון את רכיב קריאת ה-PDF. בדקו את החיבור לאינטרנט ונסו שוב.")); };
+    document.head.appendChild(sc);
+  });
+  return PDFJS_P;
+}
+async function readSayvuFile(file){
+  const lib = await loadPdfJs();
+  const data = new Uint8Array(await file.arrayBuffer());
+  const doc = await lib.getDocument({data, isEvalSupported:false}).promise;
+  let title = ""; try{ const meta = await doc.getMetadata(); title = (meta && meta.info && meta.info.Title) || ""; }catch(e){}
+  const pages = [];
+  for(let n=1; n<=doc.numPages; n++){
+    const pg = await doc.getPage(n), tc = await pg.getTextContent();
+    pages.push({ items: tc.items.filter(i=>typeof i.str==="string").map(i=>({s:i.str, x:i.transform[4], y:i.transform[5], w:i.width})) });
+  }
+  return sayvuParse(pages, title);
+}
+/* ממלא את שדות הטופס מתוך הדו"ח של המוקד. רק שדות שנמצאו בקובץ. */
+function incApplyMoked(mk){
+  const opts = INC.opts || {}, set = (k, v)=>{ if(v) INC.data[k] = v; };
+  set("saveyu", mk.event_no); set("date", mk.date); set("call_time", mk.call_time); set("response_time", mk.response_time);
+  set("location", mk.address);
+  if(mk.city){ const c = (opts.city||[]).find(o=>o===mk.city) || (opts.city||[]).find(o=>mk.city.indexOf(o)>=0 || o.indexOf(mk.city)>=0) || mk.city; set("city", c); }
+  if(mk.category){
+    const full = mk.sub_category ? `${mk.category} - ${mk.sub_category}` : mk.category, list = opts.classification||[];
+    set("classification", list.find(o=>o===full) || list.find(o=>o===mk.category) || full);
+  }
+  const hay = [mk.dispatch_text||""].concat((mk.dispatch||[]).map(d=>d.team+" "+d.name)).join(" ");
+  const op = (opts.operator||[]).filter(o=>o!=="אחר" && hay.indexOf(o)>=0).sort((a,b)=>b.length-a.length)[0];
+  if(op) set("operator", op);
+}
+function incMokedHtml(App, mk){
+  if(!mk) return "";
+  const esc = App.escapeHtml;
+  const notes = (mk.notes||[]).filter(n=>n.text && !/^additional_detail$/i.test(n.text));
+  const voice = (mk.voice||[]).filter(n=>n.text && !/no text results/i.test(n.text));
+  const row = (l, v)=>v ? `<div><span class="muted">${esc(l)}:</span> <b>${esc(v)}</b></div>` : "";
+  return `<div class="inc-card" style="background:#eef6ff;border-color:#b9d7f5;">
+    <div class="inc-label">📄 מידע מהמוקד — SayVU${mk.event_no?` #${esc(mk.event_no)}`:""}</div>
+    ${row("קטגוריה", [mk.category, mk.sub_category].filter(Boolean).join(" - "))}
+    ${row("דווח ע\"י", [mk.reported_by, mk.reporter_role].filter(Boolean).join(" · "))}${row("טלפון המדווח", mk.reporter_phone)}
+    ${row("תאריך ושעת הדיווח", [mk.date?App.fmtDateHeb(mk.date):"", mk.call_time_full||mk.call_time].filter(Boolean).join(" "))}
+    ${row("מיקום", mk.address)}${mk.lat?`<div class="no-print"><a href="https://www.google.com/maps?q=${mk.lat},${mk.lng}" target="_blank" rel="noopener">📍 פתח במפה</a></div>`:""}
+    ${row("סטטוס", mk.status)}
+    ${(mk.dispatch||[]).length?`<div style="margin-top:6px;"><span class="muted">נתוני הזנקה:</span>
+      <table style="font-size:.9em;"><thead><tr><th style="text-align:right;">שם</th><th style="text-align:right;">תפקיד</th><th style="text-align:right;">צוות</th><th>קיבל</th><th>הגיע</th><th>זמן</th></tr></thead><tbody>
+      ${mk.dispatch.map(d=>`<tr><td style="text-align:right;">${esc(d.name)}</td><td style="text-align:right;">${esc(d.role)}</td><td style="text-align:right;">${esc(d.team)}</td><td>${esc(d.received||"")}</td><td><b>${esc(d.arrived)}</b></td><td>${esc(d.diff||"")}</td></tr>`).join("")}
+      </tbody></table></div>`:""}
+    ${notes.length?`<div style="margin-top:6px;"><span class="muted">הערות המוקד:</span>${notes.map(n=>`<div style="margin:3px 0;"><span class="muted" style="font-size:.85em;">${esc(n.at)}${n.by?` · ${esc(n.by)}`:""}</span> — ${esc(n.text)}</div>`).join("")}</div>`:""}
+    ${voice.length?`<div style="margin-top:6px;"><span class="muted">תמלול הודעות קוליות:</span>${voice.map(n=>`<div>${esc(n.at)} — ${esc(n.text)}</div>`).join("")}</div>`:""}
+  </div>`;
+}
 
 function renderIncident(App, ms, pg, a, wrap, loading, msgs){
   const esc = App.escapeHtml;
@@ -1210,6 +1392,7 @@ function renderIncident(App, ms, pg, a, wrap, loading, msgs){
         <h2 style="text-align:center;margin:6px 0;">דו"ח תחקיר אירוע חריג</h2>
         <p class="muted" style="text-align:center;margin-top:0;">${incStatusChip(rep.status)} · נכתב ע"י ${esc(rep.author||"")}${rep.submitted_at?` · נשלח ${fmtDT(App, rep.submitted_at)}`:""}${rep.reopened_by?` · נפתח לתיקון ע"י ${esc(rep.reopened_by)} ${fmtDT(App, rep.reopened_at)}`:""}</p>
         ${err}${ok}
+        ${incMokedHtml(App, INC.moked)}
         ${INC_SECTIONS.map(s=>`<h3 class="inc-sec">${esc(s.title)}</h3>${s.fields.map(f=>incFieldHtml(App, f, true)).join("")}`).join("")}
         ${INC.images.length?`<h3 class="inc-sec">תמונות</h3><div class="inc-imgs">${imgs}</div>`:""}
       </div>`;
@@ -1226,6 +1409,11 @@ function renderIncident(App, ms, pg, a, wrap, loading, msgs){
       <h2 style="text-align:center;margin:6px 0;">דו"ח אירוע חריג</h2>
       ${rep.reopened_by?`<div class="note-box">הדו"ח נפתח לתיקון ע"י ${esc(rep.reopened_by)} ב-${fmtDT(App, rep.reopened_at)}. אחרי התיקון לוחצים "שלח" שוב.</div>`:""}
       ${err}${ok}
+      <div class="inc-card" style="text-align:center;">
+        <label class="btn" style="cursor:pointer;display:inline-block;">📄 ${INC.moked?"טעינה מחדש מ":"מילוי אוטומטי מ"}דו"ח SayVU של המוקד (PDF)<input type="file" accept="application/pdf,.pdf" data-action="portal-inc-pdf" style="display:none;"></label>
+        <div class="muted" style="font-size:.85em;margin-top:6px;">ממלא את מספר האירוע, התאריך והשעות, העיר, המיקום, הסיווג והמפעיל. את השאר משלימים ידנית.</div>
+      </div>
+      ${incMokedHtml(App, INC.moked)}
       ${INC_SECTIONS.map(s=>`<h3 class="inc-sec">${esc(s.title)}</h3>${s.fields.map(f=>incFieldHtml(App, f, false)).join("")}`).join("")}
       <h3 class="inc-sec">תמונות</h3>
       <div class="inc-card">
@@ -1306,6 +1494,22 @@ async function incClick(App, a, el){
     catch(e){ INC.error = e.message; INC.msg = null; }
     return App.render();
   }
+}
+async function incLoadPdf(App, file){
+  const ms = loadMgr(App); if(!ms || !file) return;
+  incSync();
+  INC.busy = true; INC.error = null; INC.msg = "קורא את הקובץ..."; App.render();
+  let mk;
+  try{ mk = await readSayvuFile(file); }
+  catch(e){ INC.busy = false; INC.msg = null; INC.error = "לא הצלחתי לקרוא את הקובץ: " + e.message; return App.render(); }
+  if(!mk || (!mk.event_no && !mk.date && !mk.address)){ INC.busy = false; INC.msg = null; INC.error = "הקובץ לא נראה כמו דו\"ח SayVU של המוקד."; return App.render(); }
+  INC.busy = false; INC.msg = null;
+  incApplyMoked(mk); INC.moked = mk; INC.missing = {};
+  App.render(); // השדות שמולאו מוצגים לפני השמירה (השמירה קוראת אותם מהמסך)
+  const id = await incSave(App, ms, false); if(!id) return;
+  try{ await App.apiRpc("inc_set_moked", {p_token:ms.token, p_id:id, p_moked:mk, p_file_name:file.name||""}); INC.msg = `הפרטים מדו"ח SayVU${mk.event_no?" #"+mk.event_no:""} מולאו ונשמרו בטיוטה. בדקו אותם והשלימו את השאר.`; }
+  catch(e){ INC.error = e.message; }
+  App.render();
 }
 async function incAddImages(App, files){
   const ms = loadMgr(App); if(!ms || !files.length) return;
@@ -2088,6 +2292,7 @@ async function onChangeTraining(App, e){
     return App.render();
   }
   if(a==="portal-post-files"){ return addPostFiles(App, t.files); }
+  if(a==="portal-inc-pdf"){ const f = t.files && t.files[0]; t.value = ""; return incLoadPdf(App, f); }
   if(a==="portal-inc-img-add"){ const fs = Array.from(t.files||[]); t.value = ""; return incAddImages(App, fs); }
   if(a==="portal-onb-open"){ PV.onlyOpen = t.checked; const l = document.getElementById("onbList"); if(l) l.innerHTML = onbListHtml(App); }
 }
