@@ -649,7 +649,17 @@ const W = { pin:null, list:null, error:null, msg:null };
 function renderManagerPasswords(App){
   const esc = App.escapeHtml;
   const ms = loadMgr(App);
-  if(!W.list && ms && ms.is_admin && !W.loading){ W.loading = true; W.pin = "mgr:" + ms.token; pwLoad(App).finally(()=>{ W.loading = false; }); return `<div class="card"><p class="muted">טוען...</p></div>`; }
+  if(!W.list && ms && ms.is_admin && !W.loading && !W.tried){ W.loading = true; W.tried = true; W.pin = "mgr:" + ms.token; pwLoad(App).finally(()=>{ W.loading = false; }); return `<div class="card"><p class="muted">טוען...</p></div>`; }
+  if(W.loading) return `<div class="card"><p class="muted">טוען...</p></div>`;
+  if(!W.list && ms && ms.is_admin){
+    return `<div class="card">
+      <span class="backlink" data-action="go-home">◀ חזרה</span>
+      <h2>קודים של מנהלים</h2>
+      <p class="shortage">${esc(W.error || "לא הצלחתי לטעון את רשימת המנהלים")}</p>
+      <p class="muted">אם זה חוזר - צא מהמשתמש והתחבר שוב עם הקוד שלך.</p>
+      <button class="btn" data-action="portal-mh-codes">נסה שוב</button>
+    </div>`;
+  }
   if(!W.list){
     return `<div class="card">
       <span class="backlink" data-action="go-home">◀ חזרה</span>
@@ -662,16 +672,16 @@ function renderManagerPasswords(App){
   return `<div class="card">
     <span class="backlink" data-action="go-home">◀ חזרה</span>
     <h2>קודים של מנהלים</h2>
-    <p class="muted">לכל מנהל קוד אישי אחד לכל הכניסות: נכנסים ממסך הכניסה הראשי, בוחרים את השם שמסומן "מנהל" ומזינים את הקוד. שמירת קוד חדש מנתקת את המנהל מכל מכשיר שהיה מחובר בו.</p>
+    <p class="muted">לכל מנהל קוד אישי אחד לכל הכניסות. כדי לקבוע או לשנות קוד: מקלידים קוד חדש (לפחות 4 תווים) ולוחצים "שמור". שמירת קוד חדש מנתקת את המנהל מכל מכשיר שהיה מחובר בו, והוא ייכנס מעכשיו עם הקוד החדש. הקודים נשמרים מוצפנים, ולכן אי אפשר להציג קוד קיים - רק להחליף אותו. כדאי לרשום לעצמך את הקוד לפני השמירה.</p>
     ${W.msg? `<p style="color:#1b7f3b;font-weight:600;">${esc(W.msg)}</p>`:""}
     ${W.error? `<p class="shortage">${esc(W.error)}</p>`:""}
     <table>
-      <thead><tr><th style="text-align:right;">מנהל</th><th>קוד אישי</th><th>קוד חדש</th><th></th></tr></thead>
+      <thead><tr><th style="text-align:right;">מנהל</th><th>מצב</th><th>קוד חדש</th><th></th></tr></thead>
       <tbody>${W.list.map(m=>`<tr>
         <td style="text-align:right;">${esc(m.name)}</td>
-        <td>${m.has_password?"✔ מוגדר":'<span class="muted">לא מוגדר</span>'}</td>
-        <td><input type="password" id="pw_${m.id}" autocomplete="new-password" placeholder="לפחות 4 תווים" style="width:150px;"></td>
-        <td><button class="btn small" data-action="portal-pw-save" data-id="${m.id}">שמור</button></td>
+        <td>${m.has_password?'<span style="color:#1b7f3b;">✔ מוגדר</span>':'<span class="shortage">לא מוגדר</span>'}</td>
+        <td><input type="text" inputmode="numeric" id="pw_${m.id}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="קוד חדש" style="width:120px;"></td>
+        <td><button class="btn small" data-action="portal-pw-save" data-id="${m.id}">${m.has_password?"שנה קוד":"קבע קוד"}</button></td>
       </tr>`).join("")}</tbody>
     </table>
   </div>`;
@@ -694,7 +704,7 @@ async function pwSave(App, id){
     await App.apiRpc("admin_set_manager_password", {p_pin: W.pin, p_manager_id: id, p_password: pw});
     W.list = await App.apiRpc("admin_list_managers", {p_pin: W.pin});
     const m = W.list.find(x=>x.id===id);
-    W.msg = `הקוד של ${m?m.name:"המנהל"} נשמר.`; W.error = null;
+    W.msg = `✔ הקוד של ${m?m.name:"המנהל"} נשמר: ${pw}`; W.error = null;
   }catch(e){ W.error = e.message; W.msg = null; }
   App.render();
 }
@@ -1914,6 +1924,10 @@ function renderManagerHome(App, ms){
       <button class="btn small secondary" data-action="portal-mgr-logout">יציאה</button>
     </div>
   </div>
+  ${ms.is_admin ? `<div class="card">
+    <h3>🔑 ניהול מערכת</h3>
+    <div class="grid-teams">${tile("portal-mh-codes", "🔑 עריכת קודים של מנהלים", "קביעה ושינוי קוד אישי לכל מנהל")}</div>
+  </div>` : ""}
   ${sched.length && !ms.edit_as_button? `<div class="card">
     <h3>סידור עבודה</h3>
     <p class="muted" style="margin-top:-6px;">${names(sched)}</p>
@@ -1939,10 +1953,6 @@ function renderManagerHome(App, ms){
       <div class="team-tile" data-action="portal-pv" data-page="k-feed"><div style="font-size:1.1em;font-weight:700;">תכנים והודעות</div><div class="muted" style="font-size:.85em;margin-top:4px;">מקב"ט ההדרכות</div></div>
     </div>
   </div>`:""}
-  ${ms.is_admin ? `<div class="card">
-    <h3>ניהול מערכת</h3>
-    <div class="grid-teams">${tile("portal-mh-codes", "קודים של מנהלים", "הגדרה ואיפוס קוד אישי לכל מנהל")}</div>
-  </div>` : ""}
   ${mgrViewCard(App, ms, sched)}
   ${ms.can_training ? renderIsraelDashboard(App, ms) : ""}
   ${sched.length && ms.edit_as_button ? `<div class="card" style="text-align:center;">
@@ -2194,7 +2204,7 @@ function onClick(App, a, el){
   if(a==="portal-prog-set" || a==="portal-onb-save" || a==="portal-onb-complete" || a==="portal-quiz-publish" || a==="portal-quiz-del" || a==="portal-quiz-save" || a==="portal-quiz-delete" || a==="portal-quiz-restore" || a==="portal-ctl-send" || a==="portal-post-send") return trnAction(App, a, el);
   if(a==="portal-pw-load") return pwLoad(App);
   if(a==="portal-first-code") return firstManagerCode(App);
-  if(a==="portal-mh-codes"){ W.pin=null; W.list=null; W.error=null; W.msg=null; S.view = "mgrpw"; S.ui = {}; return App.render(); }
+  if(a==="portal-mh-codes"){ W.pin=null; W.list=null; W.error=null; W.msg=null; W.tried=false; W.loading=false; S.view = "mgrpw"; S.ui = {}; return App.render(); }
   if(a==="portal-pw-save") return pwSave(App, el.dataset.id);
   if(a==="portal-mgr-tile"){ M.tile = el.dataset.id; M.code=null; M.list=null; M.error=null; M.msg=null; return App.render(); }
   if(a==="portal-mgr-back"){ M.tile=null; M.code=null; M.list=null; M.error=null; M.msg=null; return App.render(); }
@@ -2275,5 +2285,5 @@ if("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("messa
   const App = window.__portalApp;
   if(ev.data && ev.data.type==="refresh" && App && App.S.view==="home" && loadSession(App)){ T.data = null; F.data = null; P.shifts = null; App.render(); }
 });
-window.Portal = { onDrag, renderHome, renderSection, renderManagerRequests, renderManagerPasswords, renderPView, pvTitle, onChange: onChangeTraining, resetPasswordsScreen(){ W.pin=null; W.list=null; W.error=null; W.msg=null; }, onClick, onInput, onKey, resetState(){ P.shifts=null; P.checkedSession=false; } };
+window.Portal = { onDrag, renderHome, renderSection, renderManagerRequests, renderManagerPasswords, renderPView, pvTitle, onChange: onChangeTraining, resetPasswordsScreen(){ W.pin=null; W.list=null; W.error=null; W.msg=null; W.tried=false; W.loading=false; }, onClick, onInput, onKey, resetState(){ P.shifts=null; P.checkedSession=false; } };
 })();
