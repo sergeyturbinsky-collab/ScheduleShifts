@@ -1102,6 +1102,47 @@ async function incLoadForm(App, ms){
     }
   }catch(e){ INC.error = e.message; }
   App.render();
+  // אירוע שהמוקד העלה: קוראים את ה-PDF שלו פעם אחת וממלאים את הטופס
+  const r = INC.report;
+  if(r && r.mine && r.status!=="submitted" && r.debrief_id && r.has_pdf && !(r.moked_data && r.moked_data.parsed_at)){
+    incParseDebriefPdf(App, ms, true);
+  }
+}
+function dataUrlBytes(d){
+  const b64 = String(d||"").replace(/^data:[^,]*,/, "");
+  const bin = atob(b64), out = new Uint8Array(bin.length);
+  for(let i=0; i<bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+async function incDebriefPdfBytes(App, ms){
+  const r = await App.apiRpc("inc_debrief_pdf", {p_token:ms.token, p_report_id:INC.id});
+  if(!r || !r.pdf_data) throw new Error("לא נמצא קובץ PDF מהמוקד");
+  return { bytes: dataUrlBytes(r.pdf_data), name: r.pdf_name || "דוח-מוקד.pdf" };
+}
+async function incParseDebriefPdf(App, ms, auto){
+  INC.busy = true; INC.error = null; INC.msg = "קורא את קובץ ה-PDF שהמוקד העלה..."; App.render();
+  try{
+    const f = await incDebriefPdfBytes(App, ms);
+    const mk = await readSayvuBytes(f.bytes);
+    INC.busy = false; INC.msg = null;
+    if(!mk || (!mk.event_no && !mk.date && !mk.address)) throw new Error("הקובץ שהמוקד העלה לא נראה כמו דו\"ח SayVU");
+    incSync(); incApplyMoked(mk);
+    const prev = INC.moked || {};
+    INC.moked = Object.assign({}, mk, {tech: prev.tech, created_by_name: prev.created_by_name, sector: prev.sector, from_moked:true, parsed_at: new Date().toISOString()});
+    App.render();
+    const id = await incSave(App, ms, false); if(!id) return;
+    await App.apiRpc("inc_set_moked", {p_token:ms.token, p_id:id, p_moked:INC.moked, p_file_name:f.name});
+    INC.msg = `הפרטים מהדו"ח של המוקד${mk.event_no?" (SayVU #"+mk.event_no+")":""} מולאו אוטומטית. בדקו אותם והשלימו את השאר.`;
+  }catch(e){ INC.busy = false; INC.msg = null; INC.error = (auto ? "לא הצלחתי למלא אוטומטית מהקובץ של המוקד: " : "") + e.message; }
+  App.render();
+}
+async function incOpenDebriefPdf(App, ms){
+  const win = window.open("", "_blank");
+  try{
+    const f = await incDebriefPdfBytes(App, ms);
+    const url = URL.createObjectURL(new Blob([f.bytes], {type:"application/pdf"}));
+    if(win) win.location = url; else window.location = url;
+  }catch(e){ if(win) win.close(); INC.error = e.message; App.render(); }
 }
 
 function incFieldHtml(App, f, ro){
@@ -1282,9 +1323,9 @@ function loadPdfJs(){
   });
   return PDFJS_P;
 }
-async function readSayvuFile(file){
+async function readSayvuFile(file){ return readSayvuBytes(new Uint8Array(await file.arrayBuffer())); }
+async function readSayvuBytes(data){
   const lib = await loadPdfJs();
-  const data = new Uint8Array(await file.arrayBuffer());
   const doc = await lib.getDocument({data, isEvalSupported:false}).promise;
   let title = ""; try{ const meta = await doc.getMetadata(); title = (meta && meta.info && meta.info.Title) || ""; }catch(e){}
   const pages = [];
@@ -1315,7 +1356,10 @@ function incMokedHtml(App, mk){
   const voice = (mk.voice||[]).filter(n=>n.text && !/no text results/i.test(n.text));
   const row = (l, v)=>v ? `<div><span class="muted">${esc(l)}:</span> <b>${esc(v)}</b></div>` : "";
   return `<div class="inc-card" style="background:#eef6ff;border-color:#b9d7f5;">
-    <div class="inc-label">📄 מידע מהמוקד — SayVU${mk.event_no?` #${esc(mk.event_no)}`:""}</div>
+    <div class="inc-label">📄 מידע מהמוקד${mk.event_no?` — SayVU #${esc(mk.event_no)}`:""}</div>
+    ${mk.created_by_name?`<div class="muted" style="font-size:.88em;">הועלה ע"י המוקד: ${esc(mk.created_by_name)}${mk.sector?` · ${esc(mk.sector)}`:""}</div>`:""}
+    ${(INC.report && INC.report.has_pdf)?`<div class="no-print" style="margin:4px 0;"><button class="btn small secondary" data-action="portal-inc-pdf-open">📄 הקובץ המקורי מהמוקד</button>${(!mk.parsed_at && INC.report.mine && INC.report.status!=="submitted")?` <button class="btn small" data-action="portal-inc-pdf-parse">מלא מהקובץ</button>`:""}</div>`:""}
+    ${(!mk.event_no && mk.tech && typeof mk.tech==="object")?Object.keys(mk.tech).filter(k=>mk.tech[k]!==null && mk.tech[k]!=="" && typeof mk.tech[k]!=="object").map(k=>row(k, String(mk.tech[k]))).join(""):""}
     ${row("קטגוריה", [mk.category, mk.sub_category].filter(Boolean).join(" - "))}
     ${row("דווח ע\"י", [mk.reported_by, mk.reporter_role].filter(Boolean).join(" · "))}${row("טלפון המדווח", mk.reporter_phone)}
     ${row("תאריך ושעת הדיווח", [mk.date?App.fmtDateHeb(mk.date):"", mk.call_time_full||mk.call_time].filter(Boolean).join(" "))}
@@ -1334,10 +1378,21 @@ function renderIncident(App, ms, pg, a, wrap, loading, msgs){
   const esc = App.escapeHtml;
   const isAdmin = !!ms.is_admin;
   if(pg==="inc-list"){
-    if(!PV.data){ pvLoad(App, "inc_list", {p_token:ms.token}); return loading(); }
+    if(!PV.data){
+      PV.data = {loading:true};
+      Promise.all([App.apiRpc("inc_list", {p_token:ms.token}), App.apiRpc("inc_debrief_list", {p_token:ms.token}).catch(()=>[])])
+        .then(([r, deb])=>{ PV.data = {r, deb}; INC.pendCount = (deb||[]).filter(d=>!d.report_id || d.report_mine).length; App.render(); })
+        .catch(e=>{ PV.data = {error:e.message}; App.render(); });
+      return loading();
+    }
     if(PV.data.loading) return loading();
-    const rs = PV.data.r||[];
-    const drafts = rs.filter(r=>r.mine && r.status!=="submitted"), sent = rs.filter(r=>r.status==="submitted");
+    const rs = PV.data.r||[], deb = PV.data.deb||[];
+    const debRow = d=>`<tr class="portal-click" data-action="portal-inc-debrief" data-id="${d.id}">
+        <td>${d.report_id ? (d.report_mine ? '<span style="color:#7a5c00;font-weight:700;">📝 בטיפולך</span>' : `<span class="muted">בטיפול ${esc(d.report_author||"")}</span>`) : '<span style="color:#b42318;font-weight:700;">🆕 חדש</span>'}</td>
+        <td>${d.event_at?esc(fmtDT(App, d.event_at)):esc(fmtDT(App, d.created_at))}</td>
+        <td style="text-align:right;">${esc(d.sector||d.team||"")}</td><td>${esc(d.event_no||"")}</td>
+        <td style="text-align:right;">${esc(d.created_by_name||"")}</td><td>${d.has_pdf?"📄":""}</td></tr>`;
+    const drafts = rs.filter(r=>r.mine && r.status!=="submitted" && !deb.some(d=>d.report_id===r.id)), sent = rs.filter(r=>r.status==="submitted");
     const row = r=>`<tr class="portal-click" data-action="portal-inc-open" data-id="${r.id}" data-edit="${r.mine && r.status!=="submitted"?1:0}">
         <td>${incStatusChip(r.status)}</td><td>${esc(incFmtDate(App, r.date))||'<span class="muted">—</span>'}</td>
         <td style="text-align:right;">${esc(r.city||"")}</td><td style="text-align:right;">${esc(r.classification||"")}</td>
@@ -1351,6 +1406,8 @@ function renderIncident(App, ms, pg, a, wrap, loading, msgs){
           <button class="btn" data-action="portal-inc-new">➕ דו"ח חדש</button>
         </div></div>
       ${msgs}
+      ${deb.length?`<h3>🔔 אירועים מהמוקד שממתינים לתחקיר (${deb.length})</h3>
+        <table><thead><tr><th>מצב</th><th>מועד האירוע</th><th style="text-align:right;">גזרה</th><th>SAVEYU</th><th style="text-align:right;">הועלה ע"י</th><th></th></tr></thead><tbody>${deb.map(debRow).join("")}</tbody></table>`:""}
       ${drafts.length?`<h3>הטיוטות שלי (${drafts.length})</h3><table>${head}<tbody>${drafts.map(row).join("")}</tbody></table>`:""}
       <h3>${isAdmin?"דו\"חות שנשלחו":"דו\"חות שנשלחו"} (${sent.length})</h3>
       ${sent.length?`<table>${head}<tbody>${sent.map(row).join("")}</tbody></table>`:'<p class="muted">עדיין אין דו"חות.</p>'}`);
@@ -1461,6 +1518,12 @@ async function incClick(App, a, el){
   const ms = loadMgr(App); if(!ms) return;
   if(a==="portal-inc-new"){ incReset(null); INC.loadedFor = undefined; return pvGo(App, "inc-form", {id:null}); }
   if(a==="portal-inc-open"){ incReset(el.dataset.id); INC.loadedFor = undefined; return pvGo(App, el.dataset.edit==="1" ? "inc-form" : "inc-view", {id:el.dataset.id}); }
+  if(a==="portal-inc-debrief"){
+    try{ const id = await App.apiRpc("inc_from_debrief", {p_token:ms.token, p_debrief_id:el.dataset.id}); incReset(id); INC.loadedFor = undefined; INC.pendCount = undefined; return pvGo(App, "inc-form", {id}); }
+    catch(e){ PV.error = e.message; return App.render(); }
+  }
+  if(a==="portal-inc-pdf-open") return incOpenDebriefPdf(App, ms);
+  if(a==="portal-inc-pdf-parse") return incParseDebriefPdf(App, ms, false);
   if(a==="portal-inc-today"){ const e = document.getElementById("inc_"+el.dataset.k); if(e){ e.value = App.fmtDate(new Date()); } return; }
   if(a==="portal-inc-now"){ const e = document.getElementById("inc_"+el.dataset.k); if(e){ const d = new Date(), p = n=>String(n).padStart(2,"0"); e.value = p(d.getHours())+":"+p(d.getMinutes()); } return; }
   if(a==="portal-inc-note"){ incSync(); INC.openNotes[el.dataset.k] = true; App.render(); const n = document.getElementById("inc_note_"+el.dataset.k); if(n) n.focus(); return; }
@@ -2413,6 +2476,10 @@ function renderManagerHome(App, ms){
     </div>`;
   const sched = mgrTeams(App, ms.schedule_team_ids);
   const logi = mgrTeams(App, ms.logistics_team_ids);
+  if(INC.pendCount===undefined && (logi.length || ms.is_admin)){
+    INC.pendCount = 0;
+    App.apiRpc("inc_debrief_list", {p_token:ms.token}).then(d=>{ const n = (d||[]).filter(x=>!x.report_id || x.report_mine).length; if(n !== INC.pendCount){ INC.pendCount = n; App.render(); } }).catch(()=>{});
+  }
   const names = ts=>esc(ts.map(t=>(t.sectors&&t.sectors.length)?t.sectors.join(" / "):t.name).join(" · "));
   return `
   <div class="card">
@@ -2426,6 +2493,7 @@ function renderManagerHome(App, ms){
     <div class="grid-teams">
       <div class="team-tile" data-action="portal-inc-new"><div style="font-size:1.1em;font-weight:700;">➕ דו"ח חדש</div><div class="muted" style="font-size:.85em;margin-top:4px;">תחקיר אירוע חריג</div></div>
       <div class="team-tile" data-action="portal-pv" data-page="inc-list"><div style="font-size:1.1em;font-weight:700;">📋 ${ms.is_admin?"כל הדו\"חות":"הדו\"חות שלי"}</div><div class="muted" style="font-size:.85em;margin-top:4px;">טיוטות ודו"חות שנשלחו</div></div>
+      ${INC.pendCount ? `<div class="team-tile" data-action="portal-pv" data-page="inc-list" style="border-color:#b42318;"><div style="font-size:1.1em;font-weight:700;color:#b42318;">🔔 ${INC.pendCount} ${INC.pendCount===1?"אירוע חדש":"אירועים"} מהמוקד</div><div class="muted" style="font-size:.85em;margin-top:4px;">ממתינים לתחקיר</div></div>` : ""}
     </div>
   </div>` : ""}
   ${ms.is_admin ? `<div class="card">
@@ -2625,7 +2693,7 @@ function onClick(App, a, el){
   if(a==="portal-mgr-logout"){
     const ms = loadMgr(App);
     if(ms) App.apiRpc("manager_logout", {p_token: ms.token}).catch(()=>{});
-    saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null; MN.state = null;
+    saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null; MN.state = null; INC.pendCount = undefined; INC.opts = null;
     S.view = "home"; S.ui = {};
     return App.render();
   }
