@@ -1648,11 +1648,13 @@ function renderUnitDashboard(App, ms){
   const seen = new Set(), schedTiles = [];
   (App.S.teams||[]).slice().sort((a,b)=>(a.sort_order||0)-(b.sort_order||0)).forEach(t=>{
     const g = App.sectorGroupForTeam(t); if(seen.has(g.label)) return; seen.add(g.label);
+    const pooled = ["ירושלים","בית שמש","מודיעין עילית","ביתר עילית"];
+    const lbl = !(t.sectors||[]).length ? "מוקד" : ((g.citySectors||[]).some(c=>pooled.includes(c)) ? "ירושלים וסובב ירושלים" : (g.citySectors||[]).join(" / "));
     const ends = (g.citySectors||[]).map(s=>(d.published||{})[s]).filter(Boolean).sort();
     const last = ends.length===(g.citySectors||[]).length && ends.length ? ends[0] : null;
     const soon = !last || (new Date(last+"T23:59:59") - Date.now()) < 7*86400000;
     schedTiles.push(`<div class="team-tile" data-action="portal-mgr-view" data-id="${t.id}">
-      <div style="font-weight:700;">${esc(g.label)}</div>
+      <div style="font-weight:700;">${esc(lbl)}</div>
       <div style="font-size:.8em;margin-top:4px;color:${soon?"#b42318":"#1b7f3b"};">${last?`פורסם עד ${esc(App.fmtDateHeb(last))}`:"אין סידור שפורסם"}</div></div>`);
   });
 
