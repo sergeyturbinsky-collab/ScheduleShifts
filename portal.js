@@ -7,6 +7,8 @@
    ================================================================ */
 (function(){
 "use strict";
+/* גרסת דמו (2026-10-18): demo/index.html מגדיר window.CST_DEMO - כניסה לפי שם בלבד, בלי קוד ובלי חובת התראות */
+const DEMO = !!window.CST_DEMO;
 
 const SESSION_KEY = "cst_worker_session";
 const MGR_KEY = "cst_manager_session";
@@ -327,14 +329,14 @@ async function enablePush(App, session){
 }
 /* חובה (לבקשת סרגיי, 2026-10-08): עד שההתראות מופעלות במכשיר, המאבטח רואה רק את מסך ההפעלה */
 function pushGate(App, session){
-  if(N.state==="on") return null;
+  if(DEMO || N.state==="on") return null;
   if(N.state===null || N.checking){ if(N.state===null) checkPush(App, session); }
   return pushGateHtml(App, session.name, N, {logout:"portal-logout", enable:"portal-push-enable", recheck:"portal-push-recheck",
     intro:"כדי להשתמש באיזור האישי צריך להפעיל התראות לטלפון. כך תדע מיד על סידור שפורסם, בקרה, לומדה, בקשת חילוף או הודעה חדשה."});
 }
 /* מנהלים - חובה כמו לעובדים (לבקשת סרגיי, 2026-10-11): עד שההתראות מופעלות, רואים רק את מסך ההפעלה */
 function mgrPushGate(App, ms){
-  if(MN.state==="on") return null;
+  if(DEMO || MN.state==="on") return null;
   if(MN.state===null){ MN.state = "checking"; checkMgrPush(App, ms); }
   return pushGateHtml(App, ms.name, {state: MN.state, checking: MN.state==="checking", busy: MN.busy, error: MN.error},
     {logout:"portal-mgr-logout", enable:"portal-mgr-push-enable", recheck:"portal-mgr-push-recheck",
@@ -2887,7 +2889,7 @@ function onKey(App, e){
 
 async function doLogin(App){
   const codeEl = document.getElementById("portalCode");
-  const code = codeEl ? codeEl.value : P.code;
+  const code = DEMO ? "demo" : (codeEl ? codeEl.value : P.code);
   const sel = (P.workers||[]).find(w=>w.key===P.selectedId);
   if(!sel || !code){ P.error = "יש להזין קוד אישי"; return App.render(); }
   P.busy = true; P.error = null; App.render();
@@ -2974,7 +2976,7 @@ function onClick(App, a, el){
   if(a==="portal-mgr-push-enable"){ const ms = loadMgr(App); if(ms && !MN.busy) enableMgrPush(App, ms); return; }
   if(a==="portal-full-schedule"){ const ss = loadSession(App); if(!ss) return App.render(); S.view = "mgrview"; S.ui = {teamId: ss.team_id, workerView: true}; return App.render(); }
   if(a==="portal-mgr-view"){ if(!loadMgr(App)) return App.render(); S.view = "mgrview"; S.ui = {teamId: el.dataset.id}; return App.render(); }
-  if(a==="portal-pick"){ P.selectedId = el.dataset.id; P.code=""; P.error=null; return App.render(); }
+  if(a==="portal-pick"){ P.selectedId = el.dataset.id; P.code=""; P.error=null; if(DEMO) return doLogin(App); return App.render(); }
   if(a==="portal-unpick"){ P.selectedId = null; P.code=""; P.error=null; return App.render(); }
   if(a==="portal-login") return doLogin(App);
   if(a==="portal-push-recheck"){ N.state = null; return App.render(); }
