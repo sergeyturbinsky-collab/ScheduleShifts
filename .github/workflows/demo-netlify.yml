@@ -1,0 +1,29 @@
+# בונה את גרסת הדמו המוגנת (מכווצת ומעורבלת) ומעלה אותה ל-Netlify: https://operations-demo-il.netlify.app
+# קוד הדמו לא נשמר בריפו. דורש secret בשם NETLIFY_AUTH_TOKEN (טוקן אישי מ-Netlify).
+name: Demo to Netlify
+on:
+  push:
+    branches: [main]
+    paths: ["index.html", "portal.js", "tools/build_demo.py", "tools/demo_protect.mjs", "icon-192.png", "apple-touch-icon.png", ".github/workflows/demo-netlify.yml"]
+  workflow_dispatch:
+concurrency: { group: demo-netlify, cancel-in-progress: true }
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      NETLIFY_SITE_ID: 0b851e45-e236-45e4-8d70-b6eef0be190a
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Build protected demo
+        run: |
+          npm install --prefix /tmp/eb esbuild@0.23.1 --no-audit --no-fund
+          ESBUILD_PATH=/tmp/eb/node_modules/esbuild python3 tools/build_demo.py
+      - name: Deploy to Netlify
+        if: env.NETLIFY_AUTH_TOKEN != ''
+        run: npx -y netlify-cli@17.38.1 deploy --prod --dir dist-demo --site "$NETLIFY_SITE_ID" --message "demo ${GITHUB_SHA::7}"
+      - name: Missing token
+        if: env.NETLIFY_AUTH_TOKEN == ''
+        run: echo "::warning::NETLIFY_AUTH_TOKEN secret is not set - demo was built but not deployed"

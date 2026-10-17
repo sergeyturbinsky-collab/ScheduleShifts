@@ -4,9 +4,11 @@
 - מסד נתונים נפרד: constraints-app-demo (wcbnkrtxdzfygyyanasx) - שינויים בדמו לא נוגעים במערכת האמיתית.
 - כניסה לפי שם בלבד (window.CST_DEMO -> portal.js), בלי חובת התראות, בלי service worker.
 - מפתחות ה-localStorage בדמו הם cstdemo_ כדי לא להתנגש בכניסה למערכת האמיתית באותו דפדפן.
+- (2026-10-18) הקוד של הדמו מוגן ולא נשמר בריפו: הפלט נבנה ל-dist-demo/ (ב-.gitignore) - index.html יחיד,
+  מכווץ ומעורבל (tools/demo_protect.mjs) + אייקונים - ומועלה ל-Netlify בכתובת נפרדת שלא מובילה ל-GitHub.
 הרצה: python3 tools/build_demo.py  (מתיקיית הריפו)
 """
-import os, re
+import os, re, shutil, subprocess, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LIVE_URL = "https://hcejwcxsqhpiufaakalj.supabase.co"
 DEMO_URL = "https://wcbnkrtxdzfygyyanasx.supabase.co"
@@ -28,17 +30,23 @@ def build():
     if LIVE_URL in idx: raise SystemExit("live URL still present")
     idx = must_sub(r'<script>if\("serviceWorker" in navigator\)[^\n]*</script>\n', '', idx)
     idx = must_sub(r'<link rel="manifest" href="manifest.webmanifest">\n', '', idx)
-    idx = idx.replace('href="icon-192.png"', 'href="../icon-192.png"').replace('href="apple-touch-icon.png"', 'href="../apple-touch-icon.png"')
     idx = must_sub(r'<title>', '<title>דמו — ', idx)
     idx = must_sub(r'<body>', '<body>\n' + BANNER, idx)
     idx = must_sub(r'<script src="portal\.js\?v=(\d+)"></script>', r'<script>window.CST_DEMO = true;</script>\n<script src="portal.js?v=\1"></script>', idx)
     idx = idx.replace('"cst_', '"cstdemo_')
     por = por.replace('"cst_', '"cstdemo_')
     if '"cst_' in idx or '"cst_' in por: raise SystemExit("cst_ keys left")
-    os.makedirs(os.path.join(ROOT, "demo"), exist_ok=True)
-    open(os.path.join(ROOT, "demo", "index.html"), "w", encoding="utf-8").write(idx)
-    open(os.path.join(ROOT, "demo", "portal.js"), "w", encoding="utf-8").write(por)
-    print("demo/ built")
+    out = os.path.join(ROOT, "dist-demo")
+    shutil.rmtree(out, ignore_errors=True); os.makedirs(out)
+    with tempfile.TemporaryDirectory() as tmp:
+        open(os.path.join(tmp, "index.html"), "w", encoding="utf-8").write(idx)
+        open(os.path.join(tmp, "portal.js"), "w", encoding="utf-8").write(por)
+        subprocess.run(["node", os.path.join(ROOT, "tools", "demo_protect.mjs"), tmp, os.path.join(out, "index.html")], check=True)
+    for f in ("icon-192.png", "apple-touch-icon.png"):
+        shutil.copy(os.path.join(ROOT, f), os.path.join(out, f))
+    open(os.path.join(out, "robots.txt"), "w").write("User-agent: *\nDisallow: /\n")
+    open(os.path.join(out, "_headers"), "w").write("/*\n  X-Robots-Tag: noindex, nofollow\n  Referrer-Policy: no-referrer\n  X-Frame-Options: DENY\n  Cache-Control: no-cache\n")
+    print("dist-demo/ built")
 
 if __name__ == "__main__":
     build()
