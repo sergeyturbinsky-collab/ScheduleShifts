@@ -1776,7 +1776,7 @@ const CAL_CSS = `<style>
 /* ---------- יומן שבועי בצד מסך הבית של המנהלים + "המשימות שלי" (2026-10-18, לבקשת סרגיי:
    "לא בצורת לחצן, אלא טבלה שבועית בצד"; מה שנקבע למישהו מופיע גם ביומן המשותף וגם כמשימה אישית שלו;
    דברים אישיים שלא נוגעים לכלל - לא ביומן המשותף). מתעדכן כל דקה כשמסך הבית פתוח. ---------- */
-const CW = { week:null, data:null, loading:false, my:null, myLoading:false, timer:null, showAssigned:false };
+const CW = { week:null, data:null, loading:false, my:null, myLoading:false, timer:null, showAssigned:false, showAll:false, lastDone:null };
 function calWeekStart(d){ const x = new Date((d||calToday())+"T12:00:00"); x.setDate(x.getDate()-x.getDay()); return `${x.getFullYear()}-${calPad(x.getMonth()+1)}-${calPad(x.getDate())}`; }
 function calAddDays(ds, n){ const x = new Date(ds+"T12:00:00"); x.setDate(x.getDate()+n); return `${x.getFullYear()}-${calPad(x.getMonth()+1)}-${calPad(x.getDate())}`; }
 function calWeekLoad(App, ms){
@@ -1809,11 +1809,29 @@ function renderCalWeekSide(App, ms){
     return `<tr class="${isToday?"calw-today":""}">
       <td class="calw-day">${CAL_DAYS[new Date(ds+"T12:00:00").getDay()]}<div class="muted" style="font-size:.8em;">${dm(ds)}</div></td>
       <td>${list.length ? list.map(it=>`<div class="calw-it" data-action="portal-cal-open" data-id="${it.id}" data-d="${it.date}" style="border-inline-start:3px solid ${it.kind==="task"?(it.done?"#9ca3af":"#f59e0b"):"#3b82f6"};${it.done?"text-decoration:line-through;color:#6b7280;":""}">
-          ${it.start?`<b>${esc(it.start)}</b> `:""}${it.kind==="task"?"📌 ":""}${esc(it.title)}${it.visibility==="personal"?" 🔒":""}${it.assignee?`<span class="muted"> · ${esc(it.assignee)}</span>`:""}</div>`).join("")
+          ${it.start?`<b>${esc(it.start)}</b> `:""}${it.kind==="task"?"📌 ":""}${esc(it.title)}${it.visibility==="personal"?" 🔒":""}${it.assignee?`<span class="muted"> · ${esc(it.assignee)}</span>`:""}${it.can_done?` <button class="calw-ok" data-action="portal-cal-done" data-id="${it.id}" data-title="${esc(it.title)}" data-v="1" title="סמן בוצע">✔</button>`:""}</div>`).join("")
         : `<span class="muted" style="font-size:.85em;">—</span>`}</td></tr>`;
   }).join("");
   const my = (CW.my&&CW.my.mine)||[], byMe = (CW.my&&CW.my.assigned_by_me)||[];
   const late = it=>it.kind==="task" && it.date < today;
+  // מנהל היחידה (וסרגיי) - כלל המשימות הפתוחות של כולם, לפי אחראי
+  const all = (CW.my && CW.my.sees_all && CW.my.all_open) || null;
+  let allOpenCard = "";
+  if(all){
+    const groups = {}; all.forEach(it=>{ (groups[it.assignee] = groups[it.assignee]||[]).push(it); });
+    const names = Object.keys(groups), lateN = all.filter(it=>it.date < today).length;
+    allOpenCard = `<div class="card calw">
+      <h3 style="margin-top:0;">📋 כלל המשימות הפתוחות (${all.length})</h3>
+      ${lateN?`<div style="color:#b42318;font-weight:700;font-size:.88em;margin:-4px 0 6px;">${lateN} באיחור</div>`:""}
+      ${!all.length ? `<p class="muted" style="margin:0;">אין משימות פתוחות.</p>` : names.map(n=>{
+        const g = groups[n], gl = g.filter(it=>it.date < today).length;
+        return `<div class="calw-grp"><div class="flexbar" style="justify-content:space-between;"><b>${esc(n)}</b>
+            <span class="muted" style="font-size:.85em;">${g.length}${gl?` · <span style="color:#b42318;font-weight:700;">${gl} באיחור</span>`:""}</span></div>
+          ${CW.showAll ? g.map(it=>`<div class="muted" style="font-size:.84em;margin:2px 0;cursor:pointer;${it.date<today?"color:#b42318;":""}" data-action="portal-cal-open" data-id="${it.id}" data-d="${it.date}">• ${esc(it.title)}${it.visibility==="personal"?" 🔒":""} · ${dm(it.date)}${it.created_by?` · מאת ${esc(it.created_by)}`:""}</div>`).join("") : ""}</div>`;
+      }).join("")}
+      ${all.length ? `<div style="margin-top:6px;"><span class="backlink" data-action="portal-calw-all" style="font-size:.88em;">${CW.showAll?"▾ הסתר פירוט":"▸ הצג פירוט"}</span></div>` : ""}
+    </div>`;
+  }
   return `<div class="card calw">
     <div class="flexbar" style="justify-content:space-between;gap:6px;">
       <h3 style="margin:0;">📅 יומן משותף</h3>
@@ -1827,12 +1845,16 @@ function renderCalWeekSide(App, ms){
     ${CW.data ? `<table class="calw-tbl"><tbody>${rows}</tbody></table>` : `<p class="muted">טוען...</p>`}
     <div style="text-align:center;margin-top:6px;"><span class="backlink" data-action="portal-pv" data-page="cal">לוח חודשי מלא ◀</span></div>
   </div>
+  ${CW.lastDone ? `<div class="card calw" style="background:#e3f4e8;border-color:#9fd3ad;padding:8px 12px;">✔ "${esc(CW.lastDone.title||"המשימה")}" סומנה כבוצעה והוסרה מהיומן.
+    <span class="backlink" data-action="portal-cal-undo" style="font-size:.9em;">ביטול</span></div>` : ""}
+  ${CW.err ? `<div class="card calw"><p class="shortage" style="margin:0;">${esc(CW.err)}</p></div>` : ""}
+  ${allOpenCard}
   <div class="card calw">
     <h3 style="margin-top:0;">📌 המשימות שלי${my.length?` (${my.length})`:""}</h3>
     ${!CW.my ? `<p class="muted">טוען...</p>` : (my.length ? my.map(it=>`<div class="calw-task">
         <span style="flex:1;cursor:pointer;" data-action="portal-cal-open" data-id="${it.id}" data-d="${it.date}">${it.kind==="task"?"📌":"📅"} <b>${esc(it.title)}</b>${it.visibility==="personal"?" 🔒":""}
           <span class="muted" style="font-size:.82em;display:block;${late(it)?"color:#b42318;font-weight:700;":""}">${late(it)?"באיחור · ":""}${dm(it.date)}${it.start?" "+esc(it.start):""}${it.created_by && it.created_by!==ms.name?` · מאת ${esc(it.created_by)}`:""}</span></span>
-        ${it.kind==="task"?`<button class="btn small ok" data-action="portal-cal-done" data-id="${it.id}" data-v="1">✔</button>`:""}
+        ${it.kind==="task"?`<button class="btn small ok" data-action="portal-cal-done" data-id="${it.id}" data-title="${esc(it.title)}" data-v="1" title="בוצע">✔ בוצע</button>`:""}
       </div>`).join("") : `<p class="muted" style="margin:0;">אין משימות פתוחות 🎉</p>`)}
     ${byMe.length ? `<div style="margin-top:8px;"><span class="backlink" data-action="portal-calw-byme" style="font-size:.88em;">${CW.showAssigned?"▾":"▸"} משימות שהטלתי על אחרים (${byMe.length})</span>
       ${CW.showAssigned ? byMe.map(it=>`<div class="muted" style="font-size:.85em;margin:3px 0;cursor:pointer;" data-action="portal-cal-open" data-id="${it.id}" data-d="${it.date}">🕒 ${esc(it.title)} · ${esc(it.assignee)} · ${dm(it.date)}</div>`).join("") : ""}</div>` : ""}
@@ -1846,8 +1868,11 @@ const CALW_CSS = `<style>
   .calw-today td{background:#eef6ff;}
   .calw-it{font-size:.85em;padding:2px 6px;margin:2px 0;border-radius:4px;background:#f8fafc;cursor:pointer;line-height:1.35;}
   .calw-task{display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border);}
+  .calw-ok{border:1px solid #9fd3ad;background:#e3f4e8;color:#1b7f3b;border-radius:6px;font-size:.85em;padding:0 6px;cursor:pointer;margin-inline-start:4px;}
+  .calw-grp{padding:5px 0;border-bottom:1px solid var(--border);}
   @media (max-width:760px){ .mgr-cols{grid-template-columns:minmax(0,1fr);gap:0;} .mgr-side{order:-1;} }
 </style>`;
+function alertLike(App, msg){ CW.lastDone = null; CW.err = msg; setTimeout(()=>{ CW.err = null; App.render(); }, 5000); }
 function calOpenItem(App, id, d){
   const it = (((CW.data&&CW.data.items)||[]).concat((CW.my&&CW.my.mine)||[], (CW.my&&CW.my.assigned_by_me)||[], (C.data&&C.data.items)||[])).find(x=>x.id===id);
   C.month = (d||calToday()).slice(0,7); C.sel = d || calToday(); C.data = null; C.error = null; C.msg = null; C.delAsk = null;
@@ -1881,7 +1906,7 @@ function renderCalendar(App, ms, back){
         <div><b style="${it.done?"text-decoration:line-through;":""}">${it.kind==="task"?"📌 ":"📅 "}${esc(it.title)}</b>${it.visibility==="personal"?` <span class="cal-priv">🔒 אישי</span>`:""}
           <span class="muted" style="font-size:.85em;">${it.start?` · ${esc(it.start)}${it.end?"-"+esc(it.end):""}`:" · כל היום"}</span></div>
         <div class="flexbar" style="gap:4px;">
-          ${it.kind==="task" ? `<button class="btn small ${it.done?"secondary":"ok"}" data-action="portal-cal-done" data-id="${it.id}" data-v="${it.done?0:1}">${it.done?"בטל ✔":"✔ בוצע"}</button>`:""}
+          ${it.kind==="task" && it.can_done && !it.done ? `<button class="btn small ok" data-action="portal-cal-done" data-id="${it.id}" data-title="${esc(it.title)}" data-v="1">✔ בוצע</button>`:""}
           ${C.delAsk===it.id
             ? `<b>למחוק?</b><button class="btn small" style="background:#b42318;border-color:#b42318;" data-action="portal-cal-del" data-id="${it.id}">כן</button><button class="btn small secondary" data-action="portal-cal-del-no">לא</button>`
             : `${it.can_edit?`<button class="btn small secondary" data-action="portal-cal-edit" data-id="${it.id}">✏️ עריכה</button>`:""}${it.can_delete?`<button class="btn small secondary" data-action="portal-cal-del-ask" data-id="${it.id}">🗑</button>`:""}`}
@@ -1927,7 +1952,7 @@ function renderCalendar(App, ms, back){
         <button class="btn small secondary" data-action="portal-cal-next" title="החודש הבא">◀</button>
       </div>
       <div class="cal-grid">${CAL_DAYS.map(d=>`<div class="cal-h">${d}</div>`).join("")}${cells.join("")}</div>
-      <div class="muted" style="font-size:.78em;margin-top:6px;">📅 אירוע · 📌 משימה · ✔ משימה שבוצעה · מתעדכן אוטומטית כל 30 שניות</div>
+      <div class="muted" style="font-size:.78em;margin-top:6px;">📅 אירוע · 📌 משימה · משימה שסומנה "בוצע" יורדת מהיומן · מתעדכן אוטומטית כל 30 שניות</div>
     </div>
     ${form}
     <div class="card">
@@ -1945,6 +1970,12 @@ async function calClick(App, a, el){
     CW.data = null; return App.render();
   }
   if(a==="portal-calw-byme"){ CW.showAssigned = !CW.showAssigned; return App.render(); }
+  if(a==="portal-calw-all"){ CW.showAll = !CW.showAll; return App.render(); }
+  if(a==="portal-cal-undo"){
+    const ld = CW.lastDone; CW.lastDone = null; if(!ld) return App.render();
+    try{ await App.apiRpc("cal_done", {p_token:ms.token, p_id:ld.id, p_done:false}); }catch(e){ C.error = e.message; }
+    CW.data = null; CW.my = null; C.data = null; return App.render();
+  }
   if(a==="portal-cal-open") return calOpenItem(App, el.dataset.id, el.dataset.d);
   if(a==="portal-cal-add-home"){
     const d = (CW.week && CW.week!==calWeekStart()) ? CW.week : calToday();
@@ -1978,7 +2009,10 @@ async function calClick(App, a, el){
     }catch(e){ C.error = e.message; return App.render(); }
   }
   if(a==="portal-cal-done"){
-    try{ await App.apiRpc("cal_done", {p_token:ms.token, p_id:el.dataset.id, p_done:el.dataset.v==="1"}); }catch(e){ C.msg = null; C.error = e.message; }
+    if(el.dataset.v==="1"){
+      try{ await App.apiRpc("cal_done", {p_token:ms.token, p_id:el.dataset.id, p_done:true}); C.error = null; C.msg = "✔ סומן כבוצע והוסר מהיומן."; CW.lastDone = {id:el.dataset.id, title:el.dataset.title||""}; const did = el.dataset.id; setTimeout(()=>{ if(CW.lastDone && CW.lastDone.id===did){ CW.lastDone = null; if(App.S.view==="home") App.render(); } }, 20000); }
+      catch(e){ C.msg = null; C.error = e.message; if(App.S.view!=="pview") alertLike(App, e.message); }
+    }
     CW.data = null; CW.my = null;
     if(App.S.view!=="pview" || PV.page!=="cal") return App.render();
     return calLoad(App, ms, true);
@@ -3100,7 +3134,7 @@ function onClick(App, a, el){
   if(a==="portal-mgr-logout"){
     const ms = loadMgr(App);
     if(ms) App.apiRpc("manager_logout", {p_token: ms.token}).catch(()=>{});
-    saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null; MN.state = null; INC.pendCount = undefined; INC.opts = null; C.data = null; C.homeCount = undefined; C.month = null; C.sel = null; C.edit = null; CW.data = null; CW.my = null; CW.week = null; U.data = null; U.error = null; U.loading = false;
+    saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null; MN.state = null; INC.pendCount = undefined; INC.opts = null; C.data = null; C.homeCount = undefined; C.month = null; C.sel = null; C.edit = null; CW.data = null; CW.my = null; CW.week = null; CW.lastDone = null; U.data = null; U.error = null; U.loading = false;
     S.view = "home"; S.ui = {};
     return App.render();
   }
