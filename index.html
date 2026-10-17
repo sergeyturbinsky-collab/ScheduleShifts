@@ -2615,12 +2615,13 @@ async function runAutoAssign(){
        הוא משובץ לשתי המשבצות (20:00-07:00 ברצף).
      - אם אין אחמ"ש כזה: אחמ"ש שומר שבת משובץ למוצ"ש משעה 23:00 (שעות מותאמות 23:00-07:00),
        ואת "ערב מוצ"ש" 20:00-23:00 מקבל סרגיי (גם שהוא מוחרג משיבוץ אוטומטי - זה הכלל שביקש).
-     - מוקדן שומר שבת שמשובץ למוצ"ש - רק למשמרת הלילה, משעה 23:00. מוקדנים שלא שומרים שבת קודמים לו.
+     - מוקדן במוצ"ש עובד תמיד 23:00-07:00 - בין 20:00 ל-23:00 אין מוקדן כברירת מחדל (סרגיי, 2026-10-18),
+       ולכן כל מוקדן שמשובץ למוצ"ש (גם אחמ"ש שממלא תקן מוקדן) מקבל שעות 23:00-07:00, בלי עדיפות לפי שמירת שבת.
      התכנון נעשה מראש לכל שבת, ולפיו ממלאים את שתי המשבצות בלולאה הראשית. */
   const SAT_LATE = ["23:00","07:00"];
   const sergeyW = workers.find(w=>w.name==="סרגיי");
   const mokedSat = new Map();
-  let satSergey = 0, satLateAch = 0, satLateMokdan = 0, satEveShort = 0;
+  let satSergey = 0, satLateAch = 0, satEveShort = 0;
   const restSorted = (list, slot)=>{ const r = splitByRest(list, slot); return r.ok.slice().sort(byFairness).concat(r.bad.slice().sort(byFairness)); };
   dates.filter(d=>dayTypeForDate(d)==="saturday").forEach(d=>{
     const eve = slots.find(x=>x.sector==="מוקד" && x.date===d && x.shiftType==="evening");
@@ -2676,8 +2677,8 @@ async function runAutoAssign(){
     const satPlan = (slot.sector==="מוקד" && dayTypeForDate(slot.date)==="saturday") ? mokedSat.get(slot.date) : null;
     const customFor = {};
     const satMotzash = !!(satPlan && slot.shiftType==="motzash");
-    // במוצ"ש: מי שלא שומר שבת קודם (מוקדנים ומילוי מוקדן ע"י אחמ"ש), ושומרי שבת אחריהם - משעה 23:00
-    const obsLast = (okL, badL)=> satMotzash ? okL.filter(w=>!w.shabbat_observer).concat(badL.filter(w=>!w.shabbat_observer), okL.filter(w=>w.shabbat_observer), badL.filter(w=>w.shabbat_observer)) : null;
+    // במוצ"ש: המוקדן (וגם אחמ"ש שממלא תקן מוקדן) עובד 23:00-07:00
+    const obsLast = (okL, badL)=> okL.concat(badL);
     if(satPlan && slot.shiftType==="evening"){
       chosen = satPlan.evening ? [satPlan.evening].slice(0, need) : [];
     } else if(planned){
@@ -2713,7 +2714,7 @@ async function runAutoAssign(){
           const order = obsLast(okRole, badRoleS);
           pickedRole = order.slice(0, needRole);
           restForced += pickedRole.filter(w=>badRoleS.includes(w)).length;
-          pickedRole.forEach(w=>{ if(w.shabbat_observer){ customFor[w.id] = SAT_LATE; satLateMokdan++; } });
+          pickedRole.forEach(w=>{ customFor[w.id] = SAT_LATE; });
         }
         if(pickedRole.length < needRole && !satMotzash){
           const badRole = restBad.filter(w=>w.role===role && !chosen.some(c=>c.id===w.id)).slice().sort(byFairness);
@@ -2733,7 +2734,7 @@ async function runAutoAssign(){
           if(satMotzash){
             pickedFallback = obsLast(fbOk.slice().sort(byFairness), fbBad.slice().sort(byFairness)).slice(0, stillNeed);
             restForced += pickedFallback.filter(w=>fbBad.includes(w)).length;
-            pickedFallback.forEach(w=>{ if(w.shabbat_observer){ customFor[w.id] = SAT_LATE; satLateMokdan++; } });
+            pickedFallback.forEach(w=>{ customFor[w.id] = SAT_LATE; });
           }
           if(pickedFallback.length < stillNeed && !satMotzash){
             const fbMore = fbBad.slice().sort(byFairness).slice(0, stillNeed - pickedFallback.length);
@@ -2776,7 +2777,7 @@ async function runAutoAssign(){
     }catch(e){ ui.buildMsg = "שגיאה בשמירת שיבוץ: " + e.message; render(); return; }
   }
   }
-  ui.buildMsg = `השיבוץ האוטומטי הושלם: עודכנו ${filled} משבצות.${short?` שימו לב — ב-${short} משבצות אין מספיק עובדים זמינים כדי למלא את כל התקן (יופיעו כ"חוסר").`:""}${restForced?` שימו לב — ב-${restForced} שיבוצים לא נמצא עובד עם 8 שעות מנוחה, ושובץ עובד עם פחות (כעדיפות אחרונה, מסומן באדום בטבלה).`:""}${streakShort?` ב-${streakShort} משבצות נשאר חוסר כי העובדים הזמינים היו מגיעים ל-7 ימי עבודה ברצף או לשבת רביעית ברצף — אפשר לשבץ ידנית (תוצג אזהרה).`:""}${satLateAch?` מוצ"ש במוקד: ב-${satLateAch} שבתות לא היה אחמ"ש זמין מ-20:00 — שובץ אחמ"ש שומר שבת מ-23:00${satSergey?`, וסרגיי ל-20:00-23:00 (${satSergey})`:""}.`:""}${satLateMokdan?` ${satLateMokdan} מוקדנים שומרי שבת שובצו למוצ"ש רק מ-23:00 — המוקדן 20:00-23:00 לא מכוסה, כדאי לבדוק ידנית.`:""}${satEveShort?` ב-${satEveShort} שבתות לא נמצא מי שיכסה אחמ"ש 20:00-23:00.`:""}`;
+  ui.buildMsg = `השיבוץ האוטומטי הושלם: עודכנו ${filled} משבצות.${short?` שימו לב — ב-${short} משבצות אין מספיק עובדים זמינים כדי למלא את כל התקן (יופיעו כ"חוסר").`:""}${restForced?` שימו לב — ב-${restForced} שיבוצים לא נמצא עובד עם 8 שעות מנוחה, ושובץ עובד עם פחות (כעדיפות אחרונה, מסומן באדום בטבלה).`:""}${streakShort?` ב-${streakShort} משבצות נשאר חוסר כי העובדים הזמינים היו מגיעים ל-7 ימי עבודה ברצף או לשבת רביעית ברצף — אפשר לשבץ ידנית (תוצג אזהרה).`:""}${satLateAch?` מוצ"ש במוקד: ב-${satLateAch} שבתות לא היה אחמ"ש זמין מ-20:00 — שובץ אחמ"ש שומר שבת מ-23:00${satSergey?`, וסרגיי ל-20:00-23:00 (${satSergey})`:""}.`:""}${satEveShort?` ב-${satEveShort} שבתות לא נמצא מי שיכסה אחמ"ש 20:00-23:00.`:""}`;
   ui.loaded = false; // רענון מלא של נתוני השיבוצים
   await loadAggregateData(team);
 }
