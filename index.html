@@ -2610,6 +2610,51 @@ async function runAutoAssign(){
     st.forEach(x=>plannedBySlot.set(x.slot, {chosen:x.chosen, newInterval:x.newInterval}));
   }
 
+  /* מוקד במוצ"ש (2026-10-18, לבקשת סרגיי):
+     - האחמ"ש של המוצ"ש צריך להתחיל ב-20:00. עדיפות לאחמ"ש שלא שומר שבת וזמין גם ל"ערב מוצ"ש" (20:00-23:00) -
+       הוא משובץ לשתי המשבצות (20:00-07:00 ברצף).
+     - אם אין אחמ"ש כזה: אחמ"ש שומר שבת משובץ למוצ"ש משעה 23:00 (שעות מותאמות 23:00-07:00),
+       ואת "ערב מוצ"ש" 20:00-23:00 מקבל סרגיי (גם שהוא מוחרג משיבוץ אוטומטי - זה הכלל שביקש).
+     - מוקדן שומר שבת שמשובץ למוצ"ש - רק למשמרת הלילה, משעה 23:00. מוקדנים שלא שומרים שבת קודמים לו.
+     התכנון נעשה מראש לכל שבת, ולפיו ממלאים את שתי המשבצות בלולאה הראשית. */
+  const SAT_LATE = ["23:00","07:00"];
+  const sergeyW = workers.find(w=>w.name==="סרגיי");
+  const mokedSat = new Map();
+  let satSergey = 0, satLateAch = 0, satLateMokdan = 0, satEveShort = 0;
+  const restSorted = (list, slot)=>{ const r = splitByRest(list, slot); return r.ok.slice().sort(byFairness).concat(r.bad.slice().sort(byFairness)); };
+  dates.filter(d=>dayTypeForDate(d)==="saturday").forEach(d=>{
+    const eve = slots.find(x=>x.sector==="מוקד" && x.date===d && x.shiftType==="evening");
+    const mot = slots.find(x=>x.sector==="מוקד" && x.date===d && x.shiftType==="motzash");
+    if(!mot) return;
+    const plan = {evening:null, achmash:null, lateIds:new Set()};
+    const existing = t=>(assignmentsByDate[d]||[]).filter(a=>a.sector==="מוקד" && a.shift_type===t && !a.shadow_of);
+    const roleOf = a=>{ const w = workers.find(x=>x.id===a.worker_id); return a.filled_role || (w && w.role); };
+    const eveNeed = eve ? eve.required - existing("evening").length : 0;
+    const motAch = existing("motzash").filter(a=>roleOf(a)==='אחמ"ש');
+    const motAchNeed = ((mot.roleCounts||{})['אחמ"ש']||0) - motAch.length;
+    const avMot = streakFilter(availableForSlot(mot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(mot.sector, mot.shiftType)).filter(w=>w.role==='אחמ"ש' && !w.auto_assign_exempt), mot);
+    const avEve = eve ? availableForSlot(eve, workers, ui.entriesByWorker, assignmentsByDate, slotKey(eve.sector, eve.shiftType)) : [];
+    const eveFallback = ()=>{
+      if(sergeyW && avEve.some(x=>x.id===sergeyW.id)){ satSergey++; return sergeyW; }
+      return restSorted(avEve.filter(w=>!w.auto_assign_exempt && w.id!==(plan.achmash&&plan.achmash.id)), eve)[0] || null;
+    };
+    if(motAchNeed>0){
+      const full = restSorted(avMot.filter(w=>!w.shabbat_observer && avEve.some(x=>x.id===w.id)), mot);
+      if(full.length){ plan.achmash = full[0]; if(eveNeed>0) plan.evening = full[0]; }
+      else {
+        plan.achmash = restSorted(avMot, mot)[0] || null;
+        if(plan.achmash){ plan.lateIds.add(plan.achmash.id); satLateAch++; }
+        if(eveNeed>0) plan.evening = eveFallback();
+      }
+    } else if(eveNeed>0){
+      const m = motAch[0], mw = m && workers.find(x=>x.id===m.worker_id);
+      const startsAt20 = mw && !mw.shabbat_observer && !(m.custom_start && String(m.custom_start).slice(0,5)!=="20:00");
+      plan.evening = (startsAt20 && avEve.some(x=>x.id===mw.id)) ? mw : eveFallback();
+    }
+    if(eveNeed>0 && !plan.evening) satEveShort++;
+    mokedSat.set(d, plan);
+  });
+
   ui.buildMsg = "מבצע שיבוץ אוטומטי...";
   let filled=0, short=0, restForced=0;
   for(const unit of units){
@@ -2627,7 +2672,15 @@ async function runAutoAssign(){
     let chosen = [];
     const planned = plannedBySlot.get(slot);
     const {ok: restOk, bad: restBad, newInterval} = planned ? {ok:[], bad:[], newInterval:planned.newInterval} : splitByRest(avail, slot);
-    if(planned){
+    // מוקד במוצ"ש - ראו mokedSat למעלה. customFor: עובד -> שעות מותאמות (23:00-07:00 לשומרי שבת)
+    const satPlan = (slot.sector==="מוקד" && dayTypeForDate(slot.date)==="saturday") ? mokedSat.get(slot.date) : null;
+    const customFor = {};
+    const satMotzash = !!(satPlan && slot.shiftType==="motzash");
+    // במוצ"ש: מי שלא שומר שבת קודם (מוקדנים ומילוי מוקדן ע"י אחמ"ש), ושומרי שבת אחריהם - משעה 23:00
+    const obsLast = (okL, badL)=> satMotzash ? okL.filter(w=>!w.shabbat_observer).concat(badL.filter(w=>!w.shabbat_observer), okL.filter(w=>w.shabbat_observer), badL.filter(w=>w.shabbat_observer)) : null;
+    if(satPlan && slot.shiftType==="evening"){
+      chosen = satPlan.evening ? [satPlan.evening].slice(0, need) : [];
+    } else if(planned){
       chosen = planned.chosen.slice(0, need);
     } else if(slot.roleCounts){
       // משבצת עם דרישת תפקידים (כמו במוקד: אחמ"ש/מוקדן) - ממלאים כל תפקיד בנפרד, לפי מה שכבר משובץ מאותו תפקיד.
@@ -2647,9 +2700,22 @@ async function runAutoAssign(){
       roleKeysOrdered.forEach(role=>{
         const needRole = slot.roleCounts[role] - (alreadyByRole[role]||0);
         if(needRole<=0) return;
+        if(satMotzash && role==='אחמ"ש'){
+          const p = satPlan.achmash ? [satPlan.achmash] : [];
+          p.forEach(w=>{ if(satPlan.lateIds.has(w.id)) customFor[w.id] = SAT_LATE; });
+          chosen = chosen.concat(p.slice(0, needRole));
+          return;
+        }
         const okRole = restOk.filter(w=>w.role===role && !chosen.some(c=>c.id===w.id)).slice().sort(byFairness);
         let pickedRole = okRole.slice(0, needRole);
-        if(pickedRole.length < needRole){
+        if(satMotzash){
+          const badRoleS = restBad.filter(w=>w.role===role && !chosen.some(c=>c.id===w.id)).slice().sort(byFairness);
+          const order = obsLast(okRole, badRoleS);
+          pickedRole = order.slice(0, needRole);
+          restForced += pickedRole.filter(w=>badRoleS.includes(w)).length;
+          pickedRole.forEach(w=>{ if(w.shabbat_observer){ customFor[w.id] = SAT_LATE; satLateMokdan++; } });
+        }
+        if(pickedRole.length < needRole && !satMotzash){
           const badRole = restBad.filter(w=>w.role===role && !chosen.some(c=>c.id===w.id)).slice().sort(byFairness);
           const more = badRole.slice(0, needRole - pickedRole.length);
           restForced += more.length;
@@ -2664,7 +2730,12 @@ async function runAutoAssign(){
           const {ok: fbOk, bad: fbBad} = splitByRest(fallbackPool, slot);
           const stillNeed = needRole - pickedRole.length;
           let pickedFallback = fbOk.slice().sort(byFairness).slice(0, stillNeed);
-          if(pickedFallback.length < stillNeed){
+          if(satMotzash){
+            pickedFallback = obsLast(fbOk.slice().sort(byFairness), fbBad.slice().sort(byFairness)).slice(0, stillNeed);
+            restForced += pickedFallback.filter(w=>fbBad.includes(w)).length;
+            pickedFallback.forEach(w=>{ if(w.shabbat_observer){ customFor[w.id] = SAT_LATE; satLateMokdan++; } });
+          }
+          if(pickedFallback.length < stillNeed && !satMotzash){
             const fbMore = fbBad.slice().sort(byFairness).slice(0, stillNeed - pickedFallback.length);
             restForced += fbMore.length;
             pickedFallback = pickedFallback.concat(fbMore);
@@ -2696,12 +2767,16 @@ async function runAutoAssign(){
       for(const wid of fallbackFillers){
         await apiRpc("rpc_assignment_set_role", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:wid, p_role:"מוקדן"});
       }
+      for(const wid of Object.keys(customFor)){
+        if(!chosen.some(c=>c.id===wid)) continue;
+        await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:wid, p_custom_start:customFor[wid][0], p_custom_end:customFor[wid][1]});
+      }
       filled++;
-      chosen.forEach(w=>{ assignCount[w.id]++; recordChosenInterval(w.id, newInterval); streakAdd(streakIdx, w.id, slot.date, slot.shiftType); (assignmentsByDate[slot.date]=assignmentsByDate[slot.date]||[]).push({sector:slot.sector, shift_type:slot.shiftType, worker_id:w.id, entry_date:slot.date}); });
+      chosen.forEach(w=>{ assignCount[w.id]++; recordChosenInterval(w.id, customFor[w.id] ? shiftInterval({sector:slot.sector, shift_type:slot.shiftType, entry_date:slot.date, custom_start:customFor[w.id][0], custom_end:customFor[w.id][1]}) : newInterval); streakAdd(streakIdx, w.id, slot.date, slot.shiftType); (assignmentsByDate[slot.date]=assignmentsByDate[slot.date]||[]).push({sector:slot.sector, shift_type:slot.shiftType, worker_id:w.id, entry_date:slot.date}); });
     }catch(e){ ui.buildMsg = "שגיאה בשמירת שיבוץ: " + e.message; render(); return; }
   }
   }
-  ui.buildMsg = `השיבוץ האוטומטי הושלם: עודכנו ${filled} משבצות.${short?` שימו לב — ב-${short} משבצות אין מספיק עובדים זמינים כדי למלא את כל התקן (יופיעו כ"חוסר").`:""}${restForced?` שימו לב — ב-${restForced} שיבוצים לא נמצא עובד עם 8 שעות מנוחה, ושובץ עובד עם פחות (כעדיפות אחרונה, מסומן באדום בטבלה).`:""}${streakShort?` ב-${streakShort} משבצות נשאר חוסר כי העובדים הזמינים היו מגיעים ל-7 ימי עבודה ברצף או לשבת רביעית ברצף — אפשר לשבץ ידנית (תוצג אזהרה).`:""}`;
+  ui.buildMsg = `השיבוץ האוטומטי הושלם: עודכנו ${filled} משבצות.${short?` שימו לב — ב-${short} משבצות אין מספיק עובדים זמינים כדי למלא את כל התקן (יופיעו כ"חוסר").`:""}${restForced?` שימו לב — ב-${restForced} שיבוצים לא נמצא עובד עם 8 שעות מנוחה, ושובץ עובד עם פחות (כעדיפות אחרונה, מסומן באדום בטבלה).`:""}${streakShort?` ב-${streakShort} משבצות נשאר חוסר כי העובדים הזמינים היו מגיעים ל-7 ימי עבודה ברצף או לשבת רביעית ברצף — אפשר לשבץ ידנית (תוצג אזהרה).`:""}${satLateAch?` מוצ"ש במוקד: ב-${satLateAch} שבתות לא היה אחמ"ש זמין מ-20:00 — שובץ אחמ"ש שומר שבת מ-23:00${satSergey?`, וסרגיי ל-20:00-23:00 (${satSergey})`:""}.`:""}${satLateMokdan?` ${satLateMokdan} מוקדנים שומרי שבת שובצו למוצ"ש רק מ-23:00 — המוקדן 20:00-23:00 לא מכוסה, כדאי לבדוק ידנית.`:""}${satEveShort?` ב-${satEveShort} שבתות לא נמצא מי שיכסה אחמ"ש 20:00-23:00.`:""}`;
   ui.loaded = false; // רענון מלא של נתוני השיבוצים
   await loadAggregateData(team);
 }
