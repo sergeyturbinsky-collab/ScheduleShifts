@@ -145,7 +145,7 @@
 <main id="app"></main>
 <footer>מערכת פנימית · חברת אבטחה</footer>
 
-<script src="portal.js?v=38"></script>
+<script src="portal.js?v=39"></script>
 <script>
 (function(){
 "use strict";
@@ -2458,16 +2458,19 @@ function renderMgrScheduleView(){
   const ui = S.ui;
   const team = teamById(ui.teamId);
   if(!team){ S.view = "home"; S.ui = {}; return renderHome(); }
-  if(!ui.periodStart) ui.periodStart = currentPeriodStart(team);
+  // עובד ("סידור מלא", 2026-10-18): נפתח על התקופה הנוכחית (שבה נמצא היום), לא על התקופה הבאה
+  if(!ui.periodStart) ui.periodStart = ui.workerView ? shiftPeriod(currentPeriodStart(team), team, -1) : currentPeriodStart(team);
   if(!ui.loaded){ loadAggregateData(team); return `<div class="card"><p>טוען...</p></div>`; }
   const group = sectorGroupForTeam(team);
   const published = isSchedulePublished(group, ui);
+  const viewLabel = !(team.sectors||[]).length ? "מוקד" : (group.citySectors.some(c=>POOLED_CITY_SECTORS.includes(c)) ? "ירושלים וסובב ירושלים" : group.citySectors.join(" / "));
   return `<div class="card">
     <span class="backlink no-print" data-action="mgrview-back">◀ חזרה</span>
+    ${ui.workerView ? `<h2 style="margin:6px 0;">📋 סידור מלא — ${escapeHtml(viewLabel)}</h2>` : ""}
     <div class="flexbar no-print" style="margin-bottom:8px;">
       <button class="btn small secondary" data-action="mgrview-prev">◀ תקופה קודמת</button>
       <button class="btn small secondary" data-action="mgrview-next">תקופה הבאה ▶</button>
-      <button class="btn small" data-action="portal-pv" data-page="swap-mgr" data-id="${team.id}" style="margin-inline-start:auto;">🔁 מבקש חילוף</button>
+      ${ui.workerView ? "" : `<button class="btn small" data-action="portal-pv" data-page="swap-mgr" data-id="${team.id}" style="margin-inline-start:auto;">🔁 מבקש חילוף</button>`}
     </div>
     ${published ? `
       <div class="chip-opts no-print" style="margin:4px 0 10px;">

@@ -411,6 +411,7 @@ function renderWorkerHome(App, session){
           ${(P.shifts && P.shifts.length) ? `<button class="btn small" data-action="portal-swap-open">🔁 מבקש חילוף</button>` : ""}</div>
         <div style="height:8px;"></div>
         ${renderMyShifts(App, session)}
+        <div style="margin-top:10px;"><button class="btn secondary" data-action="portal-full-schedule">📋 סידור מלא</button></div>
       </div>
       <div class="card">
         <h3>משימות פתוחות</h3>
@@ -1710,10 +1711,184 @@ function renderUnitDashboard(App, ms){
   </div>`;
 }
 
+/* ================================================================
+   יומן משותף (2026-10-18) - לבקשת סרגיי: לוח חודשי של משימות ודברים שנקבעו, לכל הקב"טים, סרגיי ומאיר.
+   - כל אחד מוסיף אירוע/משימה (תאריך, שעות, אחראי, הערות). עורך/מוחק רק מי שיצר (או סרגיי).
+   - משימה מסומנת "בוצע" ע"י כל אחד מהמשתתפים (נרשם מי סימן).
+   - הטלת משימה/אירוע על מישהו שולחת לו פוש; אפשר גם "שלח התראה לכולם".
+   - מתעדכן אונליין: כשהיומן פתוח הוא נטען מחדש כל 30 שניות. מנהל יחידה לא משתתף.
+   שרת: calendar_items + cal_list / cal_save / cal_done / cal_hide.
+   ================================================================ */
+const C = { month:null, data:null, loading:false, error:null, sel:null, edit:null, msg:null, delAsk:null, timer:null, homeCount:undefined };
+const CAL_DAYS = ["א׳","ב׳","ג׳","ד׳","ה׳","ו׳","ש׳"];
+const CAL_MONTHS = ["ינואר","פברואר","מרץ","אפריל","מאי","יוני","יולי","אוגוסט","ספטמבר","אוקטובר","נובמבר","דצמבר"];
+function calPad(n){ return String(n).padStart(2,"0"); }
+function calToday(){ const d = new Date(); return `${d.getFullYear()}-${calPad(d.getMonth()+1)}-${calPad(d.getDate())}`; }
+function calMonthRange(ym){
+  const [y,m] = ym.split("-").map(Number);
+  const last = new Date(y, m, 0).getDate();
+  return { y, m, last, from:`${ym}-01`, to:`${ym}-${calPad(last)}`, firstDow: new Date(y, m-1, 1).getDay() };
+}
+function calShift(ym, delta){ const [y,m] = ym.split("-").map(Number); const d = new Date(y, m-1+delta, 1); return `${d.getFullYear()}-${calPad(d.getMonth()+1)}`; }
+function isUnitMgr(ms){ return !(ms.schedule_team_ids||[]).length && !(ms.logistics_team_ids||[]).length && !ms.can_training && !ms.is_admin; }
+function calLoad(App, ms, quiet){
+  if(!C.month) C.month = calToday().slice(0,7);
+  const r = calMonthRange(C.month);
+  if(!quiet){ C.loading = true; }
+  return App.apiRpc("cal_list", {p_token:ms.token, p_from:r.from, p_to:r.to})
+    .then(d=>{ C.data = d; C.loading = false; C.error = null; C.homeCount = d.my_open_tasks; App.render(); })
+    .catch(e=>{ C.loading = false; C.error = e.message; App.render(); });
+}
+function calStartTimer(App){
+  if(C.timer) return;
+  C.timer = setInterval(()=>{
+    const ms = loadMgr(App);
+    if(!ms || App.S.view!=="pview" || PV.page!=="cal"){ clearInterval(C.timer); C.timer = null; return; }
+    if(C.edit || C.delAsk || document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
+    calLoad(App, ms, true);
+  }, 30000);
+}
+function calItemChip(App, it){
+  const esc = App.escapeHtml;
+  const bg = it.kind==="task" ? (it.done ? "#e6e8eb" : "#fff1d6") : "#dcebfb";
+  const col = it.kind==="task" && it.done ? "#6b7280" : "#1f2937";
+  return `<div class="cal-chip" style="background:${bg};color:${col};${it.done?"text-decoration:line-through;":""}">${it.kind==="task"?(it.done?"✔ ":"📌 "):""}${it.start?esc(it.start)+" ":""}${esc(it.title)}</div>`;
+}
+const CAL_CSS = `<style>
+  .cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;}
+  .cal-h{text-align:center;font-weight:700;font-size:.85em;color:var(--muted);padding:4px 0;}
+  .cal-cell{min-height:86px;border:1px solid var(--border);border-radius:8px;padding:3px;cursor:pointer;background:#fff;overflow:hidden;}
+  .cal-cell.cal-empty{background:transparent;border:none;cursor:default;}
+  .cal-cell.cal-today{border:2px solid var(--primary);}
+  .cal-cell.cal-sel{box-shadow:0 0 0 3px #f59e0b inset;}
+  .cal-num{font-weight:700;font-size:.85em;}
+  .cal-chip{font-size:.72em;border-radius:5px;padding:1px 4px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .cal-more{font-size:.7em;color:var(--muted);margin-top:1px;}
+  .cal-item{border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin:6px 0;}
+  @media (max-width:520px){ .cal-cell{min-height:58px;} .cal-chip{font-size:.62em;padding:0 2px;} }
+</style>`;
+function renderCalendar(App, ms, back){
+  const esc = App.escapeHtml;
+  if(isUnitMgr(ms)) return `<div class="card">${back}<p class="muted">אין הרשאה ליומן.</p></div>`;
+  if(!C.month) C.month = calToday().slice(0,7);
+  if(!C.data && !C.loading && !C.error) calLoad(App, ms);
+  calStartTimer(App);
+  if(C.error && !C.data) return `<div class="card">${back}<p class="shortage">${esc(C.error)}</p></div>`;
+  if(!C.data) return `<div class="card">${back}<p class="muted">טוען...</p></div>`;
+  const r = calMonthRange(C.month), today = calToday();
+  const items = C.data.items||[], byDate = {};
+  items.forEach(it=>{ (byDate[it.date] = byDate[it.date]||[]).push(it); });
+  if(!C.sel || C.sel.slice(0,7)!==C.month) C.sel = today.slice(0,7)===C.month ? today : r.from;
+  const cells = [];
+  for(let i=0;i<r.firstDow;i++) cells.push(`<div class="cal-cell cal-empty"></div>`);
+  for(let d=1; d<=r.last; d++){
+    const ds = `${C.month}-${calPad(d)}`, list = byDate[ds]||[];
+    cells.push(`<div class="cal-cell${ds===today?" cal-today":""}${ds===C.sel?" cal-sel":""}" data-action="portal-cal-day" data-d="${ds}">
+      <div class="cal-num">${d}</div>${list.slice(0,3).map(it=>calItemChip(App, it)).join("")}${list.length>3?`<div class="cal-more">+${list.length-3} נוספים</div>`:""}</div>`);
+  }
+  const members = C.data.members||[];
+  const dayList = byDate[C.sel]||[];
+  const dowName = CAL_DAYS[new Date(C.sel+"T12:00:00").getDay()];
+  const itemHtml = it=>`<div class="cal-item" style="border-inline-start:4px solid ${it.kind==="task"?(it.done?"#9ca3af":"#f59e0b"):"#3b82f6"};">
+      <div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;">
+        <div><b style="${it.done?"text-decoration:line-through;":""}">${it.kind==="task"?"📌 ":"📅 "}${esc(it.title)}</b>
+          <span class="muted" style="font-size:.85em;">${it.start?` · ${esc(it.start)}${it.end?"-"+esc(it.end):""}`:" · כל היום"}</span></div>
+        <div class="flexbar" style="gap:4px;">
+          ${it.kind==="task" ? `<button class="btn small ${it.done?"secondary":"ok"}" data-action="portal-cal-done" data-id="${it.id}" data-v="${it.done?0:1}">${it.done?"בטל ✔":"✔ בוצע"}</button>`:""}
+          ${it.can_edit ? (C.delAsk===it.id
+            ? `<b>למחוק?</b><button class="btn small" style="background:#b42318;border-color:#b42318;" data-action="portal-cal-del" data-id="${it.id}">כן</button><button class="btn small secondary" data-action="portal-cal-del-no">לא</button>`
+            : `<button class="btn small secondary" data-action="portal-cal-edit" data-id="${it.id}">✏️</button><button class="btn small secondary" data-action="portal-cal-del-ask" data-id="${it.id}">🗑</button>`) : ""}
+        </div>
+      </div>
+      <div class="muted" style="font-size:.85em;margin-top:3px;">${it.assignee?`אחראי: <b>${esc(it.assignee)}</b> · `:"לכולם · "}נוסף ע"י ${esc(it.created_by||"")}${it.done&&it.done_by?` · בוצע ע"י ${esc(it.done_by)}`:""}</div>
+      ${it.notes?`<div style="margin-top:4px;white-space:pre-wrap;">${esc(it.notes)}</div>`:""}
+    </div>`;
+  const e = C.edit;
+  const form = e ? `<div class="card" id="calForm">
+      <h3 style="margin-top:0;">${e.id?"עריכה":"הוספה ליומן"}</h3>
+      ${C.error?`<p class="shortage">${esc(C.error)}</p>`:""}
+      <div class="row">
+        <div class="field"><label>סוג</label><select id="cal_kind"><option value="event" ${e.kind!=="task"?"selected":""}>📅 אירוע / נקבע</option><option value="task" ${e.kind==="task"?"selected":""}>📌 משימה</option></select></div>
+        <div class="field" style="flex:2;"><label>כותרת</label><input type="text" id="cal_title" maxlength="200" value="${esc(e.title||"")}" autocomplete="off"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>תאריך</label><input type="date" id="cal_date" value="${esc(e.date||C.sel)}"></div>
+        <div class="field"><label>משעה (לא חובה)</label><input type="time" id="cal_start" value="${esc(e.start||"")}"></div>
+        <div class="field"><label>עד שעה</label><input type="time" id="cal_end" value="${esc(e.end||"")}"></div>
+      </div>
+      <div class="field"><label>אחראי</label><select id="cal_assignee"><option value="">כולם</option>${members.map(m=>`<option value="${m.id}" ${e.assignee_id===m.id?"selected":""}>${esc(m.name)}</option>`).join("")}</select></div>
+      <div class="field"><label>הערות</label><textarea id="cal_notes" rows="3" style="width:100%;box-sizing:border-box;">${esc(e.notes||"")}</textarea></div>
+      <label style="display:block;margin:6px 0;"><input type="checkbox" id="cal_notify"> שלח התראה לכולם</label>
+      <p class="muted" style="font-size:.82em;margin:2px 0 8px;">מי שנבחר כאחראי מקבל התראה בכל מקרה.</p>
+      <div class="flexbar" style="gap:6px;"><button class="btn" data-action="portal-cal-save">שמור</button><button class="btn secondary" data-action="portal-cal-cancel">ביטול</button></div>
+    </div>` : "";
+  const openTasks = items.filter(it=>it.kind==="task" && !it.done);
+  return `${CAL_CSS}<div class="card">
+      ${back}
+      <div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;margin-top:4px;">
+        <h2 style="margin:0;">📅 יומן משותף</h2>
+        <button class="btn" data-action="portal-cal-add">➕ הוספה</button>
+      </div>
+      ${C.msg?`<p style="color:#1b7f3b;font-weight:600;">${esc(C.msg)}</p>`:""}
+      <div class="flexbar" style="justify-content:space-between;margin:10px 0 6px;">
+        <button class="btn small secondary" data-action="portal-cal-prev" title="החודש הקודם">▶</button>
+        <div style="text-align:center;"><b style="font-size:1.1em;">${CAL_MONTHS[r.m-1]} ${r.y}</b>${C.month!==today.slice(0,7)?` <span class="backlink" data-action="portal-cal-today" style="font-size:.85em;">להיום</span>`:""}</div>
+        <button class="btn small secondary" data-action="portal-cal-next" title="החודש הבא">◀</button>
+      </div>
+      <div class="cal-grid">${CAL_DAYS.map(d=>`<div class="cal-h">${d}</div>`).join("")}${cells.join("")}</div>
+      <div class="muted" style="font-size:.78em;margin-top:6px;">📅 אירוע · 📌 משימה · ✔ משימה שבוצעה · מתעדכן אוטומטית כל 30 שניות</div>
+    </div>
+    ${form}
+    <div class="card">
+      <div class="flexbar" style="justify-content:space-between;"><h3 style="margin:0;">יום ${dowName}, ${esc(App.fmtDateHeb(C.sel))}</h3>
+        ${e?"":`<button class="btn small" data-action="portal-cal-add">➕ הוספה ליום הזה</button>`}</div>
+      ${dayList.length ? dayList.map(itemHtml).join("") : `<p class="muted">אין כלום ביום הזה.</p>`}
+    </div>
+    ${openTasks.length?`<div class="card"><h3 style="margin-top:0;">📌 משימות פתוחות החודש (${openTasks.length})</h3>
+      ${openTasks.map(it=>`<div class="portal-task" data-action="portal-cal-day" data-d="${it.date}"><span class="portal-task-icon">🕒</span><span><b>${esc(it.title)}</b> <span class="muted" style="font-size:.85em;">${esc(App.fmtDateHeb(it.date))}${it.assignee?` · ${esc(it.assignee)}`:""}</span></span></div>`).join("")}</div>`:""}`;
+}
+async function calClick(App, a, el){
+  const ms = loadMgr(App); if(!ms) return;
+  const findIt = id=>((C.data&&C.data.items)||[]).find(x=>x.id===id);
+  if(a==="portal-cal-prev" || a==="portal-cal-next" || a==="portal-cal-today"){
+    C.month = a==="portal-cal-today" ? calToday().slice(0,7) : calShift(C.month, a==="portal-cal-next"?1:-1);
+    C.sel = a==="portal-cal-today" ? calToday() : null; C.edit = null; C.msg = null; C.delAsk = null; C.data = null; C.error = null;
+    return App.render();
+  }
+  if(a==="portal-cal-day"){ C.sel = el.dataset.d; C.delAsk = null; if(C.sel.slice(0,7)!==C.month){ C.month = C.sel.slice(0,7); C.data = null; } return App.render(); }
+  if(a==="portal-cal-add"){ C.edit = {kind:"event", date:C.sel}; C.error = null; C.msg = null; App.render(); const f = document.getElementById("calForm"); if(f && f.scrollIntoView) f.scrollIntoView({behavior:"smooth"}); const t = document.getElementById("cal_title"); if(t) t.focus(); return; }
+  if(a==="portal-cal-edit"){ const it = findIt(el.dataset.id); if(!it) return; C.edit = Object.assign({}, it); C.error = null; C.msg = null; App.render(); const f = document.getElementById("calForm"); if(f && f.scrollIntoView) f.scrollIntoView({behavior:"smooth"}); return; }
+  if(a==="portal-cal-cancel"){ C.edit = null; C.error = null; return App.render(); }
+  if(a==="portal-cal-save"){
+    const v = id=>{ const x = document.getElementById(id); return x ? x.value : ""; };
+    const title = v("cal_title").trim(), date = v("cal_date");
+    Object.assign(C.edit, {kind:v("cal_kind"), title, date, start:v("cal_start"), end:v("cal_end"), assignee_id:v("cal_assignee")||null, notes:v("cal_notes")});
+    if(!title){ C.error = "צריך כותרת"; return App.render(); }
+    if(!date){ C.error = "צריך תאריך"; return App.render(); }
+    const notify = !!(document.getElementById("cal_notify")||{}).checked;
+    try{
+      await App.apiRpc("cal_save", {p_token:ms.token, p_id:C.edit.id||null, p_kind:C.edit.kind, p_title:title, p_date:date, p_start:C.edit.start||null, p_end:C.edit.end||null, p_assignee:C.edit.assignee_id, p_notes:C.edit.notes||null, p_notify:notify});
+      C.msg = C.edit.id ? "עודכן." : "נוסף ליומן."; C.edit = null; C.error = null; C.sel = date;
+      if(date.slice(0,7)!==C.month) C.month = date.slice(0,7);
+      C.data = null; return App.render();
+    }catch(e){ C.error = e.message; return App.render(); }
+  }
+  if(a==="portal-cal-done"){
+    try{ await App.apiRpc("cal_done", {p_token:ms.token, p_id:el.dataset.id, p_done:el.dataset.v==="1"}); }catch(e){ C.msg = null; C.error = e.message; }
+    return calLoad(App, ms, true);
+  }
+  if(a==="portal-cal-del-ask"){ C.delAsk = el.dataset.id; return App.render(); }
+  if(a==="portal-cal-del-no"){ C.delAsk = null; return App.render(); }
+  if(a==="portal-cal-del"){
+    try{ await App.apiRpc("cal_hide", {p_token:ms.token, p_id:el.dataset.id}); C.msg = "נמחק."; }catch(e){ C.error = e.message; }
+    C.delAsk = null; return calLoad(App, ms, true);
+  }
+}
+
 /* ---------- עמודי משנה (view "pview") ---------- */
 const PV_TITLES = { "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
-  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה" };
+  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה", "cal":"יומן משותף" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
 function pvGo(App, page, args, push){
   if(push !== false && App.S.view==="pview" && PV.page) PV.stack.push({page:PV.page, args:PV.args});
@@ -1774,6 +1949,7 @@ function renderPView(App){
   const needLoad = (fn, args)=>{ if(!PV.data){ pvLoad(App, fn, args); return true; } return !!PV.data.loading; };
   if(PV.data && PV.data.error) return wrap(`<p class="shortage">${esc(PV.data.error)}</p>`);
   if(pg && pg.indexOf("inc-")===0) return renderIncident(App, ms, pg, a, wrap, loading, msgs);
+  if(pg==="cal") return renderCalendar(App, ms, back);
   if(pg==="unit-dash") return `<div class="card">${back}<h2 style="margin-bottom:0;">📊 לוח מנהל יחידה</h2><p class="muted">כך רואה את המערכת מנהל היחידה.</p></div>` + renderUnitDashboard(App, ms);
 
   if(pg==="trn-training"){
@@ -2617,6 +2793,12 @@ function renderManagerHome(App, ms){
       ${INC.pendCount ? `<div class="team-tile" data-action="portal-pv" data-page="inc-list" style="border-color:#b42318;"><div style="font-size:1.1em;font-weight:700;color:#b42318;">🔔 ${INC.pendCount} ${INC.pendCount===1?"אירוע חדש":"אירועים"} מהמוקד</div><div class="muted" style="font-size:.85em;margin-top:4px;">ממתינים לתחקיר</div></div>` : ""}
     </div>
   </div>` : ""}
+  ${!isUnitMgr(ms) ? (()=>{ if(C.homeCount===undefined){ C.homeCount = null; calLoad(App, ms, true); } return `<div class="card">
+    <div class="team-tile" data-action="portal-pv" data-page="cal" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+      <div><div style="font-size:1.1em;font-weight:700;">📅 יומן משותף</div><div class="muted" style="font-size:.85em;margin-top:4px;">משימות ודברים שנקבעו — הקב"טים, סרגיי ומאיר</div></div>
+      ${C.homeCount ? `<span class="portal-badge">📌 ${C.homeCount} משימות פתוחות</span>` : ""}
+    </div>
+  </div>`; })() : ""}
   ${ms.is_admin ? `<div class="card">
     <h3>🔑 ניהול מערכת</h3>
     <div class="grid-teams">${tile("portal-mh-codes", "🔑 עריכת קודים של מנהלים", "קביעה ושינוי קוד אישי לכל מנהל")}
@@ -2790,6 +2972,7 @@ function onClick(App, a, el){
     return App.apiRpc("mgr_swap_cancel", {p_token:ms.token, p_id:el.dataset.id}).then(()=>{ if(PV.swap) PV.swap.list = null; PV.msg = "הבקשה בוטלה."; App.render(); }).catch(e=>{ PV.error = e.message; App.render(); });
   }
   if(a==="portal-mgr-push-enable"){ const ms = loadMgr(App); if(ms && !MN.busy) enableMgrPush(App, ms); return; }
+  if(a==="portal-full-schedule"){ const ss = loadSession(App); if(!ss) return App.render(); S.view = "mgrview"; S.ui = {teamId: ss.team_id, workerView: true}; return App.render(); }
   if(a==="portal-mgr-view"){ if(!loadMgr(App)) return App.render(); S.view = "mgrview"; S.ui = {teamId: el.dataset.id}; return App.render(); }
   if(a==="portal-pick"){ P.selectedId = el.dataset.id; P.code=""; P.error=null; return App.render(); }
   if(a==="portal-unpick"){ P.selectedId = null; P.code=""; P.error=null; return App.render(); }
@@ -2815,7 +2998,7 @@ function onClick(App, a, el){
   if(a==="portal-mgr-logout"){
     const ms = loadMgr(App);
     if(ms) App.apiRpc("manager_logout", {p_token: ms.token}).catch(()=>{});
-    saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null; MN.state = null; INC.pendCount = undefined; INC.opts = null; U.data = null; U.error = null; U.loading = false;
+    saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null; MN.state = null; INC.pendCount = undefined; INC.opts = null; C.data = null; C.homeCount = undefined; C.month = null; C.sel = null; C.edit = null; U.data = null; U.error = null; U.loading = false;
     S.view = "home"; S.ui = {};
     return App.render();
   }
@@ -2888,6 +3071,7 @@ function onClick(App, a, el){
   }
   if(a==="portal-pv-back") return pvBack(App);
   if(a.indexOf("portal-inc-")===0) return incClick(App, a, el);
+  if(a.indexOf("portal-cal-")===0) return calClick(App, a, el);
   if(a==="portal-unit-refresh"){ U.data = null; U.error = null; U.loading = false; return App.render(); }
   if(a==="portal-quiz-addopt"){ const Q = syncQuiz(); if(Q){ Q.questions[+el.dataset.q].options.push(""); } return App.render(); }
   if(a==="portal-quiz-delopt"){ const Q = syncQuiz(); if(Q){ const q = Q.questions[+el.dataset.q], o = +el.dataset.o; q.options.splice(o,1); if(q.correct===o) q.correct = null; else if(q.correct>o) q.correct--; } return App.render(); }
