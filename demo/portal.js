@@ -1769,11 +1769,93 @@ const CAL_CSS = `<style>
   .cal-chip{font-size:.72em;border-radius:5px;padding:1px 4px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .cal-more{font-size:.7em;color:var(--muted);margin-top:1px;}
   .cal-item{border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin:6px 0;}
+  .cal-priv{font-size:.75em;background:#ede9fe;color:#5b21b6;border-radius:999px;padding:1px 7px;font-weight:600;}
   @media (max-width:520px){ .cal-cell{min-height:58px;} .cal-chip{font-size:.62em;padding:0 2px;} }
 </style>`;
+
+/* ---------- יומן שבועי בצד מסך הבית של המנהלים + "המשימות שלי" (2026-10-18, לבקשת סרגיי:
+   "לא בצורת לחצן, אלא טבלה שבועית בצד"; מה שנקבע למישהו מופיע גם ביומן המשותף וגם כמשימה אישית שלו;
+   דברים אישיים שלא נוגעים לכלל - לא ביומן המשותף). מתעדכן כל דקה כשמסך הבית פתוח. ---------- */
+const CW = { week:null, data:null, loading:false, my:null, myLoading:false, timer:null, showAssigned:false };
+function calWeekStart(d){ const x = new Date((d||calToday())+"T12:00:00"); x.setDate(x.getDate()-x.getDay()); return `${x.getFullYear()}-${calPad(x.getMonth()+1)}-${calPad(x.getDate())}`; }
+function calAddDays(ds, n){ const x = new Date(ds+"T12:00:00"); x.setDate(x.getDate()+n); return `${x.getFullYear()}-${calPad(x.getMonth()+1)}-${calPad(x.getDate())}`; }
+function calWeekLoad(App, ms){
+  if(!CW.week) CW.week = calWeekStart();
+  if(!CW.data && !CW.loading){
+    CW.loading = true;
+    App.apiRpc("cal_list", {p_token:ms.token, p_from:CW.week, p_to:calAddDays(CW.week, 6)})
+      .then(d=>{ CW.data = d; CW.loading = false; App.render(); }).catch(()=>{ CW.loading = false; });
+  }
+  if(!CW.my && !CW.myLoading){
+    CW.myLoading = true;
+    App.apiRpc("cal_my", {p_token:ms.token}).then(d=>{ CW.my = d; CW.myLoading = false; App.render(); }).catch(()=>{ CW.myLoading = false; });
+  }
+  if(!CW.timer) CW.timer = setInterval(()=>{
+    const m = loadMgr(App);
+    if(!m){ clearInterval(CW.timer); CW.timer = null; return; }
+    if(App.S.view!=="home" || (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName))) return;
+    CW.data = null; CW.my = null; calWeekLoad(App, m);
+  }, 60000);
+}
+function renderCalWeekSide(App, ms){
+  const esc = App.escapeHtml;
+  calWeekLoad(App, ms);
+  const today = calToday(), days = [];
+  for(let i=0;i<7;i++) days.push(calAddDays(CW.week, i));
+  const by = {}; ((CW.data&&CW.data.items)||[]).slice().sort((a,b)=>(a.start||"99").localeCompare(b.start||"99")).forEach(it=>{ (by[it.date] = by[it.date]||[]).push(it); });
+  const dm = ds=>`${parseInt(ds.slice(8),10)}/${parseInt(ds.slice(5,7),10)}`;
+  const rows = days.map(ds=>{
+    const list = by[ds]||[], isToday = ds===today;
+    return `<tr class="${isToday?"calw-today":""}">
+      <td class="calw-day">${CAL_DAYS[new Date(ds+"T12:00:00").getDay()]}<div class="muted" style="font-size:.8em;">${dm(ds)}</div></td>
+      <td>${list.length ? list.map(it=>`<div class="calw-it" data-action="portal-cal-open" data-id="${it.id}" data-d="${it.date}" style="border-inline-start:3px solid ${it.kind==="task"?(it.done?"#9ca3af":"#f59e0b"):"#3b82f6"};${it.done?"text-decoration:line-through;color:#6b7280;":""}">
+          ${it.start?`<b>${esc(it.start)}</b> `:""}${it.kind==="task"?"📌 ":""}${esc(it.title)}${it.visibility==="personal"?" 🔒":""}${it.assignee?`<span class="muted"> · ${esc(it.assignee)}</span>`:""}</div>`).join("")
+        : `<span class="muted" style="font-size:.85em;">—</span>`}</td></tr>`;
+  }).join("");
+  const my = (CW.my&&CW.my.mine)||[], byMe = (CW.my&&CW.my.assigned_by_me)||[];
+  const late = it=>it.kind==="task" && it.date < today;
+  return `<div class="card calw">
+    <div class="flexbar" style="justify-content:space-between;gap:6px;">
+      <h3 style="margin:0;">📅 יומן משותף</h3>
+      <button class="btn small" data-action="portal-cal-add-home">➕</button>
+    </div>
+    <div class="flexbar" style="justify-content:space-between;margin:6px 0;">
+      <button class="btn small secondary" data-action="portal-calw-prev" title="שבוע קודם">▶</button>
+      <span style="font-size:.9em;font-weight:700;">${dm(days[0])} — ${dm(days[6])}${CW.week!==calWeekStart()?` <span class="backlink" data-action="portal-calw-today" style="font-size:.85em;">השבוע</span>`:""}</span>
+      <button class="btn small secondary" data-action="portal-calw-next" title="שבוע הבא">◀</button>
+    </div>
+    ${CW.data ? `<table class="calw-tbl"><tbody>${rows}</tbody></table>` : `<p class="muted">טוען...</p>`}
+    <div style="text-align:center;margin-top:6px;"><span class="backlink" data-action="portal-pv" data-page="cal">לוח חודשי מלא ◀</span></div>
+  </div>
+  <div class="card calw">
+    <h3 style="margin-top:0;">📌 המשימות שלי${my.length?` (${my.length})`:""}</h3>
+    ${!CW.my ? `<p class="muted">טוען...</p>` : (my.length ? my.map(it=>`<div class="calw-task">
+        <span style="flex:1;cursor:pointer;" data-action="portal-cal-open" data-id="${it.id}" data-d="${it.date}">${it.kind==="task"?"📌":"📅"} <b>${esc(it.title)}</b>${it.visibility==="personal"?" 🔒":""}
+          <span class="muted" style="font-size:.82em;display:block;${late(it)?"color:#b42318;font-weight:700;":""}">${late(it)?"באיחור · ":""}${dm(it.date)}${it.start?" "+esc(it.start):""}${it.created_by && it.created_by!==ms.name?` · מאת ${esc(it.created_by)}`:""}</span></span>
+        ${it.kind==="task"?`<button class="btn small ok" data-action="portal-cal-done" data-id="${it.id}" data-v="1">✔</button>`:""}
+      </div>`).join("") : `<p class="muted" style="margin:0;">אין משימות פתוחות 🎉</p>`)}
+    ${byMe.length ? `<div style="margin-top:8px;"><span class="backlink" data-action="portal-calw-byme" style="font-size:.88em;">${CW.showAssigned?"▾":"▸"} משימות שהטלתי על אחרים (${byMe.length})</span>
+      ${CW.showAssigned ? byMe.map(it=>`<div class="muted" style="font-size:.85em;margin:3px 0;cursor:pointer;" data-action="portal-cal-open" data-id="${it.id}" data-d="${it.date}">🕒 ${esc(it.title)} · ${esc(it.assignee)} · ${dm(it.date)}</div>`).join("") : ""}</div>` : ""}
+  </div>`;
+}
+const CALW_CSS = `<style>
+  .mgr-cols{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:14px;align-items:start;}
+  .calw-tbl{width:100%;border-collapse:collapse;}
+  .calw-tbl td{border-bottom:1px solid var(--border);padding:5px 4px;vertical-align:top;text-align:right;}
+  .calw-day{width:44px;font-weight:700;text-align:center!important;}
+  .calw-today td{background:#eef6ff;}
+  .calw-it{font-size:.85em;padding:2px 6px;margin:2px 0;border-radius:4px;background:#f8fafc;cursor:pointer;line-height:1.35;}
+  .calw-task{display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border);}
+  @media (max-width:760px){ .mgr-cols{grid-template-columns:minmax(0,1fr);gap:0;} .mgr-side{order:-1;} }
+</style>`;
+function calOpenItem(App, id, d){
+  const it = (((CW.data&&CW.data.items)||[]).concat((CW.my&&CW.my.mine)||[], (CW.my&&CW.my.assigned_by_me)||[], (C.data&&C.data.items)||[])).find(x=>x.id===id);
+  C.month = (d||calToday()).slice(0,7); C.sel = d || calToday(); C.data = null; C.error = null; C.msg = null; C.delAsk = null;
+  C.edit = null; C.openId = id;
+  pvGo(App, "cal", {});
+}
 function renderCalendar(App, ms, back){
   const esc = App.escapeHtml;
-  if(isUnitMgr(ms)) return `<div class="card">${back}<p class="muted">אין הרשאה ליומן.</p></div>`;
   if(!C.month) C.month = calToday().slice(0,7);
   if(!C.data && !C.loading && !C.error) calLoad(App, ms);
   calStartTimer(App);
@@ -1781,6 +1863,7 @@ function renderCalendar(App, ms, back){
   if(!C.data) return `<div class="card">${back}<p class="muted">טוען...</p></div>`;
   const r = calMonthRange(C.month), today = calToday();
   const items = C.data.items||[], byDate = {};
+  if(C.openId){ const oi = items.find(x=>x.id===C.openId); C.openId = null; if(oi){ C.sel = oi.date; if(oi.can_edit) C.edit = Object.assign({}, oi); } }
   items.forEach(it=>{ (byDate[it.date] = byDate[it.date]||[]).push(it); });
   if(!C.sel || C.sel.slice(0,7)!==C.month) C.sel = today.slice(0,7)===C.month ? today : r.from;
   const cells = [];
@@ -1795,16 +1878,16 @@ function renderCalendar(App, ms, back){
   const dowName = CAL_DAYS[new Date(C.sel+"T12:00:00").getDay()];
   const itemHtml = it=>`<div class="cal-item" style="border-inline-start:4px solid ${it.kind==="task"?(it.done?"#9ca3af":"#f59e0b"):"#3b82f6"};">
       <div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;">
-        <div><b style="${it.done?"text-decoration:line-through;":""}">${it.kind==="task"?"📌 ":"📅 "}${esc(it.title)}</b>
+        <div><b style="${it.done?"text-decoration:line-through;":""}">${it.kind==="task"?"📌 ":"📅 "}${esc(it.title)}</b>${it.visibility==="personal"?` <span class="cal-priv">🔒 אישי</span>`:""}
           <span class="muted" style="font-size:.85em;">${it.start?` · ${esc(it.start)}${it.end?"-"+esc(it.end):""}`:" · כל היום"}</span></div>
         <div class="flexbar" style="gap:4px;">
           ${it.kind==="task" ? `<button class="btn small ${it.done?"secondary":"ok"}" data-action="portal-cal-done" data-id="${it.id}" data-v="${it.done?0:1}">${it.done?"בטל ✔":"✔ בוצע"}</button>`:""}
-          ${it.can_edit ? (C.delAsk===it.id
+          ${C.delAsk===it.id
             ? `<b>למחוק?</b><button class="btn small" style="background:#b42318;border-color:#b42318;" data-action="portal-cal-del" data-id="${it.id}">כן</button><button class="btn small secondary" data-action="portal-cal-del-no">לא</button>`
-            : `<button class="btn small secondary" data-action="portal-cal-edit" data-id="${it.id}">✏️</button><button class="btn small secondary" data-action="portal-cal-del-ask" data-id="${it.id}">🗑</button>`) : ""}
+            : `${it.can_edit?`<button class="btn small secondary" data-action="portal-cal-edit" data-id="${it.id}">✏️ עריכה</button>`:""}${it.can_delete?`<button class="btn small secondary" data-action="portal-cal-del-ask" data-id="${it.id}">🗑</button>`:""}`}
         </div>
       </div>
-      <div class="muted" style="font-size:.85em;margin-top:3px;">${it.assignee?`אחראי: <b>${esc(it.assignee)}</b> · `:"לכולם · "}נוסף ע"י ${esc(it.created_by||"")}${it.done&&it.done_by?` · בוצע ע"י ${esc(it.done_by)}`:""}</div>
+      <div class="muted" style="font-size:.85em;margin-top:3px;">${it.assignee?`אחראי: <b>${esc(it.assignee)}</b> · `:(it.visibility==="personal"?"אישי · ":"לכולם · ")}נוסף ע"י ${esc(it.created_by||"")}${it.done&&it.done_by?` · בוצע ע"י ${esc(it.done_by)}`:""}</div>
       ${it.notes?`<div style="margin-top:4px;white-space:pre-wrap;">${esc(it.notes)}</div>`:""}
     </div>`;
   const e = C.edit;
@@ -1822,8 +1905,12 @@ function renderCalendar(App, ms, back){
       </div>
       <div class="field"><label>אחראי</label><select id="cal_assignee"><option value="">כולם</option>${members.map(m=>`<option value="${m.id}" ${e.assignee_id===m.id?"selected":""}>${esc(m.name)}</option>`).join("")}</select></div>
       <div class="field"><label>הערות</label><textarea id="cal_notes" rows="3" style="width:100%;box-sizing:border-box;">${esc(e.notes||"")}</textarea></div>
-      <label style="display:block;margin:6px 0;"><input type="checkbox" id="cal_notify"> שלח התראה לכולם</label>
-      <p class="muted" style="font-size:.82em;margin:2px 0 8px;">מי שנבחר כאחראי מקבל התראה בכל מקרה.</p>
+      <div class="field"><label>איפה זה מופיע</label>
+        <label style="display:block;margin:4px 0;"><input type="radio" name="cal_vis" value="shared" ${e.visibility!=="personal"?"checked":""}> 📢 ביומן המשותף — כולם רואים${""}</label>
+        <label style="display:block;margin:4px 0;"><input type="radio" name="cal_vis" value="personal" ${e.visibility==="personal"?"checked":""}> 🔒 אישי — לא נוגע לכלל: רק אצל האחראי (ואצלך), לא ביומן המשותף</label>
+      </div>
+      <label style="display:block;margin:6px 0;"><input type="checkbox" id="cal_notify"> שלח התראה לכולם (רק לפריט ביומן המשותף)</label>
+      <p class="muted" style="font-size:.82em;margin:2px 0 8px;">פריט עם אחראי מופיע אצלו גם ב"המשימות שלי", והוא מקבל התראה. האחראי יכול גם לערוך אותו.</p>
       <div class="flexbar" style="gap:6px;"><button class="btn" data-action="portal-cal-save">שמור</button><button class="btn secondary" data-action="portal-cal-cancel">ביטול</button></div>
     </div>` : "";
   const openTasks = items.filter(it=>it.kind==="task" && !it.done);
@@ -1853,6 +1940,17 @@ function renderCalendar(App, ms, back){
 }
 async function calClick(App, a, el){
   const ms = loadMgr(App); if(!ms) return;
+  if(a==="portal-calw-prev" || a==="portal-calw-next" || a==="portal-calw-today"){
+    CW.week = a==="portal-calw-today" ? calWeekStart() : calAddDays(CW.week||calWeekStart(), a==="portal-calw-next"?7:-7);
+    CW.data = null; return App.render();
+  }
+  if(a==="portal-calw-byme"){ CW.showAssigned = !CW.showAssigned; return App.render(); }
+  if(a==="portal-cal-open") return calOpenItem(App, el.dataset.id, el.dataset.d);
+  if(a==="portal-cal-add-home"){
+    const d = (CW.week && CW.week!==calWeekStart()) ? CW.week : calToday();
+    C.month = d.slice(0,7); C.sel = d; C.data = null; C.error = null; C.msg = null; C.edit = {kind:"event", date:d}; C.openId = null;
+    return pvGo(App, "cal", {});
+  }
   const findIt = id=>((C.data&&C.data.items)||[]).find(x=>x.id===id);
   if(a==="portal-cal-prev" || a==="portal-cal-next" || a==="portal-cal-today"){
     C.month = a==="portal-cal-today" ? calToday().slice(0,7) : calShift(C.month, a==="portal-cal-next"?1:-1);
@@ -1870,8 +1968,10 @@ async function calClick(App, a, el){
     if(!title){ C.error = "צריך כותרת"; return App.render(); }
     if(!date){ C.error = "צריך תאריך"; return App.render(); }
     const notify = !!(document.getElementById("cal_notify")||{}).checked;
+    const visEl = document.querySelector('input[name="cal_vis"]:checked'); C.edit.visibility = visEl ? visEl.value : "shared";
     try{
-      await App.apiRpc("cal_save", {p_token:ms.token, p_id:C.edit.id||null, p_kind:C.edit.kind, p_title:title, p_date:date, p_start:C.edit.start||null, p_end:C.edit.end||null, p_assignee:C.edit.assignee_id, p_notes:C.edit.notes||null, p_notify:notify});
+      await App.apiRpc("cal_save_v2", {p_token:ms.token, p_id:C.edit.id||null, p_kind:C.edit.kind, p_title:title, p_date:date, p_start:C.edit.start||null, p_end:C.edit.end||null, p_assignee:C.edit.assignee_id, p_notes:C.edit.notes||null, p_notify:notify, p_visibility:C.edit.visibility});
+      CW.data = null; CW.my = null;
       C.msg = C.edit.id ? "עודכן." : "נוסף ליומן."; C.edit = null; C.error = null; C.sel = date;
       if(date.slice(0,7)!==C.month) C.month = date.slice(0,7);
       C.data = null; return App.render();
@@ -1879,12 +1979,14 @@ async function calClick(App, a, el){
   }
   if(a==="portal-cal-done"){
     try{ await App.apiRpc("cal_done", {p_token:ms.token, p_id:el.dataset.id, p_done:el.dataset.v==="1"}); }catch(e){ C.msg = null; C.error = e.message; }
+    CW.data = null; CW.my = null;
+    if(App.S.view!=="pview" || PV.page!=="cal") return App.render();
     return calLoad(App, ms, true);
   }
   if(a==="portal-cal-del-ask"){ C.delAsk = el.dataset.id; return App.render(); }
   if(a==="portal-cal-del-no"){ C.delAsk = null; return App.render(); }
   if(a==="portal-cal-del"){
-    try{ await App.apiRpc("cal_hide", {p_token:ms.token, p_id:el.dataset.id}); C.msg = "נמחק."; }catch(e){ C.error = e.message; }
+    try{ await App.apiRpc("cal_hide", {p_token:ms.token, p_id:el.dataset.id}); C.msg = "נמחק."; CW.data = null; CW.my = null; }catch(e){ C.error = e.message; }
     C.delAsk = null; return calLoad(App, ms, true);
   }
 }
@@ -2782,13 +2884,14 @@ function renderManagerHome(App, ms){
     App.apiRpc("inc_debrief_list", {p_token:ms.token}).then(d=>{ const n = (d||[]).filter(x=>!x.report_id || x.report_mine).length; if(n !== INC.pendCount){ INC.pendCount = n; App.render(); } }).catch(()=>{});
   }
   const names = ts=>esc(ts.map(t=>(t.sectors&&t.sectors.length)?t.sectors.join(" / "):t.name).join(" · "));
-  return `
+  return `${CALW_CSS}
   <div class="card">
     <div class="flexbar" style="justify-content:space-between;">
       <h2 style="margin:0;">שלום, ${esc(ms.name)}</h2>
       <button class="btn small secondary" data-action="portal-mgr-logout">יציאה</button>
     </div>
   </div>
+  <div class="mgr-cols"><div class="mgr-main">
   ${(logi.length || ms.is_admin) ? `<div class="card">
     <h3>🚨 דו"ח אירוע חריג</h3>
     <div class="grid-teams">
@@ -2797,12 +2900,6 @@ function renderManagerHome(App, ms){
       ${INC.pendCount ? `<div class="team-tile" data-action="portal-pv" data-page="inc-list" style="border-color:#b42318;"><div style="font-size:1.1em;font-weight:700;color:#b42318;">🔔 ${INC.pendCount} ${INC.pendCount===1?"אירוע חדש":"אירועים"} מהמוקד</div><div class="muted" style="font-size:.85em;margin-top:4px;">ממתינים לתחקיר</div></div>` : ""}
     </div>
   </div>` : ""}
-  ${!isUnitMgr(ms) ? (()=>{ if(C.homeCount===undefined){ C.homeCount = null; calLoad(App, ms, true); } return `<div class="card">
-    <div class="team-tile" data-action="portal-pv" data-page="cal" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-      <div><div style="font-size:1.1em;font-weight:700;">📅 יומן משותף</div><div class="muted" style="font-size:.85em;margin-top:4px;">משימות ודברים שנקבעו — הקב"טים, סרגיי ומאיר</div></div>
-      ${C.homeCount ? `<span class="portal-badge">📌 ${C.homeCount} משימות פתוחות</span>` : ""}
-    </div>
-  </div>`; })() : ""}
   ${ms.is_admin ? `<div class="card">
     <h3>🔑 ניהול מערכת</h3>
     <div class="grid-teams">${tile("portal-mh-codes", "🔑 עריכת קודים של מנהלים", "קביעה ושינוי קוד אישי לכל מנהל")}
@@ -2839,7 +2936,8 @@ function renderManagerHome(App, ms){
     <button class="btn" data-action="portal-mh-agg" style="font-size:1.05em;padding:12px 26px;">✏️ ערוך סידור</button>
     <p class="muted" style="margin:8px 0 0;font-size:.85em;">שיבוץ ידני ואוטומטי, פרסום ופלט — ${names(sched)}</p>
   </div>`:""}
-  ${!sched.length && !logi.length && !ms.can_training && !ms.is_admin ? (U.error && /אין הרשאה/.test(U.error) ? `<div class="card"><p class="muted">אין עדיין הרשאות לממשק הזה.</p></div>` : renderUnitDashboard(App, ms)) : ""}`;
+  ${!sched.length && !logi.length && !ms.can_training && !ms.is_admin ? (U.error && /אין הרשאה/.test(U.error) ? `<div class="card"><p class="muted">אין עדיין הרשאות לממשק הזה.</p></div>` : renderUnitDashboard(App, ms)) : ""}
+  </div><div class="mgr-side">${renderCalWeekSide(App, ms)}</div></div>`;
 }
 function enterMgrSchedule(App, ms, which){
   const S = App.S;
@@ -3002,7 +3100,7 @@ function onClick(App, a, el){
   if(a==="portal-mgr-logout"){
     const ms = loadMgr(App);
     if(ms) App.apiRpc("manager_logout", {p_token: ms.token}).catch(()=>{});
-    saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null; MN.state = null; INC.pendCount = undefined; INC.opts = null; C.data = null; C.homeCount = undefined; C.month = null; C.sel = null; C.edit = null; U.data = null; U.error = null; U.loading = false;
+    saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null; MN.state = null; INC.pendCount = undefined; INC.opts = null; C.data = null; C.homeCount = undefined; C.month = null; C.sel = null; C.edit = null; CW.data = null; CW.my = null; CW.week = null; U.data = null; U.error = null; U.loading = false;
     S.view = "home"; S.ui = {};
     return App.render();
   }
@@ -3075,7 +3173,7 @@ function onClick(App, a, el){
   }
   if(a==="portal-pv-back") return pvBack(App);
   if(a.indexOf("portal-inc-")===0) return incClick(App, a, el);
-  if(a.indexOf("portal-cal-")===0) return calClick(App, a, el);
+  if(a.indexOf("portal-cal-")===0 || a.indexOf("portal-calw-")===0) return calClick(App, a, el);
   if(a==="portal-unit-refresh"){ U.data = null; U.error = null; U.loading = false; return App.render(); }
   if(a==="portal-quiz-addopt"){ const Q = syncQuiz(); if(Q){ Q.questions[+el.dataset.q].options.push(""); } return App.render(); }
   if(a==="portal-quiz-delopt"){ const Q = syncQuiz(); if(Q){ const q = Q.questions[+el.dataset.q], o = +el.dataset.o; q.options.splice(o,1); if(q.correct===o) q.correct = null; else if(q.correct>o) q.correct--; } return App.render(); }
