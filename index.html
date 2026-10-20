@@ -93,6 +93,7 @@
   .tmpl-table th{background:#f4f7fb;font-weight:600;}
   .tmpl-table th .shabbat-th{font-weight:500;font-size:.9em;color:#7a5c00;margin-top:2px;}
   .tmpl-table td.tmpl-pos{background:#f4f7fb;font-weight:600;}
+  .tmpl-pos-hrs{font-size:.72em;font-weight:400;color:#4b5563;white-space:nowrap;line-height:1.35;}
   .tmpl-na{background:#2a2a2a;}
   .tmpl-missing{font-weight:800;}
   .tmpl-cell{cursor:pointer;}
@@ -106,7 +107,7 @@
   /* בפלט הסידור כל המשבצות באותו גודל: עמודות ימים ברוחב שווה (גם בין הטבלאות של בוקר/ערב/לילה) וגובה אחיד.
      לבקשת סרגיי (2026-10-08) */
   #printArea .tmpl-table{table-layout:fixed;width:100%;}
-  #printArea .tmpl-table th:first-child, #printArea .tmpl-table td.tmpl-pos{width:72px;}
+  #printArea .tmpl-table th:first-child, #printArea .tmpl-table td.tmpl-pos{width:96px;}
   #printArea .tmpl-table td{height:60px;vertical-align:middle;white-space:normal;overflow-wrap:anywhere;line-height:1.25;}
   .tmpl-restwarn-note{display:block;font-size:.8em;font-weight:700;color:var(--danger);}
   .slot-editor{background:#f6fbff;border-top:2px solid var(--primary);}
@@ -241,7 +242,9 @@ function isMokedTeam(team){ return !team.sectors || team.sectors.length===0; }
 function submitOptionsForTeamDay(team, dateStr){
   const dt = dayTypeForDate(dateStr);
   if(dt==="weekday"){
-    const opts=["morning","evening","night"];
+    // חיפה: אין משמרת לילה בימים א'-ד', רק בלילה שבין חמישי לשישי (לבקשת סרגיי, 2026-10-20)
+    const haifaNoNight = (team.sectors||[]).length===1 && team.sectors[0]==="חיפה" && parseDate(dateStr).getDay()!==4;
+    const opts = haifaNoNight ? ["morning","evening"] : ["morning","evening","night"];
     if(team.has_coordinated_shift) opts.push("coordinated");
     return opts;
   }
@@ -1674,7 +1677,9 @@ function pickedForRoleCell(candidates, ridx, roleRowsCount){
    כהמשך ישיר של מספור ה"סייר" הרגיל של הבלוק (למשל: בוקר עם 3 תקנים + 2 מתואמת -> סייר 4, סייר 5
    מתווספות). גנרי (לא תלוי בשם גזרה ספציפי) - מופעל על כל גזרה שיש לה בלוק "coordinated". לבקשת
    סרגיי (2026-10-05): "עותק תצוגה" בלבד, בלי ליצור אפשרות עריכה כפולה. */
-function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDate, workers, allWorkersById, restViolations){
+function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDate, workers, allWorkersById, restViolations, mode){
+  /* (2026-10-20, סרגיי) בשיבוץ ידני גם שורות המתואמת שבתוך בוקר/ערב לחיצות - פותחות את משבצת ה"מתואמת" עצמה */
+  const clickAttrs = (d, cpos)=> mode==="manual" ? ` data-action="tmpl-cell" data-sector="${escapeHtml(sector)}" data-date="${d}" data-type="coordinated" data-pos="${cpos}"` : "";
   if(bucket.key!=="morning" && bucket.key!=="evening") return "";
   return Array.from({length:coordBucket.maxReq}, (_,i)=>i+1).map(cpos=>{
     const pos = bucket.maxReq + cpos;
@@ -1684,7 +1689,7 @@ function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDa
       const list = tmplAssignedList(assignmentsByDate, d, sector, cq.shift_type);
       const a = list[cpos-1];
       const w = a ? (workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id]) : null;
-      if(!w) return `<td class="tmpl-missing" style="font-style:italic;">חוסר</td>`;
+      if(!w) return `<td class="tmpl-missing${mode==="manual"?" tmpl-cell":""}" style="font-style:italic;"${clickAttrs(d, cpos)}>חוסר</td>`;
       const cs = a.custom_start ? a.custom_start.slice(0,5) : cq.start_time.slice(0,5);
       const ce = a.custom_end ? a.custom_end.slice(0,5) : cq.end_time.slice(0,5);
       const q = bucket.perDate[d];
@@ -1694,12 +1699,30 @@ function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDa
       const restBad = restViolations.has(restKey(a));
       const restTight = !restBad && restViolations.tight && restViolations.tight.has(restKey(a));
       const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
-      return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}" style="opacity:.8;font-style:italic;">${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
+      return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${mode==="manual"?" tmpl-cell":""}" style="opacity:.8;font-style:italic;"${clickAttrs(d, cpos)}>${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
     }).join("");
-    return `<tr class="tmpl-mirror-row"><td class="tmpl-pos">סייר ${pos}<br><span class="muted" style="font-size:.75em;font-weight:400;">(מתואמת)</span></td>${cells}</tr>`;
+    return `<tr class="tmpl-mirror-row"><td class="tmpl-pos">סייר ${pos}<br><span class="muted" style="font-size:.75em;font-weight:400;">(מתואמת)</span>${tmplBucketHoursHtml(coordBucket)}</td>${cells}</tr>`;
   }).join("");
 }
 
+/* שעות המשמרות שבבלוק - מוצגות בעמודת ה"סיירים" (לבקשת סרגיי, 2026-10-20). שישי בוקר: הסיום נקבע לפי
+   כניסת השבת (fridayMorningEnd), לכן מוצג כ"עד הסיום לפי כניסת שבת" - השעה המדויקת מופיעה בתא עצמו. */
+const TMPL_DAY_NAMES = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"];
+function tmplBucketHoursHtml(bucket){
+  const seen = {}, out = [];
+  Object.values(bucket.perDate).forEach(q=>{
+    if(!q || seen[q.shift_type]) return; seen[q.shift_type] = true;
+    const st = String(q.start_time).slice(0,5), en = String(q.end_time).slice(0,5);
+    let name, hrs = `${st}-${en}`;
+    if(q.shift_type==="friday_morning"){ name = "שישי"; hrs = `${st} עד כניסת שבת`; }
+    else if(q.shift_type==="friday_night") name = "שישי";
+    else if(q.shift_type==="motzash") name = 'מוצ"ש';
+    else if(q.weekday!=null) name = TMPL_DAY_NAMES[q.weekday];
+    else name = "";
+    out.push({o: q.shift_type==="motzash"?3:(q.shift_type.startsWith("friday")?2:1), t: `${name?name+" ":""}<span dir="ltr">${hrs}</span>`});
+  });
+  return out.sort((a,b)=>a.o-b.o).map(x=>`<div class="tmpl-pos-hrs">${x.t}</div>`).join("");
+}
 /* mode: "view" (תצוגה בלבד, במסך הפלט הראשי) או "manual" (משבצות לחיצות לשיבוץ ידני) */
 function renderTemplateGrid(group, dates, ui, mode){
   const quotas = S.quotas;
@@ -1714,6 +1737,7 @@ function renderTemplateGrid(group, dates, ui, mode){
     if(!secData.buckets.length) return "";
     const coordBucket = secData.buckets.find(b=>b.key==="coordinated");
     const bucketsHtml = secData.buckets.map(bucket=>{
+      const bucketHrs = tmplBucketHoursHtml(bucket);
       const rowsHtml = Array.from({length:bucket.maxReq}, (_,i)=>i+1).map(pos=>{
         const cells = dates.map(d=>{
           const q = bucket.perDate[d];
@@ -1734,9 +1758,9 @@ function renderTemplateGrid(group, dates, ui, mode){
           if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}">${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}${shadowHtml}</td>`;
           return `<td class="tmpl-missing">חוסר${shadowHtml}</td>`;
         }).join("");
-        return `<tr><td class="tmpl-pos">סייר ${pos}</td>${cells}</tr>`;
+        return `<tr><td class="tmpl-pos">סייר ${pos}${bucketHrs}</td>${cells}</tr>`;
       }).join("");
-      const mirrorHtml = coordBucket ? tmplCoordMirrorRows(secData.sector, bucket, coordBucket, dates, assignmentsByDate, workers, allWorkersById, restViolations) : "";
+      const mirrorHtml = coordBucket ? tmplCoordMirrorRows(secData.sector, bucket, coordBucket, dates, assignmentsByDate, workers, allWorkersById, restViolations, mode) : "";
       return `
       <div class="tmpl-bucket-head">${escapeHtml(bucket.label)}</div>
       <div style="overflow-x:auto;">
@@ -2823,6 +2847,7 @@ function renderManualBuild(team){
       <div class="flexbar"><b>תקופה: ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(dates[dates.length-1])}</b></div>
       <p class="muted">לחצו על משבצת כדי לבחור מי ישובץ אליה, או לסמן "חוסר". משבצות שחורות = לא נדרש באותו יום.</p>
       ${renderTemplateGrid(group, dates, ui, "manual")}
+      <button class="btn ok" data-action="manual-done" style="margin-top:8px;">✔ סיימתי</button>
       <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
       <button class="btn secondary small" data-action="open-print" style="margin-top:8px;">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
     </div>
@@ -2837,6 +2862,7 @@ function renderManualBuild(team){
     <div class="flexbar"><b>תקופה: ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(dates[dates.length-1])}</b></div>
     <p class="muted">לחצו על משבצת כדי לבחור מי ישובץ אליה לפי תפקיד (אחמ"ש/מוקדן), או לסמן "חוסר". משבצות שחורות = לא נדרש באותו יום.</p>
     ${renderMokedTemplateGrid(group, dates, ui, "manual")}
+    <button class="btn ok" data-action="manual-done" style="margin-top:8px;">✔ סיימתי</button>
     <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
     <button class="btn secondary small" data-action="open-print" style="margin-top:8px;">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
   </div>
@@ -3378,6 +3404,16 @@ function onAppClick(e){
 
   // ---- manual build ----
   if(a==="manual-exit"){ ui.mode=null; return render(); }
+  /* "סיימתי" בסוף שיבוץ ידני (2026-10-20, סרגיי): כל שיבוץ נשמר כבר בלחיצה; הכפתור מחזיר לטבלה המרוכזת
+     ומזכיר לפרסם אם הסידור עוד לא פורסם */
+  if(a==="manual-done"){
+    ui.mode = null;
+    const tm = teamById(ui.teamId);
+    const pub = tm ? isSchedulePublished(sectorGroupForTeam(tm), ui) : false;
+    ui.buildMsg = pub ? "✔ השיבוץ הידני נשמר. הסידור כבר פורסם — השינויים מופיעים לעובדים."
+                      : "✔ השיבוץ הידני נשמר. כדי שהעובדים יראו את הסידור — לחצו \"📢 פרסם סידור לעובדים\".";
+    render(); window.scrollTo(0,0); return;
+  }
   if(a==="manual-toggle"){
     const key = el.dataset.key;
     ui.manualOpenSlot = (ui.manualOpenSlot===key) ? null : key;
