@@ -850,7 +850,7 @@ function postRowHtml(App, p, clickable){
   return `<div class="portal-task${p.read?"":" portal-unread"}"${clickable?` data-action="portal-open-post" data-id="${p.id}"`:""}>
       <span class="portal-task-icon">${p.read?"📄":"🔔"}</span>
       <span style="min-width:0;"><span style="font-weight:${p.read?600:800};">${esc(p.title)}</span>
-        <span class="muted" style="font-size:.82em;display:block;">${esc(POST_KIND[p.kind]||"")} · ${fmtD(App,p.created_at)}${youtubeId(p.link_url)?" · סרטון":""}</span>
+        <span class="muted" style="font-size:.82em;display:block;">${p.author?`מאת ${esc(p.author)}`:esc(POST_KIND[p.kind]||"")} · ${fmtD(App,p.created_at)}${youtubeId(p.link_url)?" · סרטון":""}</span>
         ${postSnippet(p)?`<span class="portal-snip">${esc(postSnippet(p))}</span>`:""}</span>
     </div>`;
 }
@@ -2050,7 +2050,7 @@ async function calClick(App, a, el){
 }
 
 /* ---------- עמודי משנה (view "pview") ---------- */
-const PV_TITLES = { "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
+const PV_TITLES = { "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
   "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה", "cal":"יומן משותף" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
@@ -2100,6 +2100,105 @@ function fmtDT(App, iso){
   return `${App.fmtDateHeb(App.fmtDate(d))} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+/* ================================================================
+   הודעות קב"ט (2026-10-20, לבקשת סרגיי): מהמסך הראשי הקב"ט כותב הודעה לכלל המאבטחים (שלו, או של כל
+   החברה), או הודעה להנהלה. הנהלה = מנהל מערכת (סרגיי) + מנהל היחידה - הם מקבלים פוש ורואים "הודעות מהקב"טים".
+   השרת: kabat_post_create / kabat_posts_mine (פרסום kind='all' עם posts.team_ids), mgmt_msg_send / _list / _read.
+   ================================================================ */
+const MM = { data:null, loading:false, at:0 };
+function mmLoad(App, ms, force){
+  if(MM.loading || (!force && MM.data && Date.now()-MM.at < 60000)) return;
+  MM.loading = true;
+  App.apiRpc("mgmt_msg_list", {p_token:ms.token}).then(d=>{ MM.data = d; MM.at = Date.now(); MM.loading = false; App.render(); })
+    .catch(()=>{ MM.loading = false; MM.at = Date.now(); });
+}
+function renderMsgCard(App, ms){
+  mmLoad(App, ms);
+  const isMg = MM.data && MM.data.is_mgmt;
+  const canGuards = ms.is_admin || (ms.logistics_team_ids||[]).length > 0;
+  const unread = isMg ? (MM.data.items||[]).filter(x=>!x.read && !x.mine).length : 0;
+  const t = (action, page, title, sub, warn)=>`<div class="team-tile" data-action="${action}" data-page="${page}"${warn?' style="border-color:#b42318;"':""}>
+      <div style="font-size:1.1em;font-weight:700;${warn?"color:#b42318;":""}">${title}</div><div class="muted" style="font-size:.85em;margin-top:4px;">${sub}</div></div>`;
+  const tiles = [
+    canGuards ? t("portal-pv", "k-msg-guards", "📢 הודעה למאבטחים", ms.is_admin ? "לכל המאבטחים או לגזרה" : "לכלל המאבטחים שלך") : "",
+    !isMg ? t("portal-pv", "k-msg-mgmt", "📨 הודעה להנהלה", "לסרגיי ולמנהל היחידה") : "",
+    isMg ? t("portal-pv", "mgmt-inbox", unread ? `📨 ${unread} הודעות חדשות` : "📨 הודעות מהקב\"טים", "הודעות שנשלחו להנהלה", unread>0) : ""
+  ].filter(Boolean);
+  if(!tiles.length) return "";
+  return `<div class="card"><h3>✉️ הודעות</h3><div class="grid-teams">${tiles.join("")}</div></div>`;
+}
+function renderMsgPages(App, ms, pg, wrap, loading, msgs){
+  const esc = App.escapeHtml;
+  const fmt = iso=>{ const d = new Date(iso); return `${d.getDate()}/${d.getMonth()+1} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; };
+  if(pg==="k-msg-guards"){
+    if(!PV.data){ pvLoad(App, "kabat_posts_mine", {p_token:ms.token}); }
+    const sent = (PV.data && PV.data.r) || [];
+    const hasTeams = (ms.logistics_team_ids||[]).length > 0;
+    const f = PV.form || {};
+    return wrap(`<h2>📢 הודעה למאבטחים</h2>
+      <p class="muted" style="margin-top:-6px;">ההודעה מופיעה למאבטחים ב"עדכונים והודעות" באיזור האישי, והם מקבלים התראה.</p>
+      ${hasTeams && ms.is_admin ? `<div class="field"><label>למי</label>
+        <label style="display:block;margin:4px 0;"><input type="radio" name="kmsg_scope" value="mine" ${f.scope!=="all"?"checked":""}> המאבטחים שלי</label>
+        <label style="display:block;margin:4px 0;"><input type="radio" name="kmsg_scope" value="all" ${f.scope==="all"?"checked":""}> כל המאבטחים בחברה</label></div>`
+        : `<p><b>נשלח אל:</b> ${hasTeams ? "כלל המאבטחים שלך" : "כל המאבטחים בחברה"}</p>`}
+      <div class="field"><label>כותרת</label><input type="text" id="kmsg_title" maxlength="200" value="${esc(f.title||"")}"></div>
+      <div class="field"><label>תוכן ההודעה</label><textarea id="kmsg_body" rows="5" maxlength="5000">${esc(f.body||"")}</textarea></div>
+      <button class="btn ok" data-action="portal-kmsg-send" ${PV.busy?"disabled":""}>${PV.busy?"שולח...":"📢 שליחה"}</button>
+      ${msgs}
+      ${sent.length ? `<h3 style="margin-top:18px;">הודעות ששלחת</h3>${sent.map(x=>`<div style="padding:7px 0;border-bottom:1px solid var(--border);">
+          <b>${esc(x.title)}</b> <span class="muted" style="font-size:.85em;">· ${fmt(x.created_at)} · ${x.scope==="all"?"כל המאבטחים":"המאבטחים שלך"} · נקראה ע"י ${x.read}/${x.n}</span>
+          ${x.body?`<div style="white-space:pre-wrap;font-size:.92em;margin-top:3px;">${esc(x.body)}</div>`:""}</div>`).join("")}` : ""}`);
+  }
+  if(pg==="k-msg-mgmt" || pg==="mgmt-inbox"){
+    if(!PV.data){ pvLoad(App, "mgmt_msg_list", {p_token:ms.token}); return loading(); }
+    if(PV.data.loading) return loading();
+    const d = PV.data.r || {items:[]};
+    if(pg==="mgmt-inbox"){
+      const items = d.items||[];
+      // סימון כנקרא - רק פעם אחת לכל הודעה שהוצגה
+      items.filter(x=>!x.read && !x.mine).forEach(x=>{ x.read = true; x._new = true; App.apiRpc("mgmt_msg_read", {p_token:ms.token, p_id:x.id}).catch(()=>{}); });
+      MM.data = null;
+      return wrap(`<h2>📨 הודעות מהקב"טים</h2>
+        ${items.length ? items.map(x=>`<div style="padding:9px 0;border-bottom:1px solid var(--border);${x._new?"background:#fff8e6;":""}">
+          <div class="flexbar" style="justify-content:space-between;"><b>${esc(x.from)}${x._new?' <span class="portal-badge">חדש</span>':""}</b><span class="muted" style="font-size:.85em;">${fmt(x.created_at)}</span></div>
+          <div style="white-space:pre-wrap;margin-top:4px;">${esc(x.body)}</div>
+          ${(x.readers||[]).length?`<div class="muted" style="font-size:.8em;margin-top:3px;">נקראה ע"י: ${esc(x.readers.join(", "))}</div>`:""}
+        </div>`).join("") : `<p class="muted">אין הודעות.</p>`}`);
+    }
+    const mine = (d.items||[]).filter(x=>x.mine);
+    return wrap(`<h2>📨 הודעה להנהלה</h2>
+      <p class="muted" style="margin-top:-6px;">ההודעה נשלחת לסרגיי ולמנהל היחידה, עם התראה.</p>
+      <div class="field"><label>ההודעה</label><textarea id="mmsg_body" rows="6" maxlength="5000">${esc((PV.form||{}).body||"")}</textarea></div>
+      <button class="btn ok" data-action="portal-mmsg-send" ${PV.busy?"disabled":""}>${PV.busy?"שולח...":"📨 שליחה להנהלה"}</button>
+      ${msgs}
+      ${mine.length ? `<h3 style="margin-top:18px;">הודעות ששלחת</h3>${mine.map(x=>`<div style="padding:7px 0;border-bottom:1px solid var(--border);">
+          <span class="muted" style="font-size:.85em;">${fmt(x.created_at)} · ${(x.readers||[]).length ? "✔ נקראה ע\"י " + esc(x.readers.join(", ")) : "🕒 עוד לא נקראה"}</span>
+          <div style="white-space:pre-wrap;margin-top:3px;">${esc(x.body)}</div></div>`).join("")}` : ""}`);
+  }
+  return null;
+}
+async function msgAction(App, a){
+  const ms = loadMgr(App); if(!ms || PV.busy) return;
+  const v = id=>{ const x = document.getElementById(id); return x ? x.value : ""; };
+  try{
+    if(a==="portal-kmsg-send"){
+      const sc = document.querySelector('input[name="kmsg_scope"]:checked');
+      const scope = sc ? sc.value : ((ms.logistics_team_ids||[]).length ? "mine" : "all");
+      PV.form = {title:v("kmsg_title"), body:v("kmsg_body"), scope};
+      if(!PV.form.title.trim()){ PV.error = "יש למלא כותרת"; PV.msg = null; return App.render(); }
+      PV.busy = true; PV.error = null; App.render();
+      await App.apiRpc("kabat_post_create", {p_token:ms.token, p_scope:scope, p_title:PV.form.title, p_body:PV.form.body});
+      PV.busy = false; PV.form = {}; PV.data = null; PV.msg = "נשלח. המאבטחים יקבלו התראה ויראו את ההודעה באיזור האישי."; return App.render();
+    }
+    if(a==="portal-mmsg-send"){
+      PV.form = {body:v("mmsg_body")};
+      if(!PV.form.body.trim()){ PV.error = "ההודעה ריקה"; PV.msg = null; return App.render(); }
+      PV.busy = true; PV.error = null; App.render();
+      await App.apiRpc("mgmt_msg_send", {p_token:ms.token, p_body:PV.form.body});
+      PV.busy = false; PV.form = {}; PV.data = null; PV.msg = "נשלח להנהלה."; return App.render();
+    }
+  }catch(e){ PV.busy = false; PV.error = e.message; PV.msg = null; App.render(); }
+}
 function renderPView(App){
   const esc = App.escapeHtml;
   const ms = loadMgr(App);
@@ -2114,6 +2213,7 @@ function renderPView(App){
   if(PV.data && PV.data.error) return wrap(`<p class="shortage">${esc(PV.data.error)}</p>`);
   if(pg && pg.indexOf("inc-")===0) return renderIncident(App, ms, pg, a, wrap, loading, msgs);
   if(pg==="cal") return renderCalendar(App, ms, back);
+  if(pg==="k-msg-guards" || pg==="k-msg-mgmt" || pg==="mgmt-inbox"){ const h = renderMsgPages(App, ms, pg, wrap, loading, msgs); if(h) return h; }
   if(pg==="unit-dash") return `<div class="card">${back}<h2 style="margin-bottom:0;">📊 לוח מנהל יחידה</h2><p class="muted">כך רואה את המערכת מנהל היחידה.</p></div>` + renderUnitDashboard(App, ms);
 
   if(pg==="trn-training"){
@@ -2950,6 +3050,7 @@ function renderManagerHome(App, ms){
     </div>
   </div>
   <div class="mgr-cols"><div class="mgr-main">
+  ${renderMsgCard(App, ms)}
   ${(logi.length || ms.is_admin) ? `<div class="card">
     <h3>🚨 דו"ח אירוע חריג</h3>
     <div class="grid-teams">
@@ -3232,6 +3333,7 @@ function onClick(App, a, el){
   if(a==="portal-pv-back") return pvBack(App);
   if(a.indexOf("portal-inc-")===0) return incClick(App, a, el);
   if(a.indexOf("portal-cal-")===0 || a.indexOf("portal-calw-")===0) return calClick(App, a, el);
+  if(a==="portal-kmsg-send" || a==="portal-mmsg-send") return msgAction(App, a);
   if(a==="portal-unit-refresh"){ U.data = null; U.error = null; U.loading = false; return App.render(); }
   if(a==="portal-quiz-addopt"){ const Q = syncQuiz(); if(Q){ Q.questions[+el.dataset.q].options.push(""); } return App.render(); }
   if(a==="portal-quiz-delopt"){ const Q = syncQuiz(); if(Q){ const q = Q.questions[+el.dataset.q], o = +el.dataset.o; q.options.splice(o,1); if(q.correct===o) q.correct = null; else if(q.correct>o) q.correct--; } return App.render(); }

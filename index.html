@@ -165,7 +165,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=47"></script>
+<script src="portal.js?v=48"></script>
 <script>
 (function(){
 "use strict";
@@ -1741,6 +1741,7 @@ function tmplBucketHoursHtml(bucket){
   const friEnds = Array.from(new Set(Object.values(bucket.perDate).filter(q=>q && q.shift_type==="friday_morning").map(q=>String(q.end_time).slice(0,5))));
   Object.values(bucket.perDate).forEach(q=>{
     if(!q || seen[q.shift_type]) return; seen[q.shift_type] = true;
+    if(q.shift_type==="friday_morning") return; // שישי בוקר - ההערה רק בכותרת יום שישי, לא בעמודת הסיירים (סרגיי, 2026-10-20)
     const st = String(q.start_time).slice(0,5), en = String(q.end_time).slice(0,5);
     let name, hrs = `${st}-${en}`;
     if(q.shift_type==="friday_morning"){ name = "שישי"; hrs = `${st}-${friEnds.join(" / ")}</span> <span>(שעתיים לפני כניסת שבת)`; }
