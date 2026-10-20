@@ -165,7 +165,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=69"></script>
+<script src="portal.js?v=70"></script>
 <script>
 (function(){
 "use strict";
@@ -709,13 +709,14 @@ function renderSubmitPeriod(){
       <h4>${fmtDateHeb(d)}</h4>
       <div class="chip-opts">
         ${opts.map(ot=>`<div class="chip ${sel.types.includes(ot)?"on":""} ${positiveChips?"positive":""}"${readOnly?"":` data-action="toggle-shift" data-date="${d}" data-type="${ot}"`}>${submitOptionLabel(ot, d)}</div>`).join("")}
-        ${readOnly?"":`<div class="chip ${sel.customOn?"on":""} ${positiveChips?"positive":""}" data-action="toggle-custom" data-date="${d}">שעות מותאמות</div>`}
+        ${readOnly?"":`<div class="chip ${sel.customOn?"on":""} positive" data-action="toggle-custom" data-date="${d}">${positiveChips?"שעות מותאמות":"שעות שאני כן יכול/ה"}</div>`}
       </div>
       ${sel.customOn? `
         <div class="row" style="margin-top:8px;">
-          <div class="field"><label>משעה</label><input type="time" data-action="custom-start" data-date="${d}" value="${sel.customStart}"${readOnly?" disabled":""}></div>
+          <div class="field"><label>${positiveChips?"משעה":"יכול/ה משעה"}</label><input type="time" data-action="custom-start" data-date="${d}" value="${sel.customStart}"${readOnly?" disabled":""}></div>
           <div class="field"><label>עד שעה</label><input type="time" data-action="custom-end" data-date="${d}" value="${sel.customEnd}"${readOnly?" disabled":""}></div>
-        </div>`:""}
+        </div>
+        ${positiveChips?"":`<p class="muted" style="margin:4px 0 0;font-size:.85em;">אלה השעות שבהן את/ה <b>כן</b> יכול/ה לעבוד ביום הזה — כל שאר השעות של היום ייחשבו כלא זמין. אם השעות מכסות רק חלק ממשמרת, תשובץ/י רק לחלק הזה.</p>`}`:""}
       ${dayStatusRow}
     </div>`;
   }).join("");
@@ -1257,7 +1258,9 @@ function renderPivot(dates, workers, entriesByWorker, submittedIds, exceptionIds
           ${dates.map(d=>{
             const es = (entriesByWorker[w.id]||{})[d];
             if(!es || !es.length) return `<td>-</td>`;
-            return `<td>${es.map(e=> e.shift_type==="custom" ? `${e.custom_start}-${e.custom_end}` : SHIFT_LABELS[e.shift_type]).join(", ")}</td>`;
+            // מוקד: שעות מותאמות = "רק בשעות האלה כן יכול" - מוצג בירוק בנפרד, כי שאר הסימונים במוקד הם חסימות
+            const mk = workerIsMoked(w, "");
+            return `<td>${es.map(e=> e.shift_type==="custom" ? (mk ? `<span style="color:var(--ok);font-weight:700;">✓ יכול רק ${e.custom_start}-${e.custom_end}</span>` : `${e.custom_start}-${e.custom_end}`) : SHIFT_LABELS[e.shift_type]).join(", ")}</td>`;
           }).join("")}
         </tr>`;
       }).join("")}
@@ -1337,6 +1340,56 @@ function isShabbatBlockedSlot(date, shiftType){
   return false;
 }
 function shabbatBlocked(w, date, shiftType){ return !!(w && w.shabbat_observer) && isShabbatBlockedSlot(date, shiftType); }
+/* מוקד - "שעות מותאמות" = השעות שהעובד *כן* יכול לעבוד באותו יום (2026-10-20, לבקשת סרגיי).
+   דוגמה: פאר מסמנת בראשון "לא יכולה בוקר" + שעות מותאמות 16:00-23:00 -> היא זמינה רק בין 16:00 ל-23:00 ביום הזה.
+   כשיש ליום שעות מותאמות, הן קובעות את הזמינות של כל היום (גם אם סומנו בנוסף משמרות חסומות), וכל שאר
+   השעות של היום נחשבות לא זמינות. משמרת שחופפת את החלון רק בחלקה (לפחות שעה) - העובד זמין לה בשעות
+   החפיפה בלבד; בשיבוץ האוטומטי הוא משובץ בשעות האלה, והשעה/ות החסרות נלקחות מעובד המשמרת הסמוכה
+   (למשל עובד הבוקר נשאר עד 16:00), אם הוא יכול לעבוד גם במשמרת הזו - ראו fillPartialGaps.
+   אצל המאבטחים (לא מוקד) - ללא שינוי: שעות מותאמות הן סימון זמינות כמו קודם. */
+const MOKED_MIN_PARTIAL = 60; // חפיפה מינימלית (בדקות) כדי שעובד ייחשב זמין חלקית למשמרת
+function workerIsMoked(w, sector){
+  const t = S.teams.find(x=>x.id===w.team_id);
+  return t ? isMokedTeam(t) : sector==="מוקד";
+}
+function rangeMin(start, end){ let a=timeToMinutes(String(start).slice(0,5)), b=timeToMinutes(String(end).slice(0,5)); if(b<=a) b+=1440; return [a,b]; }
+function mokedWindows(w, date, entriesByWorker){
+  const es = ((entriesByWorker||{})[w.id]||{})[date] || [];
+  const ws = es.filter(e=>e.shift_type==="custom" && e.custom_start && e.custom_end).map(e=>rangeMin(e.custom_start, e.custom_end));
+  return ws.length ? ws : null;
+}
+// חיתוך בין משמרת [start,end] לחלונות הזמינות של העובד: {full:true} / {full:false, start, end, minutes} / null
+function windowFit(windows, start, end){
+  const [ss, se] = rangeMin(start, end);
+  let best = null;
+  windows.forEach(([ws, we])=>{
+    const a = Math.max(ss, ws), b = Math.min(se, we);
+    if(b - a > 0 && (!best || b - a > best[1] - best[0])) best = [a, b];
+  });
+  if(!best) return null;
+  if(best[0]<=ss && best[1]>=se) return {full:true};
+  return {full:false, start:fmtMinutes(best[0]%1440), end:fmtMinutes(best[1]%1440), minutes:best[1]-best[0]};
+}
+// לשיבוץ: שעות חלקיות לעובד מוקד במשמרת (או null אם הוא זמין לכל המשמרת / אין לו שעות מותאמות ביום הזה)
+function mokedPartialHours(w, slot, entriesByWorker, start, end){
+  if(!w || !workerIsMoked(w, slot.sector)) return null;
+  const wins = mokedWindows(w, slot.date, entriesByWorker||S.ui.entriesByWorker);
+  if(!wins) return null;
+  const f = windowFit(wins, start||slot.start, end||slot.end);
+  return (f && !f.full) ? [f.start, f.end] : null;
+}
+// שיבוץ ידני: תגית ליד עובד מוקד שזמין רק לחלק מהמשמרת, והודעה + כפתור לשיבוץ בשעות האלה
+function partialTag(w, slot){
+  const ph = slot && w && mokedPartialHours(w, slot);
+  return ph ? ` <span style="color:var(--ok);font-size:.85em;">(יכול/ה רק ${ph[0]}-${ph[1]})</span>` : "";
+}
+function partialNoticeHtml(w, slot){
+  const ph = slot && w && mokedPartialHours(w, slot);
+  if(!ph) return "";
+  return `<div class="note-box">⏰ ${escapeHtml(w.name)} הגיש/ה שהוא/היא יכול/ה לעבוד ביום הזה רק ${ph[0]}-${ph[1]} (המשמרת ${String(slot.start).slice(0,5)}-${String(slot.end).slice(0,5)}).
+    <div class="row" style="margin-top:6px;"><button class="btn small ok" data-action="tmpl-hours-partial" data-cs="${ph[0]}" data-ce="${ph[1]}">שבץ ב-${ph[0]}-${ph[1]}</button></div>
+    <span class="muted" style="font-size:.85em;">את השעות החסרות אפשר לכסות ע"י הארכת עובד במשמרת הסמוכה (שעות מותאמות). בשיבוץ האוטומטי זה נעשה לבד.</span></div>`;
+}
 function availableForSlot(slot, workers, entriesByWorker, assignmentsByDate, excludeSlotKey, ignoreRole, skipAlreadyCheck){
   // בשבת טופס ההגשה מציע רק "מוצ"ש" - סימון כזה חל גם על משמרות שבת אחרות (כמו ערב מוצ"ש 20:00-23:00
   // במוקד, נוסף 2026-10-07), כי כולן בתוך חלון המוצ"ש.
@@ -1359,7 +1412,12 @@ function availableForSlot(slot, workers, entriesByWorker, assignmentsByDate, exc
     const workerTeam = S.teams.find(t=>t.id===w.team_id);
     const isMoked = workerTeam ? isMokedTeam(workerTeam) : (slot.sector==="מוקד");
     if(isMoked){
-      if(matches) return false; // מוקד: סימון = חסימה (המודל הקיים, ללא שינוי)
+      // מוקד: שעות מותאמות = השעות שכן יכול (ראו mokedWindows) - הן קובעות את זמינות היום כולו
+      const wins = mokedWindows(w, slot.date, entriesByWorker);
+      if(wins){
+        const f = windowFit(wins, slot.start, slot.end);
+        if(!f || (!f.full && f.minutes < MOKED_MIN_PARTIAL)) return false;
+      } else if(matches) return false; // מוקד: סימון = חסימה (המודל הקיים, ללא שינוי)
     } else {
       if(!matches) return false; // מאבטחים: רק סימון מפורש = זמינות; ברירת המחדל היא "לא זמין"
     }
@@ -2067,6 +2125,7 @@ function renderTmplCellOverlay(){
       <div class="card" data-action="noop">
         <h3>${escapeHtml(w?w.name:"")} · ${escapeHtml(c.sector)} · ${fmtDateHeb(c.date)}</h3>
         ${streakNoticeHtml(ui.tmplPickedWorker, c.date, c.type)}
+        ${partialNoticeHtml(w, slot)}
         ${ui.tmplHoursMode!=="custom" ? `
           <div class="row">
             <button class="btn" data-action="tmpl-hours-standard">משמרת סטנדרטית</button>
@@ -2099,13 +2158,13 @@ function renderTmplCellOverlay(){
   const availOptions = options.filter(w=>avail.some(a=>a.id===w.id));
   const busyOptions = options.filter(w=> !avail.some(a=>a.id===w.id) && availIncludingBusy.some(a=>a.id===w.id));
   const unavailOptions = options.filter(w=>!availIncludingBusy.some(a=>a.id===w.id));
-  const pickBtn = w => `<button class="btn small ${w.id===(currentWorker&&currentWorker.id)?"":"secondary"}" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}</button>`;
+  const pickBtn = w => `<button class="btn small ${w.id===(currentWorker&&currentWorker.id)?"":"secondary"}" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}${partialTag(w, slot)}</button>`;
   const busyNote = w => {
     const already = (assignmentsByDate[c.date]||[]).filter(a=>a.worker_id===w.id);
     const labels = Array.from(new Set(already.map(a=>SHIFT_LABELS[a.shift_type]||a.shift_type)));
     return labels.join("/") || "משמרת אחרת";
   };
-  const busyBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`;
+  const busyBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}${partialTag(w, slot)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`;
   return `
   <div class="overlay" data-action="tmpl-cell-bg">
     <div class="card" data-action="noop">
@@ -2136,7 +2195,7 @@ function renderTmplCellOverlay(){
       <div class="avail-list" style="margin-top:4px;">
         ${otherOptions.length? otherOptions.map(w=>{
           const t = teamById(w.team_id);
-          return `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)} <span class="muted">(${escapeHtml(t?t.name:"")})</span></button>`;
+          return `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}${partialTag(w, slot)} <span class="muted">(${escapeHtml(t?t.name:"")})</span></button>`;
         }).join("") : '<span class="muted">אין עובדים זמינים מגזרות אחרות</span>'}
       </div>` : ""}
       <div class="row" style="margin-top:8px;">
@@ -2208,6 +2267,7 @@ function renderMokedCellOverlay(){
       <div class="card" data-action="noop">
         <h3>${escapeHtml(w?w.name:"")} · ${escapeHtml(c.role)} · ${fmtDateHeb(c.date)}</h3>
         ${streakNoticeHtml(ui.tmplPickedWorker, c.date, c.type)}
+        ${partialNoticeHtml(w, slot)}
         ${ui.tmplHoursMode!=="custom" ? `
           <div class="row">
             <button class="btn" data-action="tmpl-hours-standard">משמרת סטנדרטית</button>
@@ -2240,13 +2300,13 @@ function renderMokedCellOverlay(){
   const availOptions = options.filter(w=>avail.some(a=>a.id===w.id));
   const busyOptions = options.filter(w=> !avail.some(a=>a.id===w.id) && availIncludingBusy.some(a=>a.id===w.id));
   const unavailOptions = options.filter(w=>!availIncludingBusy.some(a=>a.id===w.id));
-  const pickBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}</button>`;
+  const pickBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}${partialTag(w, slot)}</button>`;
   const busyNote = w => {
     const already = (assignmentsByDate[c.date]||[]).filter(a=>a.worker_id===w.id);
     const labels = Array.from(new Set(already.map(a=>SHIFT_LABELS[a.shift_type]||a.shift_type)));
     return labels.join("/") || "משמרת אחרת";
   };
-  const busyBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`;
+  const busyBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}${partialTag(w, slot)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`;
   return `
   <div class="overlay" data-action="tmpl-cell-bg">
     <div class="card" data-action="noop">
@@ -2273,9 +2333,9 @@ function renderMokedCellOverlay(){
       ${(roleOverrideOptions.length || roleOverrideBusy.length || roleOverrideUnavail.length)? `
       <p class="muted" style="margin:8px 0 2px;font-weight:600;">אחמ"שים (יכולים למלא גם תקן מוקדן)</p>
       <div class="avail-list">
-        ${roleOverrideOptions.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}</button>`).join("")}
-        ${roleOverrideBusy.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`).join("")}
-        ${roleOverrideUnavail.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)} <span class="muted">(לא זמין/ה)</span></button>`).join("")}
+        ${roleOverrideOptions.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}${partialTag(w, slot)}</button>`).join("")}
+        ${roleOverrideBusy.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}${partialTag(w, slot)} <span class="muted">(כבר משובץ/ת: ${escapeHtml(busyNote(w))})</span></button>`).join("")}
+        ${roleOverrideUnavail.map(w=>`<button class="btn small secondary" data-action="tmpl-pick-role-override" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}${partialTag(w, slot)} <span class="muted">(לא זמין/ה)</span></button>`).join("")}
       </div>` : ""}
       <div class="row" style="margin-top:8px;">
         <button class="btn small secondary" data-action="tmpl-other-sectors-toggle">${ui.tmplShowOtherSectors?"הסתר זמינים מגזרות אחרות":"הצג זמינים מגזרות אחרות"}</button>
@@ -2284,7 +2344,7 @@ function renderMokedCellOverlay(){
       <div class="avail-list" style="margin-top:4px;">
         ${otherOptions.length? otherOptions.map(w=>{
           const t = teamById(w.team_id);
-          return `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)} <span class="muted">(${escapeHtml(t?t.name:"")})</span></button>`;
+          return `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}${partialTag(w, slot)} <span class="muted">(${escapeHtml(t?t.name:"")})</span></button>`;
         }).join("") : '<span class="muted">אין עובדים זמינים מגזרות/צוותים אחרים בתפקיד זה</span>'}
       </div>` : ""}
       <div class="row" style="margin-top:8px;">
@@ -2720,6 +2780,29 @@ async function runAutoAssign(){
   const underTarget = (w, d)=> w.target_shifts==null || (tgtCount[w.id+"|"+weekOf(d)]||0) < w.target_shifts;
   const fairnessRatio = w => availCount[w.id]>0 ? (assignCount[w.id]/availCount[w.id]) : Infinity;
   const byFairness = (a,b)=> (fairnessRatio(a)-fairnessRatio(b)) || (assignCount[a.id]-assignCount[b.id]) || a.name.localeCompare(b.name,"he");
+  // מוקד (2026-10-20): עובד שזמין רק לחלק מהמשמרת (שעות מותאמות = "כן יכול") משתתף בהוגנות הרגילה אם את
+  // השעות החסרות בתחילת המשמרת יכול להשלים עובד שכבר שובץ במשמרת הקודמת (למשל עובד הבוקר נשאר עד 16:00).
+  // אחרת (אין מי שישלים, או שחסרות שעות בסוף המשמרת) - הוא נבחר רק אחרי כל מי שזמין לכל המשמרת.
+  const partialRecs = [];
+  const roleOfW = id=>{ const x = workers.find(y=>y.id===id); return x && x.role; };
+  function gapCoverableNow(w, slot){
+    const ph = mokedPartialHours(w, slot, ui.entriesByWorker); if(!ph) return true;
+    const [bs, be] = rangeMin(slot.start, slot.end); let [cs, ce] = rangeMin(ph[0], ph[1]); if(cs < bs){ cs += 1440; ce += 1440; }
+    if(ce < be) return false;
+    const prevD = fmtDate(addDays(parseDate(slot.date), -1));
+    const prevSlots = slots.filter(x=>x.sector===slot.sector && x!==slot && (x.date===slot.date || x.date===prevD)).filter(x=>{ const [, xe] = rangeMin(x.start, x.end); return xe + (x.date===slot.date?0:-1440) === bs; });
+    const gapS = fmtMinutes(bs%1440), gapE = fmtMinutes(cs%1440);
+    return prevSlots.some(x=>(assignmentsByDate[x.date]||[]).some(a=>{
+      if(a.sector!==x.sector || a.shift_type!==x.shiftType || a.shadow_of || a.worker_id===w.id || a.custom_end) return false;
+      const ro = a.filled_role || roleOfW(a.worker_id); if(!(ro===w.role || (w.role==="מוקדן" && ro==='אחמ"ש'))) return false;
+      const ow = workers.find(y=>y.id===a.worker_id); if(!ow) return false;
+      if(!availableForSlot(slot, [ow], ui.entriesByWorker, {}, null, true, true).length) return false;
+      const wins = mokedWindows(ow, slot.date, ui.entriesByWorker);
+      if(wins){ const f = windowFit(wins, gapS, gapE); if(!f || !f.full) return false; }
+      return true;
+    }));
+  }
+  const fullFirst = slot => (a,b)=> ((gapCoverableNow(a, slot)?0:1) - (gapCoverableNow(b, slot)?0:1)) || byFairness(a,b);
 
   // מניעת ברירת-מחדל של שיבוץ עם פחות מ-8 שעות מנוחה (לבקשת סרגיי, 2026-09-28) - ראו הערה מפורטת
   // ליד wouldViolateRest/buildWorkerIntervals למעלה. נבנה מ-ui.allAssignments (כל הגזרות) כדי לתפוס
@@ -2823,7 +2906,7 @@ async function runAutoAssign(){
       return restSorted(avEve.filter(w=>!w.auto_assign_exempt && w.id!==(plan.achmash&&plan.achmash.id)), eve)[0] || null;
     };
     if(motAchNeed>0){
-      const full = restSorted(avMot.filter(w=>!w.shabbat_observer && avEve.some(x=>x.id===w.id)), mot);
+      const full = restSorted(avMot.filter(w=>!w.shabbat_observer && avEve.some(x=>x.id===w.id) && !mokedPartialHours(w, mot, ui.entriesByWorker) && !(eve && mokedPartialHours(w, eve, ui.entriesByWorker))), mot);
       if(full.length){ plan.achmash = full[0]; if(eveNeed>0) plan.evening = full[0]; }
       else {
         plan.achmash = restSorted(avMot, mot)[0] || null;
@@ -2890,17 +2973,17 @@ async function runAutoAssign(){
           chosen = chosen.concat(p.slice(0, needRole));
           return;
         }
-        const okRole = restOk.filter(w=>w.role===role && !chosen.some(c=>c.id===w.id)).slice().sort(byFairness);
+        const okRole = restOk.filter(w=>w.role===role && !chosen.some(c=>c.id===w.id)).slice().sort(fullFirst(slot));
         let pickedRole = okRole.slice(0, needRole);
         if(satMotzash){
-          const badRoleS = restBad.filter(w=>w.role===role && !chosen.some(c=>c.id===w.id)).slice().sort(byFairness);
+          const badRoleS = restBad.filter(w=>w.role===role && !chosen.some(c=>c.id===w.id)).slice().sort(fullFirst(slot));
           const order = obsLast(okRole, badRoleS);
           pickedRole = order.slice(0, needRole);
           restForced += pickedRole.filter(w=>badRoleS.includes(w)).length;
           pickedRole.forEach(w=>{ customFor[w.id] = SAT_LATE; });
         }
         if(pickedRole.length < needRole && !satMotzash){
-          const badRole = restBad.filter(w=>w.role===role && !chosen.some(c=>c.id===w.id)).slice().sort(byFairness);
+          const badRole = restBad.filter(w=>w.role===role && !chosen.some(c=>c.id===w.id)).slice().sort(fullFirst(slot));
           const more = badRole.slice(0, needRole - pickedRole.length);
           restForced += more.length;
           pickedRole = pickedRole.concat(more);
@@ -2913,14 +2996,14 @@ async function runAutoAssign(){
           const fallbackPool = availAnyRole.filter(w=>w.role==='אחמ"ש' && !chosen.some(c=>c.id===w.id) && !pickedRole.some(c=>c.id===w.id));
           const {ok: fbOk, bad: fbBad} = splitByRest(fallbackPool, slot);
           const stillNeed = needRole - pickedRole.length;
-          let pickedFallback = fbOk.slice().sort(byFairness).slice(0, stillNeed);
+          let pickedFallback = fbOk.slice().sort(fullFirst(slot)).slice(0, stillNeed);
           if(satMotzash){
-            pickedFallback = obsLast(fbOk.slice().sort(byFairness), fbBad.slice().sort(byFairness)).slice(0, stillNeed);
+            pickedFallback = obsLast(fbOk.slice().sort(fullFirst(slot)), fbBad.slice().sort(fullFirst(slot))).slice(0, stillNeed);
             restForced += pickedFallback.filter(w=>fbBad.includes(w)).length;
             pickedFallback.forEach(w=>{ customFor[w.id] = SAT_LATE; });
           }
           if(pickedFallback.length < stillNeed && !satMotzash){
-            const fbMore = fbBad.slice().sort(byFairness).slice(0, stillNeed - pickedFallback.length);
+            const fbMore = fbBad.slice().sort(fullFirst(slot)).slice(0, stillNeed - pickedFallback.length);
             restForced += fbMore.length;
             pickedFallback = pickedFallback.concat(fbMore);
           }
@@ -2937,6 +3020,16 @@ async function runAutoAssign(){
         chosen = chosen.concat(more);
       }
     }
+    // מוקד: עובד שזמין רק לחלק מהמשמרת - משובץ בשעות החפיפה בלבד; את השעות החסרות משלים fillPartialGaps
+    chosen = chosen.filter(w=>{
+      if(!workerIsMoked(w, slot.sector)) return true;
+      const wins = mokedWindows(w, slot.date, ui.entriesByWorker); if(!wins) return true;
+      const base = customFor[w.id] || [slot.start, slot.end];
+      const f = windowFit(wins, base[0], base[1]);
+      if(!f || (!f.full && f.minutes < MOKED_MIN_PARTIAL)) return false; // השעות שנקבעו לו (למשל 23:00-07:00 במוצ"ש) מחוץ לשעות שהוא יכול
+      if(!f.full){ customFor[w.id] = [f.start, f.end]; partialRecs.push({sector:slot.sector, date:slot.date, shiftType:slot.shiftType, workerId:w.id, cs:f.start, ce:f.end, baseStart:String(base[0]).slice(0,5), baseEnd:String(base[1]).slice(0,5)}); }
+      return true;
+    });
     if(chosen.length < need){ short++; if(streakCut.has(slot)) streakShort++; }
     if(chosen.length===0) continue;
     const fullList = alreadyAll.map(a=>a.worker_id).concat(chosen.map(w=>w.id));
@@ -2963,6 +3056,69 @@ async function runAutoAssign(){
   ui.buildMsg = `השיבוץ האוטומטי הושלם: עודכנו ${filled} משבצות.${short?` שימו לב — ב-${short} משבצות אין מספיק עובדים זמינים כדי למלא את כל התקן (יופיעו כ"חוסר").`:""}${restForced?` שימו לב — ב-${restForced} שיבוצים לא נמצא עובד עם 8 שעות מנוחה, ושובץ עובד עם פחות (כעדיפות אחרונה, מסומן באדום בטבלה).`:""}${streakShort?` ב-${streakShort} משבצות נשאר חוסר כי העובדים הזמינים היו מגיעים ל-7 ימי עבודה ברצף או לשבת רביעית ברצף — אפשר לשבץ ידנית (תוצג אזהרה).`:""}${satLateAch?` מוצ"ש במוקד: ב-${satLateAch} שבתות לא היה אחמ"ש זמין מ-20:00 — שובץ אחמ"ש שומר שבת מ-23:00${satSergey?`, וסרגיי ל-20:00-23:00 (${satSergey})`:""}.`:""}${satEveShort?` ב-${satEveShort} שבתות לא נמצא מי שיכסה אחמ"ש 20:00-23:00.`:""}`;
   ui.loaded = false; // רענון מלא של נתוני השיבוצים
   await loadAggregateData(team);
+  if(partialRecs.length){
+    const g = await fillPartialGaps(partialRecs, slots, workers);
+    const msg = ` שעות מותאמות במוקד: ${partialRecs.length} עובדים שובצו רק לשעות שהם יכולים${g.extended?`, ו-${g.extended} עובדים במשמרות הסמוכות הוארכו כדי לכסות את השעות החסרות`:""}.${g.uncovered.length?` לא נמצא מי שיכסה: ${g.uncovered.join(" · ")} — אפשר להשלים ידנית.`:""}`;
+    if(g.extended){ ui.loaded = false; await loadAggregateData(team); }
+    ui.buildMsg = (ui.buildMsg||"") + msg;
+    render();
+  }
+}
+
+/* מוקד (2026-10-20): אחרי שיבוץ אוטומטי - לכל עובד ששובץ רק לחלק מהמשמרת (שעות מותאמות = "כן יכול"),
+   השעות החסרות נלקחות מעובד המשמרת הסמוכה: לפני (למשל עובד הבוקר נשאר עד 16:00) או אחרי (עובד הלילה
+   מתחיל מוקדם). התנאים: אותו תפקיד (או אחמ"ש שמכסה מוקדן), העובד יכול לעבוד גם במשמרת הזו (לא חסם
+   אותה, ואם הגיש שעות מותאמות - הן מכסות את השעות החסרות), וסך המשמרת שלו לא עובר 12 שעות. */
+async function fillPartialGaps(partialRecs, slots, workers){
+  const ui = S.ui; let extended = 0; const uncovered = [];
+  const roleOf = a=>{ const w = workers.find(x=>x.id===a.worker_id); return a.filled_role || (w && w.role); };
+  const prevDay = d=>fmtDate(addDays(parseDate(d), -1)), nextDay = d=>fmtDate(addDays(parseDate(d), 1));
+  const touched = new Set();
+  for(const r of partialRecs){
+    const slot = slots.find(x=>x.sector===r.sector && x.date===r.date && x.shiftType===r.shiftType);
+    if(!slot) continue;
+    const mine = (ui.assignments||[]).find(a=>a.sector===r.sector && a.entry_date===r.date && a.shift_type===r.shiftType && a.worker_id===r.workerId && !a.shadow_of);
+    const myRole = mine ? roleOf(mine) : ((workers.find(x=>x.id===r.workerId)||{}).role);
+    const [bs, be] = rangeMin(r.baseStart, r.baseEnd);
+    let [cs, ce] = rangeMin(r.cs, r.ce); if(cs < bs){ cs += 1440; ce += 1440; }
+    const gaps = [];
+    if(cs > bs) gaps.push({dir:"before", s:bs, e:cs});
+    if(ce < be) gaps.push({dir:"after", s:ce, e:be});
+    for(const gp of gaps){
+      // משמרות סמוכות: נגמרת בדיוק בתחילת הפער (לפני) / מתחילה בדיוק בסוף הפער (אחרי). זמנים ביחס לחצות של r.date
+      const neigh = slots.filter(x=>x.sector===r.sector && x!==slot && (x.date===r.date || x.date===prevDay(r.date) || x.date===nextDay(r.date))).filter(x=>{
+        const off = x.date===r.date ? 0 : (x.date===prevDay(r.date) ? -1440 : 1440);
+        const [xs, xe] = rangeMin(x.start, x.end);
+        return gp.dir==="before" ? xe+off===bs : xs+off===be;
+      });
+      let done = false;
+      for(const x of neigh){
+        const off = x.date===r.date ? 0 : (x.date===prevDay(r.date) ? -1440 : 1440);
+        const cands = (ui.assignments||[]).filter(a=>a.sector===x.sector && a.entry_date===x.date && a.shift_type===x.shiftType && !a.shadow_of && a.worker_id!==r.workerId && !touched.has(a.id))
+          .filter(a=>{ const ro = roleOf(a); return ro===myRole || (myRole==="מוקדן" && ro==='אחמ"ש'); })
+          .sort((a,b)=> (roleOf(a)===myRole?0:1) - (roleOf(b)===myRole?0:1));
+        for(const a of cands){
+          const w = workers.find(y=>y.id===a.worker_id); if(!w) continue;
+          let [as, ae] = rangeMin(a.custom_start||x.start, a.custom_end||x.end); as += off; ae += off;
+          if(gp.dir==="before" ? ae!==gp.s : as!==gp.e) continue; // כבר לא מסתיים/מתחיל בגבול (שעות מותאמות אחרות)
+          if(!availableForSlot(slot, [w], ui.entriesByWorker, {}, null, true, true).length) continue;
+          const wins = mokedWindows(w, r.date, ui.entriesByWorker);
+          if(wins){ const f = windowFit(wins, fmtMinutes(((gp.s%1440)+1440)%1440), fmtMinutes(((gp.e%1440)+1440)%1440)); if(!f || !f.full) continue; }
+          const ns = gp.dir==="before" ? as : gp.s, ne = gp.dir==="before" ? gp.e : ae;
+          if(ne - ns > 12*60) continue;
+          const t = m=>fmtMinutes(((m - off)%1440 + 1440)%1440);
+          try{
+            await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:x.sector, p_entry_date:x.date, p_shift_type:x.shiftType, p_worker_id:a.worker_id, p_custom_start:t(ns), p_custom_end:t(ne)});
+            touched.add(a.id); extended++; done = true;
+          }catch(e){}
+          break;
+        }
+        if(done) break;
+      }
+      if(!done) uncovered.push(`${fmtDateHeb(r.date)} ${SHIFT_LABELS[r.shiftType]||r.shiftType} ${fmtMinutes(((gp.s%1440)+1440)%1440)}-${fmtMinutes(((gp.e%1440)+1440)%1440)}`);
+    }
+  }
+  return {extended, uncovered};
 }
 
 /* --------- שיבוץ ידני --------- */
@@ -3057,7 +3213,7 @@ function exportPivot(){
     const cells = dates.map(d=>{
       const es = (ui.entriesByWorker[w.id]||{})[d];
       if(!es||!es.length) return "-";
-      return es.map(e=> e.shift_type==="custom" ? `${e.custom_start}-${e.custom_end}` : SHIFT_LABELS[e.shift_type]).join(", ");
+      return es.map(e=> e.shift_type==="custom" ? (workerIsMoked(w,"")?`יכול רק ${e.custom_start}-${e.custom_end}`:`${e.custom_start}-${e.custom_end}`) : SHIFT_LABELS[e.shift_type]).join(", ");
     });
     lines.push([w.name, ...cells].join("\t"));
   });
@@ -3510,7 +3666,7 @@ function onAppClick(e){
     if(!workerId){ // חוסר/נקה - מיידי
       return c.role ? assignRoleAtPosition(c.sector, c.date, c.type, c.role, c.ridx, null) : assignAtPosition(c.sector, c.date, c.type, c.pos, null);
     }
-    ui.tmplPickedWorker = workerId; ui.tmplHoursMode = null; ui.tmplCellMsg = null; ui.tmplRoleOverride = null;
+    ui.tmplPickedWorker = workerId; ui.tmplHoursMode = null; ui.tmplCellMsg = null; ui.tmplRoleOverride = null; ui.tmplCustomStart = null; ui.tmplCustomEnd = null;
     return render();
   }
   // אחמ"ש שנבחר למלא תקן מוקדן (שיבוץ ידני) - ראו assignRoleOverrideWorker. שלב 1: בוחרים עובד,
@@ -3529,6 +3685,7 @@ function onAppClick(e){
     return c.role ? assignRoleAtPosition(c.sector, c.date, c.type, c.role, c.ridx, ui.tmplPickedWorker, null, null) : assignAtPosition(c.sector, c.date, c.type, c.pos, ui.tmplPickedWorker, null, null);
   }
   if(a==="tmpl-hours-custom"){ ui.tmplHoursMode = "custom"; return render(); }
+  if(a==="tmpl-hours-partial"){ ui.tmplCustomStart = el.dataset.cs; ui.tmplCustomEnd = el.dataset.ce; ui.tmplHoursMode = "custom"; return render(); }
   // חפיפה: העובד שנבחר נוסף לתא יחד עם העובד שכבר משובץ בו, באותן שעות שלו (2026-10-07)
   if(a==="tmpl-hours-shadow"){
     const c = ui.tmplCell; if(!c) return;
