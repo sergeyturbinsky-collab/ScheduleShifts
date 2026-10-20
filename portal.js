@@ -427,6 +427,7 @@ function renderWorkerHome(App, session){
       ${tile("portal-go-submit", "הגשת משמרות", "הגשת אילוצים לתקופה הבאה")}
       ${tile("portal-go-training", "הדרכה", "לומדות, בקרות ותכנים")}
       ${isMokedWorker(App, session) ? "" : tile("portal-go-logistics", "לוגיסטי", "הציוד שלי ובקשת ציוד")}
+      ${isMokedWorker(App, session) ? "" : tile("portal-go-damage", "⚠️ דיווח נזק / תאונה", "דיווח ראשוני, מעורבים ותמונות")}
     </div>
   </div>
   <div class="portal-cols">
@@ -580,8 +581,9 @@ function renderDamageWorker(App, session){
   }
   if(!DMG.open){
     const mine = DMG.mine||[];
-    return `<div class="dmg-box">
-      <button class="btn" style="background:#b42318;border-color:#b42318;" data-action="portal-dmg-new">⚠️ דיווח נזק / תאונה</button>
+    return `${DMG.okMsg?`<p style="color:#1b7f3b;font-weight:700;">${esc(DMG.okMsg)}</p>`:""}<div class="dmg-box">
+      <p style="margin-top:0;">דיווח ראשוני על נזק לציוד או תאונה — כולל המעורבים, כלי הרכב ותמונות. הדיווח נשלח לקב"ט ולסרגיי.</p>
+      <button class="btn" style="background:#b42318;border-color:#b42318;" data-action="portal-dmg-new">➕ דיווח חדש</button>
       ${mine.length ? `<div style="margin-top:8px;"><b style="font-size:.9em;">הדיווחים שלי</b>${mine.slice(0,5).map(r=>`<div class="portal-task" data-action="portal-dmg-open" data-id="${r.id}"><span class="portal-task-icon">📄</span><span>${esc(dmgFmtDate(r.event_at))} · ${esc((r.description||"").slice(0,60))}</span></div>`).join("")}</div>` : ""}
     </div>`;
   }
@@ -598,8 +600,8 @@ function dmgFormHtml(App, reporterName){
   return `<span class="backlink" data-action="portal-dmg-close">◀ ביטול</span>
     <h3 style="margin-top:6px;">⚠️ דיווח נזק/תאונה ראשוני</h3>
     <div class="field"><label>תאריך ושעת האירוע</label><input type="datetime-local" id="dmg_event_at" value="${esc(f.event_at||nowLocal)}"></div>
-    <p class="muted" style="margin:0 0 8px;">${DMG.mgrMode?"המדווח":"שם המאבטח"}: <b>${esc(reporterName)}</b> · הסניף ימולא אוטומטית לפי הגזרה (אפשר לשנות בשדה "סניף")</p>
-    ${inp("branch","סניף","אוטומטי")}
+    <p class="muted" style="margin:0 0 8px;">${DMG.mgrMode?"המדווח":"שם המאבטח"}: <b>${esc(reporterName)}</b> </p>
+    ${inp("branch","סניף","")}
     ${inp("vehicle_no","מספר כלי","")}
     <div class="field"><label>ציוד שניזוק</label><div class="dmg-items">${items.map(it=>`<label><input type="checkbox" class="dmg-item" value="${esc(it.name)}" ${(f.items||[]).includes(it.name)?"checked":""}> ${esc(it.name)}</label>`).join("")}</div>
       <input type="text" id="dmg_items_other" placeholder="ציוד אחר (לא ברשימה)" value="${esc(f.items_other||"")}" style="margin-top:6px;"></div>
@@ -664,14 +666,16 @@ function dmgCollect(){
 async function dmgAction(App, a, el){
   const session = loadSession(App);
   const ms = loadMgr(App);
-  if(a==="portal-dmg-new"){ DMG.open = true; DMG.form = {}; DMG.parties = [dmgNewParty("המאבטח", session ? session.name : "")]; DMG.vehicles = [{label:"", photos:[]}]; DMG.error = null; DMG.msg = null; return App.render(); }
+  if(a==="portal-dmg-new"){ const tm = session && App.teamById ? App.teamById(session.team_id) : null;
+    DMG.open = true; DMG.form = {branch: tm ? ((tm.sectors&&tm.sectors.length) ? tm.sectors.join(" / ") : tm.name) : ""}; DMG.parties = [dmgNewParty("המאבטח", session ? session.name : "")]; DMG.vehicles = [{label:"", photos:[]}]; DMG.error = null; DMG.msg = null; return App.render(); }
   if(a==="portal-dmg-addparty"){ dmgCollect(); DMG.parties.push(dmgNewParty("צד ג׳ — נהג")); return App.render(); }
   if(a==="portal-dmg-rmparty"){ dmgCollect(); DMG.parties.splice(Number(el.dataset.i),1); return App.render(); }
   if(a==="portal-dmg-addveh"){ dmgCollect(); DMG.vehicles.push({label:"", photos:[]}); return App.render(); }
   if(a==="portal-dmg-rmveh"){ dmgCollect(); DMG.vehicles.splice(Number(el.dataset.i),1); return App.render(); }
   if(a==="portal-dmg-mnew"){
     if(!ms) return App.render();
-    DMG.open = true; DMG.mgrMode = true; DMG.form = {}; DMG.parties = [dmgNewParty("הקב״ט", ms.name)]; DMG.vehicles = [{label:"", photos:[]}]; DMG.error = null; DMG.msg = null;
+    DMG.open = true; DMG.mgrMode = true;
+    DMG.form = {branch: Array.from(new Set(mgrTeams(App, ms.logistics_team_ids).flatMap(t=>(t.sectors&&t.sectors.length)?t.sectors:[t.name]))).join(" / ")}; DMG.parties = [dmgNewParty("הקב״ט", ms.name)]; DMG.vehicles = [{label:"", photos:[]}]; DMG.error = null; DMG.msg = null;
     if(!DMG.items) App.apiGet("logistics_items", "select=id,name,has_size,sort_order&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; });
     return pvGo(App, "dmg-new", {});
   }
@@ -703,7 +707,7 @@ async function dmgAction(App, a, el){
       if(asMgr){ DMG.busy = false; DMG.open = false; DMG.mgrMode = false; DMG.form = {}; DMG.parties = []; DMG.vehicles = []; DMG.msg = null; DMG.list = null;
         pvGo(App, "dmg-list", {}); PV.msg = "הדיווח נשלח."; return App.render(); }
       DMG.busy = false; DMG.open = false; DMG.form = {}; DMG.parties = []; DMG.vehicles = []; DMG.mine = null; DMG.msg = null;
-      L.msg = "הדיווח נשלח לקב\"ט ולסרגיי."; return App.render();
+      DMG.okMsg = "✔ הדיווח נשלח לקב\"ט ולסרגיי."; return App.render();
     }catch(e){ DMG.busy = false; DMG.msg = null; DMG.error = e.message; return App.render(); }
   }
   // מנהלים
@@ -751,12 +755,7 @@ function renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs){
   }
   return null;
 }
-function renderLogistics(App, session){
-  if(isMokedWorker(App, session)) return renderLogisticsInner(App, session);
-  if(!L.items || !L.data) return renderLogisticsInner(App, session);
-  if(DMG.open || DMG.view) return renderDamageWorker(App, session);
-  return renderDamageWorker(App, session) + renderLogisticsInner(App, session);
-}
+function renderLogistics(App, session){ return renderLogisticsInner(App, session); }
 function renderLogisticsInner(App, session){
   const esc = App.escapeHtml;
   if(isMokedWorker(App, session)) return `<p class="muted">החלק הלוגיסטי מיועד למאבטחים בגזרות.</p>`;
@@ -1704,13 +1703,14 @@ function renderIncident(App, ms, pg, a, wrap, loading, msgs){
         <td>${r.images?`📷 ${r.images}`:""}</td></tr>`;
     const head = `<thead><tr><th>מצב</th><th>תאריך</th><th style="text-align:right;">עיר</th><th style="text-align:right;">סיווג</th><th>SAVEYU</th>${isAdmin?'<th style="text-align:right;">קב"ט</th>':""}<th></th></tr></thead>`;
     return wrap(`<div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;">
-        <h2 style="margin:0;">🚨 דו"חות אירוע חריג</h2>
+        <h2 style="margin:0;"><span class="sayvu-badge">SAYVU</span> דו"חות תחקיר — אירועי SAYVU</h2>
         <div class="flexbar" style="gap:6px;">
           ${ms.is_admin?'<button class="btn small secondary" data-action="portal-pv" data-page="inc-opts">⚙️ עריכת רשימות</button>':""}
           ${canWrite?'<button class="btn" data-action="portal-inc-new">➕ דו"ח חדש</button>':""}
         </div></div>
       ${msgs}
-      ${deb.length?`<h3>🔔 אירועים מהמוקד שממתינים לתחקיר (${deb.length})</h3>
+      <p class="muted" style="margin:6px 0 0;">כאן תחקירי אירועי SAYVU מהמוקד. דיווחי נזק/תאונה נמצאים בנפרד, ב"דיווחי נזק / תאונה".</p>
+      ${deb.length?`<h3>🔔 אירועי SAYVU מהמוקד שממתינים לתחקיר (${deb.length})</h3>
         <table><thead><tr><th>מצב</th><th>מועד האירוע</th><th style="text-align:right;">גזרה</th><th>SAVEYU</th><th style="text-align:right;">הועלה ע"י</th><th></th></tr></thead><tbody>${deb.map(debRow).join("")}</tbody></table>`:""}
       ${drafts.length?`<h3>הטיוטות שלי (${drafts.length})</h3><table>${head}<tbody>${drafts.map(row).join("")}</tbody></table>`:""}
       <h3>${isAdmin?"דו\"חות שנשלחו":"דו\"חות שנשלחו"} (${sent.length})</h3>
@@ -3218,7 +3218,7 @@ function renderSection(App, view){
   const session = loadSession(App);
   if(!session){ App.S.view = "home"; return renderHome(App); }
   if(!DEMO && N.state!=="on"){ App.S.view = "home"; return renderHome(App); } // בדמו אין חובת התראות - בלי זה לוגיסטי/הדרכה/עדכונים לא נפתחו בדמו
-  const title = view==="training" ? "הדרכה" : "לוגיסטי";
+  const title = view==="training" ? "הדרכה" : view==="damage" ? "⚠️ דיווח נזק / תאונה" : "לוגיסטי";
   if(view==="training" && T.quiz) return `<div class="card">${renderQuiz(App, session)}</div>`;
   if(view==="training" && T.controlOpen) return `<div class="card">${renderControlDoc(App, session)}</div>`;
   if((view==="training" || view==="updates") && T.postOpen) return `<div class="card">${renderPostDoc(App)}</div>`;
@@ -3227,7 +3227,8 @@ function renderSection(App, view){
     <h2>עדכונים והודעות</h2>
     ${renderAllUpdates(App, session)}
   </div>`;
-  const body = view==="logistics" ? renderLogistics(App, session) : renderTraining(App, session);
+  if(view==="damage" && !DMG.items && !DMG.itemsLoading){ DMG.itemsLoading = true; App.apiGet("logistics_items", "select=id,name,has_size,sort_order&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; }); }
+  const body = view==="logistics" ? renderLogistics(App, session) : view==="damage" ? renderDamageWorker(App, session) : renderTraining(App, session);
   return `<div class="card">
     <span class="backlink" data-action="go-home">◀ חזרה לאיזור האישי</span>
     <h2>${title}</h2>
@@ -3345,13 +3346,17 @@ function renderManagerHome(App, ms){
   ${renderMsgCard(App, ms)}
   ${(logi.length || ms.is_admin) ? `<div class="card">
     <h3>🚨 דו"ח אירוע חריג</h3>
+    <div class="inc-sec-h"><span class="sayvu-badge">SAYVU</span> אירועי SAYVU מהמוקד — תחקיר אירוע חריג</div>
+    <div class="grid-teams">
+      <div class="team-tile" data-action="portal-inc-new"><div style="font-size:1.1em;font-weight:700;">➕ תחקיר אירוע SAYVU</div><div class="muted" style="font-size:.85em;margin-top:4px;">דו"ח תחקיר אירוע חריג</div></div>
+      <div class="team-tile" data-action="portal-pv" data-page="inc-list"><div style="font-size:1.1em;font-weight:700;">📋 ${ms.is_admin?"כל דו\"חות SAYVU":"דו\"חות SAYVU שלי"}</div><div class="muted" style="font-size:.85em;margin-top:4px;">תחקירי אירועי SAYVU — טיוטות ונשלחו</div></div>
+      ${INC.pendCount ? `<div class="team-tile" data-action="portal-pv" data-page="inc-list" style="border-color:#b42318;"><div style="font-size:1.1em;font-weight:700;color:#b42318;">🔔 ${INC.pendCount} ${INC.pendCount===1?"אירוע SAYVU חדש":"אירועי SAYVU"} מהמוקד</div><div class="muted" style="font-size:.85em;margin-top:4px;">ממתינים לתחקיר</div></div>` : ""}
+    </div>
+    <div class="inc-sec-h" style="margin-top:14px;">⚠️ נזק / תאונה — דיווח ראשוני (לא אירוע SAYVU)</div>
     <div class="grid-teams">
       ${(()=>{ dmgMgrLoad(App, ms); const n = (DMG.list||[]).filter(x=>!x.seen).length;
         return `<div class="team-tile" data-action="portal-dmg-mnew" style="border-color:#f3c4c0;"><div style="font-size:1.1em;font-weight:700;">⚠️ דיווח נזק/תאונה</div><div class="muted" style="font-size:.85em;margin-top:4px;">דיווח ראשוני חדש</div></div>
         <div class="team-tile" data-action="portal-pv" data-page="dmg-list"${n?' style="border-color:#b42318;"':""}><div style="font-size:1.1em;font-weight:700;${n?"color:#b42318;":""}">📋 ${n?`${n} דיווחי נזק חדשים`:"דיווחי נזק / תאונה"}</div><div class="muted" style="font-size:.85em;margin-top:4px;">מהמאבטחים ומהקב"טים</div></div>`; })()}
-      <div class="team-tile" data-action="portal-inc-new"><div style="font-size:1.1em;font-weight:700;">➕ דו"ח חדש</div><div class="muted" style="font-size:.85em;margin-top:4px;">תחקיר אירוע חריג</div></div>
-      <div class="team-tile" data-action="portal-pv" data-page="inc-list"><div style="font-size:1.1em;font-weight:700;">📋 ${ms.is_admin?"כל הדו\"חות":"הדו\"חות שלי"}</div><div class="muted" style="font-size:.85em;margin-top:4px;">טיוטות ודו"חות שנשלחו</div></div>
-      ${INC.pendCount ? `<div class="team-tile" data-action="portal-pv" data-page="inc-list" style="border-color:#b42318;"><div style="font-size:1.1em;font-weight:700;color:#b42318;">🔔 ${INC.pendCount} ${INC.pendCount===1?"אירוע חדש":"אירועים"} מהמוקד</div><div class="muted" style="font-size:.85em;margin-top:4px;">ממתינים לתחקיר</div></div>` : ""}
     </div>
   </div>` : ""}
   ${ms.is_admin ? `<div class="card">
@@ -3545,6 +3550,7 @@ function onClick(App, a, el){
   }
   if(a==="portal-go-updates"){ S.view = "updates"; S.ui = {}; F.data = null; T.postOpen = null; T.controlOpen = null; T.attError = null; return App.render(); }
   if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; T.data = null; F.data = null; T.controlOpen = null; T.postOpen = null; T.quiz = null; return App.render(); }
+  if(a==="portal-go-damage"){ S.view = "damage"; S.ui = {}; DMG.open = false; DMG.view = null; DMG.images = null; DMG.mgrMode = false; DMG.okMsg = null; return App.render(); }
   if(a==="portal-go-logistics"){ S.view = "logistics"; S.ui = {}; T.data = null; L.data = null; L.msg = null; L.error = null; return App.render(); }
   if(a==="portal-log-save") return saveLogistics(App);
   if(a==="portal-log-request") return sendRequest(App);
@@ -3671,6 +3677,8 @@ function onClick(App, a, el){
   st.textContent = `
   .dmg-table{width:100%;border-collapse:collapse;} .dmg-table th,.dmg-table td{border:1px solid var(--border);padding:6px 8px;text-align:right;vertical-align:top;} .dmg-table th{background:#f4f7fb;width:34%;font-weight:600;}
   .dmg-imgs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;} .dmg-imgs img{width:96px;height:96px;object-fit:cover;border-radius:6px;border:1px solid var(--border);}
+  .sayvu-badge{display:inline-block;background:#5b21b6;color:#fff;font-weight:800;font-size:.75em;letter-spacing:.5px;border-radius:6px;padding:1px 7px;vertical-align:middle;}
+  .inc-sec-h{font-weight:700;margin:4px 0 6px;color:#374151;}
   .dmg-sub{border:1px solid var(--border);border-radius:10px;padding:10px;margin:8px 0;background:#fafbfc;} .dmg-pick{display:inline-flex;gap:6px;margin-inline-start:6px;}
   .dmg-pfields{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:0 10px;margin-top:8px;} .dmg-auto{font-size:.78em;color:#1d4ed8;font-weight:600;}
   .dmg-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 10px;} .dmg-box{border:1px solid #f3c4c0;background:#fff7f6;border-radius:10px;padding:10px;margin-bottom:12px;}
