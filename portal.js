@@ -495,6 +495,32 @@ const DMG = { open:false, busy:false, msg:null, error:null, parties:[], vehicles
    רכב וכמה תמונות, עד "סיימתי". */
 const DMG_DOCS = [["license","רשיון רכב"],["id","תעודה מזהה"],["insurance","ביטוח"]];
 const DMG_PFIELDS = [["name","שם הנהג"],["phone","טלפון"],["plate","מספר רישוי"],["insurer","חברת ביטוח"]];
+/* טיוטה של דיווח נזק (2026-10-20, סרגיי: "אם יצאתי בטעות - נשמר כטיוטה שאפשר לערוך כשנכנסים מחדש").
+   נשמרת במכשיר (localStorage) תוך כדי מילוי, ונמחקת אחרי שליחה או "מחיקת טיוטה". אם אין מקום לתמונות - נשמרת בלעדיהן. */
+function dmgDraftKeyFor(App, mgr){
+  if(mgr){ const ms = loadMgr(App); return ms ? "cst_dmgdraft_m_" + (ms.manager_id || ms.name) : null; }
+  const ss = loadSession(App); return ss ? "cst_dmgdraft_w_" + (ss.worker_id || ss.name) : null;
+}
+function dmgLoadDraft(App, mgr){ try{ const k = dmgDraftKeyFor(App, mgr); return k ? JSON.parse(localStorage.getItem(k)||"null") : null; }catch(e){ return null; } }
+function dmgSaveDraft(App){
+  if(!DMG.open || DMG.busy) return;
+  dmgCollect();
+  const k = dmgDraftKeyFor(App, !!DMG.mgrMode); if(!k) return;
+  const strip = keepImgs=>({form:DMG.form, savedAt:new Date().toISOString(), noImgs:!keepImgs,
+    parties:DMG.parties.map(pt=>({role:pt.role, name:pt.name, phone:pt.phone, plate:pt.plate, insurer:pt.insurer, auto:pt.auto||{}, docs: keepImgs ? pt.docs : {license:[],id:[],insurance:[]}})),
+    vehicles:DMG.vehicles.map(v=>({label:v.label, photos: keepImgs ? v.photos : []}))});
+  try{ localStorage.setItem(k, JSON.stringify(strip(true))); }
+  catch(e){ try{ localStorage.setItem(k, JSON.stringify(strip(false))); }catch(e2){} }
+  const el = document.getElementById("dmgAutoMsg"); if(el) el.textContent = "💾 נשמר כטיוטה במכשיר " + new Date().toTimeString().slice(0,5);
+}
+function dmgClearDraft(App){ try{ const k = dmgDraftKeyFor(App, !!DMG.mgrMode); if(k) localStorage.removeItem(k); }catch(e){} }
+function dmgRestore(d){
+  DMG.form = d.form || {};
+  DMG.parties = (d.parties||[]).map(pt=>Object.assign(dmgNewParty(pt.role, pt.name), pt, {ocr:0, docs: pt.docs || {license:[],id:[],insurance:[]}}));
+  DMG.vehicles = (d.vehicles||[]).map(v=>({label:v.label||"", photos:v.photos||[]}));
+  if(!DMG.vehicles.length) DMG.vehicles = [{label:"", photos:[]}];
+  DMG.restored = d;
+}
 function isTP(pt){ return /^צד ג/.test(String(pt.role||"")); }
 function dmgNewParty(role, name){ return {role, name:name||"", phone:"", plate:"", insurer:"", docs:{license:[],id:[],insurance:[]}, auto:{}, ocr:0}; }
 const DMG_INSURERS = [["ביטוח ישיר","ביטוח ישיר"],["9 מיליון","9 מיליון"],["הראל","הראל"],["harel","הראל"],["מגדל","מגדל"],["migdal","מגדל"],["כלל","כלל"],["clal","כלל"],
@@ -584,7 +610,8 @@ function renderDamageWorker(App, session){
     const mine = DMG.mine||[];
     return `${DMG.okMsg?`<p style="color:#1b7f3b;font-weight:700;">${esc(DMG.okMsg)}</p>`:""}<div class="dmg-box">
       <p style="margin-top:0;">דיווח ראשוני על נזק לציוד או תאונה — כולל המעורבים, כלי הרכב ותמונות. הדיווח נשלח לקב"ט ולסרגיי.</p>
-      <button class="btn" style="background:#b42318;border-color:#b42318;" data-action="portal-dmg-new">➕ דיווח חדש</button>
+      ${dmgLoadDraft(App, false) ? `<button class="btn" data-action="portal-dmg-new" style="margin-inline-end:6px;">📝 המשך הטיוטה שלא נשלחה</button>` : ""}
+      <button class="btn" style="background:#b42318;border-color:#b42318;" data-action="portal-dmg-new"${dmgLoadDraft(App, false)?' data-fresh="1"':""}>➕ דיווח חדש</button>
       ${mine.length ? `<div style="margin-top:8px;"><b style="font-size:.9em;">הדיווחים שלי</b>${mine.slice(0,5).map(r=>`<div class="portal-task" data-action="portal-dmg-open" data-id="${r.id}"><span class="portal-task-icon">📄</span><span>${esc(dmgFmtDate(r.event_at))} · ${esc((r.description||"").slice(0,60))}</span></div>`).join("")}</div>` : ""}
     </div>`;
   }
@@ -611,8 +638,11 @@ function dmgFormHtml(App, reporterName){
       ${pt.ocrErr?`<p class="muted" style="margin:6px 0;">${esc(pt.ocrErr)} — אפשר למלא ידנית.</p>`:""}
     </div>`;
   const inp = (id, label, ph, area)=>`<div class="field"><label>${label}</label>${area?`<textarea id="dmg_${id}" rows="3">${esc(f[id]||"")}</textarea>`:`<input type="text" id="dmg_${id}" value="${esc(f[id]||"")}" placeholder="${ph||""}">`}</div>`;
-  return `<span class="backlink" data-action="portal-dmg-close">◀ ביטול</span>
+  return `<span class="backlink" data-action="portal-dmg-close">◀ יציאה (נשמר כטיוטה)</span>
     <h3 style="margin-top:6px;">⚠️ דיווח נזק/תאונה ראשוני</h3>
+    ${DMG.restored ? `<div class="dmg-draftbar">📝 המשך טיוטה שנשמרה ב-${esc(dmgFmtDate(DMG.restored.savedAt))}${DMG.restored.noImgs?" (בלי התמונות — לא היה מקום במכשיר)":""}
+      <span class="backlink" data-action="portal-dmg-discard" style="margin-inline-start:8px;">🗑 מחיקת הטיוטה</span></div>` : ""}
+    <p class="muted" style="margin:2px 0 8px;font-size:.85em;">הטופס נשמר אוטומטית כטיוטה במכשיר בזמן המילוי. <span id="dmgAutoMsg"></span></p>
     <div class="field"><label>תאריך ושעת האירוע</label><input type="datetime-local" id="dmg_event_at" value="${esc(f.event_at||nowLocal)}"></div>
     <p class="muted" style="margin:0 0 8px;">${DMG.mgrMode?"המדווח":"שם המאבטח"}: <b>${esc(reporterName)}</b> </p>
     ${inp("branch","סניף","")}
@@ -674,7 +704,13 @@ async function dmgAction(App, a, el){
   const session = loadSession(App);
   const ms = loadMgr(App);
   if(a==="portal-dmg-new"){ const tm = session && App.teamById ? App.teamById(session.team_id) : null;
+    DMG.mgrMode = false; DMG.restored = null;
+    const dr = el.dataset.fresh ? null : dmgLoadDraft(App, false);
+    if(dr){ DMG.open = true; dmgRestore(dr); DMG.error = null; DMG.msg = null; return App.render(); }
     DMG.open = true; DMG.form = {branch: tm ? ((tm.sectors&&tm.sectors.length) ? tm.sectors.join(" / ") : tm.name) : ""}; DMG.parties = [dmgNewParty("המאבטח", session ? session.name : "")]; DMG.vehicles = [{label:"", photos:[]}]; DMG.error = null; DMG.msg = null; return App.render(); }
+  if(a==="portal-dmg-discard"){ dmgClearDraft(App); DMG.restored = null; const m = DMG.mgrMode;
+    if(m){ DMG.open = false; DMG.mgrMode = false; return pvGo(App, "dmg-list", {}); }
+    DMG.open = false; return App.render(); }
   if(a==="portal-dmg-addparty"){ dmgCollect(); DMG.parties.push(dmgNewParty("מאבטח")); return App.render(); }
   if(a==="portal-dmg-addtp"){ dmgCollect(); DMG.parties.push(dmgNewParty("צד ג׳ — נהג")); return App.render(); }
   if(a==="portal-dmg-rmparty"){ dmgCollect(); DMG.parties.splice(Number(el.dataset.i),1); return App.render(); }
@@ -682,13 +718,16 @@ async function dmgAction(App, a, el){
   if(a==="portal-dmg-rmveh"){ dmgCollect(); DMG.vehicles.splice(Number(el.dataset.i),1); return App.render(); }
   if(a==="portal-dmg-mnew"){
     if(!ms) return App.render();
-    DMG.open = true; DMG.mgrMode = true;
+    DMG.open = true; DMG.mgrMode = true; DMG.restored = null;
+    if(!DMG.items) App.apiGet("logistics_items", "select=id,name,has_size,sort_order&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; });
+    const mdr = el.dataset.fresh ? null : dmgLoadDraft(App, true);
+    if(mdr){ dmgRestore(mdr); DMG.error = null; DMG.msg = null; return pvGo(App, "dmg-new", {}); }
     DMG.form = {branch: Array.from(new Set(mgrTeams(App, ms.logistics_team_ids).flatMap(t=>(t.sectors&&t.sectors.length)?t.sectors:[t.name]))).join(" / ")}; DMG.parties = [dmgNewParty("הקב״ט", ms.name)]; DMG.vehicles = [{label:"", photos:[]}]; DMG.error = null; DMG.msg = null;
     if(!DMG.items) App.apiGet("logistics_items", "select=id,name,has_size,sort_order&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; });
     return pvGo(App, "dmg-new", {});
   }
   if(a==="portal-dmg-close"){
-    if(DMG.open) dmgCollect();
+    if(DMG.open) dmgSaveDraft(App);
     if(DMG.mgrMode){ DMG.open = false; DMG.mgrMode = false; return pvGo(App, "dmg-list", {}); }
     DMG.open = false; DMG.view = null; DMG.images = null; return App.render();
   }
@@ -712,6 +751,7 @@ async function dmgAction(App, a, el){
         DMG.msg = `מעלה תמונה ${k+1}/${ups.length}...`; App.render();
         await App.apiRpc(asMgr ? "mgr_damage_add_image2" : "worker_damage_add_image2", {p_token:tok, p_report_id:id, p_image:ups[k].src, p_meta:ups[k].meta});
       }
+      dmgClearDraft(App); DMG.restored = null;
       if(asMgr){ DMG.busy = false; DMG.open = false; DMG.mgrMode = false; DMG.form = {}; DMG.parties = []; DMG.vehicles = []; DMG.msg = null; DMG.list = null;
         pvGo(App, "dmg-list", {}); PV.msg = "הדיווח נשלח."; return App.render(); }
       DMG.busy = false; DMG.open = false; DMG.form = {}; DMG.parties = []; DMG.vehicles = []; DMG.mine = null; DMG.msg = null;
@@ -744,7 +784,7 @@ function renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs){
     dmgMgrLoad(App, ms);
     if(!DMG.list) return loading();
     return wrap(`<div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;"><h2 style="margin:0;">⚠️ דיווחי נזק/תאונה</h2>
-      <button class="btn" style="background:#b42318;border-color:#b42318;" data-action="portal-dmg-mnew">➕ דיווח חדש</button></div>${msgs}
+      <span>${dmgLoadDraft(App, true) ? `<button class="btn" data-action="portal-dmg-mnew" style="margin-inline-end:6px;">📝 המשך טיוטה</button>` : ""}<button class="btn" style="background:#b42318;border-color:#b42318;" data-action="portal-dmg-mnew"${dmgLoadDraft(App, true)?' data-fresh="1"':""}>➕ דיווח חדש</button></span></div>${msgs}
       ${DMG.list.length ? DMG.list.map(r=>`<div class="portal-task${r.seen?"":" portal-unread"}" data-action="portal-pv" data-page="dmg-view" data-id="${r.id}">
         <span class="portal-task-icon">${r.seen?"📄":"🔔"}</span>
         <span><b>${esc(r.worker_name)}</b>${r.mine?' <span class="muted">(הדיווח שלי)</span>':(r.reporter_manager?' <span class="muted">(קב"ט)</span>':"")} · ${esc(r.branch||"")} · ${esc(dmgFmtDate(r.event_at))}${r.images?` · 📷 ${r.images}`:""}
@@ -1744,6 +1784,7 @@ function renderIncident(App, ms, pg, a, wrap, loading, msgs){
     if(INC.error && !INC.report && id) return wrap(`<p class="shortage">${esc(INC.error)}</p>`);
     const rep = INC.report || {};
     const editable = pg==="inc-form" && (!id || (rep.mine && rep.status!=="submitted"));
+    INC.editable = editable;
     const err = INC.error?`<p class="shortage">${esc(INC.error)}</p>`:"";
     const ok = INC.msg?`<p style="color:#1b7f3b;font-weight:600;">${esc(INC.msg)}</p>`:"";
     if(!editable){
@@ -1798,12 +1839,32 @@ function renderIncident(App, ms, pg, a, wrap, loading, msgs){
           : `<button class="btn" data-action="portal-inc-send-ask" ${INC.busy?"disabled":""} style="min-width:120px;">שלח</button>
              <button class="btn secondary" data-action="portal-inc-save" ${INC.busy?"disabled":""}>💾 שמור טיוטה</button>`}
         ${INC.busy?'<span class="muted">שומר...</span>':""}
+        <span id="incAutoMsg" class="muted" style="font-size:.85em;"></span>
       </div>
     </div>`;
   }
   return wrap(`<p class="muted">לא נמצא.</p>`);
 }
 
+/* שמירה אוטומטית שקטה של תחקיר SAYVU כטיוטה בשרת (2026-10-20): בזמן ההקלדה (אחרי 3 שניות שקט), ביציאה
+   מהאפליקציה ובמעבר מסך. בלי רינדור - כדי לא להפריע להקלדה. הטיוטה מופיעה ב"הטיוטות שלי". */
+async function incAutoSave(App){
+  const ms = loadMgr(App); if(!ms || INC.busy || INC.autoBusy) return;
+  if(App.S.view!=="pview" || PV.page!=="inc-form" || !INC.editable || !document.querySelector(".inc-card")) return;
+  incSync();
+  const data = incClean(INC.data), notes = incClean(INC.notes);
+  const sig = JSON.stringify([INC.id, data, notes]);
+  if(sig===INC.lastAutoSig) return;
+  if(!INC.id && !Object.keys(data).length && !Object.keys(notes).length) return;
+  INC.autoBusy = true;
+  try{
+    const id = await App.apiRpc("inc_save", {p_token:ms.token, p_id:INC.id, p_data:data, p_notes:notes, p_submit:false});
+    if(!INC.id){ INC.id = id; INC.loadedFor = id; PV.args = Object.assign({}, PV.args, {id}); INC.status = "draft"; if(!INC.report) INC.report = {mine:true, status:"draft"}; }
+    INC.lastAutoSig = JSON.stringify([INC.id, data, notes]);
+    const el = document.getElementById("incAutoMsg"); if(el) el.textContent = "💾 נשמר אוטומטית כטיוטה " + new Date().toTimeString().slice(0,5);
+  }catch(e){}
+  INC.autoBusy = false;
+}
 async function incSave(App, ms, submit){
   incSync();
   const data = incClean(INC.data), notes = incClean(INC.notes);
@@ -3694,6 +3755,7 @@ function onClick(App, a, el){
   .sayvu-badge{display:inline-block;background:#5b21b6;color:#fff;font-weight:800;font-size:.75em;letter-spacing:.5px;border-radius:6px;padding:1px 7px;vertical-align:middle;}
   .inc-sec-h{font-weight:700;margin:4px 0 6px;color:#374151;}
   .dmg-tp{border:2px solid #f59e0b;background:#fffbeb;border-radius:10px;padding:10px;margin:-4px 0 12px;}
+  .dmg-draftbar{background:#fff7e0;border:1px solid #f0d58a;border-radius:8px;padding:8px 10px;margin:6px 0;font-weight:600;}
   .dmg-sub{border:1px solid var(--border);border-radius:10px;padding:10px;margin:8px 0;background:#fafbfc;} .dmg-pick{display:inline-flex;gap:6px;margin-inline-start:6px;}
   .dmg-pfields{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:0 10px;margin-top:8px;} .dmg-auto{font-size:.78em;color:#1d4ed8;font-weight:600;}
   .dmg-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 10px;} .dmg-box{border:1px solid #f3c4c0;background:#fff7f6;border-radius:10px;padding:10px;margin-bottom:12px;}
@@ -3748,6 +3810,18 @@ document.addEventListener("visibilitychange", ()=>{
   const App = window.__portalApp;
   if(App.S.view==="home" && loadSession(App)){ T.data = null; F.data = null; P.shifts = null; App.render(); }
 });
+/* טיוטות אוטומטיות (דיווח נזק + תחקיר SAYVU) - 2026-10-20 */
+let draftTimer = null;
+function saveDraftsNow(){
+  const App = window.__portalApp; if(!App) return;
+  try{ if(DMG.open) dmgSaveDraft(App); }catch(e){}
+  try{ incAutoSave(App); }catch(e){}
+}
+function scheduleDrafts(){ clearTimeout(draftTimer); draftTimer = setTimeout(saveDraftsNow, 1500); }
+document.addEventListener("input", scheduleDrafts, true);
+document.addEventListener("change", scheduleDrafts, true);
+document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState==="hidden") saveDraftsNow(); });
+window.addEventListener("pagehide", saveDraftsNow);
 if("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", ev=>{
   const App = window.__portalApp;
   if(ev.data && ev.data.type==="refresh" && App && App.S.view==="home" && loadSession(App)){ T.data = null; F.data = null; P.shifts = null; App.render(); }
