@@ -585,7 +585,12 @@ function renderDamageWorker(App, session){
       ${mine.length ? `<div style="margin-top:8px;"><b style="font-size:.9em;">הדיווחים שלי</b>${mine.slice(0,5).map(r=>`<div class="portal-task" data-action="portal-dmg-open" data-id="${r.id}"><span class="portal-task-icon">📄</span><span>${esc(dmgFmtDate(r.event_at))} · ${esc((r.description||"").slice(0,60))}</span></div>`).join("")}</div>` : ""}
     </div>`;
   }
-  const items = L.items || [];
+  return dmgFormHtml(App, session.name);
+}
+/* טופס הדיווח - משותף למאבטח (לוגיסטי) ולקב"ט (דו"ח אירוע חריג), 2026-10-20 */
+function dmgFormHtml(App, reporterName){
+  const esc = App.escapeHtml;
+  const items = DMG.items || L.items || [];
   const now = new Date(); const pad = n=>String(n).padStart(2,"0");
   const nowLocal = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
   const f = DMG.form || {};
@@ -593,7 +598,7 @@ function renderDamageWorker(App, session){
   return `<span class="backlink" data-action="portal-dmg-close">◀ ביטול</span>
     <h3 style="margin-top:6px;">⚠️ דיווח נזק/תאונה ראשוני</h3>
     <div class="field"><label>תאריך ושעת האירוע</label><input type="datetime-local" id="dmg_event_at" value="${esc(f.event_at||nowLocal)}"></div>
-    <p class="muted" style="margin:0 0 8px;">שם המאבטח: <b>${esc(session.name)}</b> · הסניף ימולא אוטומטית לפי הגזרה (אפשר לשנות בשדה "סניף")</p>
+    <p class="muted" style="margin:0 0 8px;">${DMG.mgrMode?"המדווח":"שם המאבטח"}: <b>${esc(reporterName)}</b> · הסניף ימולא אוטומטית לפי הגזרה (אפשר לשנות בשדה "סניף")</p>
     ${inp("branch","סניף","אוטומטי")}
     ${inp("vehicle_no","מספר כלי","")}
     <div class="field"><label>ציוד שניזוק</label><div class="dmg-items">${items.map(it=>`<label><input type="checkbox" class="dmg-item" value="${esc(it.name)}" ${(f.items||[]).includes(it.name)?"checked":""}> ${esc(it.name)}</label>`).join("")}</div>
@@ -616,7 +621,7 @@ function renderDamageWorker(App, session){
       const thumbs = (list, sec, i, kind)=>list.length?`<div class="dmg-imgs">${list.map((src,j)=>`<span style="position:relative;display:inline-block;"><img src="${src}" alt=""><span data-action="portal-dmg-rmimg" data-sec="${sec}" data-i="${i}" data-kind="${kind}" data-j="${j}" style="position:absolute;top:2px;left:2px;background:#fff;border-radius:50%;padding:0 6px;cursor:pointer;">✕</span></span>`).join("")}</div>`:"";
       const parties = DMG.parties.map((p,i)=>`<div class="dmg-sub">
           <div class="flexbar" style="justify-content:space-between;"><b>👤 מעורב ${i+1}</b>
-            <span><select id="dmg_p${i}_role">${["המאבטח","צד ג׳ — נהג","צד ג׳ — אחר"].map(o=>`<option ${p.role===o?"selected":""}>${o}</option>`).join("")}</select>
+            <span><select id="dmg_p${i}_role">${(DMG.mgrMode?["הקב״ט","מאבטח","צד ג׳ — נהג","צד ג׳ — אחר"]:["המאבטח","צד ג׳ — נהג","צד ג׳ — אחר"]).map(o=>`<option ${p.role===o?"selected":""}>${o}</option>`).join("")}</select>
             ${DMG.parties.length>1?`<span class="backlink" data-action="portal-dmg-rmparty" data-i="${i}" style="margin-inline-start:8px;">✕ הסרה</span>`:""}</span></div>
           ${DMG_DOCS.map(([dk,dl])=>`<div style="margin-top:8px;"><span style="font-weight:600;">${dl}</span> ${pick("party", i, dk)}${thumbs(p.docs[dk], "party", i, dk)}</div>`).join("")}
           ${p.ocr?`<p class="muted" style="margin:6px 0;">🔎 קורא את המסמך... (בפעם הראשונה זה לוקח קצת זמן)</p>`:""}
@@ -629,7 +634,7 @@ function renderDamageWorker(App, session){
           <div>${pick("vehicle", i, "photo")}${thumbs(v.photos, "vehicle", i, "photo")}</div>
         </div>`).join("");
       return `<h3 style="margin:16px 0 6px;">📸 מעורבים</h3>
-        <p class="muted" style="margin-top:0;">לכל מעורב (המאבטח, ונהג צד ג׳ אם יש): צלמו רשיון רכב, תעודה מזהה ותעודת ביטוח. המערכת קוראת מהן אוטומטית שם, טלפון, מספר רישוי וחברת ביטוח — בדקו ותקנו אם צריך.</p>
+        <p class="muted" style="margin-top:0;">לכל מעורב (${DMG.mgrMode?"הקב״ט / המאבטח":"המאבטח"}, ונהג צד ג׳ אם יש): צלמו רשיון רכב, תעודה מזהה ותעודת ביטוח. המערכת קוראת מהן אוטומטית שם, טלפון, מספר רישוי וחברת ביטוח — בדקו ותקנו אם צריך.</p>
         ${parties}<button class="btn secondary small" data-action="portal-dmg-addparty">➕ הוספת מעורב</button>
         <h3 style="margin:16px 0 6px;">🚗 כלי רכב</h3>
         ${vehicles}<button class="btn secondary small" data-action="portal-dmg-addveh">➕ הוספת כלי רכב</button>`;
@@ -664,25 +669,39 @@ async function dmgAction(App, a, el){
   if(a==="portal-dmg-rmparty"){ dmgCollect(); DMG.parties.splice(Number(el.dataset.i),1); return App.render(); }
   if(a==="portal-dmg-addveh"){ dmgCollect(); DMG.vehicles.push({label:"", photos:[]}); return App.render(); }
   if(a==="portal-dmg-rmveh"){ dmgCollect(); DMG.vehicles.splice(Number(el.dataset.i),1); return App.render(); }
-  if(a==="portal-dmg-close"){ if(DMG.open) dmgCollect(); DMG.open = false; DMG.view = null; DMG.images = null; return App.render(); }
+  if(a==="portal-dmg-mnew"){
+    if(!ms) return App.render();
+    DMG.open = true; DMG.mgrMode = true; DMG.form = {}; DMG.parties = [dmgNewParty("הקב״ט", ms.name)]; DMG.vehicles = [{label:"", photos:[]}]; DMG.error = null; DMG.msg = null;
+    if(!DMG.items) App.apiGet("logistics_items", "select=id,name,has_size,sort_order&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; });
+    return pvGo(App, "dmg-new", {});
+  }
+  if(a==="portal-dmg-close"){
+    if(DMG.open) dmgCollect();
+    if(DMG.mgrMode){ DMG.open = false; DMG.mgrMode = false; return pvGo(App, "dmg-list", {}); }
+    DMG.open = false; DMG.view = null; DMG.images = null; return App.render();
+  }
   if(a==="portal-dmg-open"){ DMG.view = (DMG.mine||[]).find(x=>x.id===el.dataset.id) || null; DMG.images = null; return App.render(); }
   if(a==="portal-dmg-rmimg"){ dmgCollect(); const d = el.dataset, i = Number(d.i), j = Number(d.j);
     if(d.sec==="party" && DMG.parties[i]) DMG.parties[i].docs[d.kind].splice(j,1); else if(DMG.vehicles[i]) DMG.vehicles[i].photos.splice(j,1); return App.render(); }
   if(a==="portal-dmg-send"){
-    if(!session || DMG.busy) return;
+    const asMgr = !!DMG.mgrMode;
+    if((asMgr ? !ms : !session) || DMG.busy) return;
+    const tok = asMgr ? ms.token : session.token;
     const p = dmgCollect();
     if(!p.description.trim()){ DMG.error = "צריך לכתוב תיאור קצר של האירוע"; return App.render(); }
     if(!p.event_at){ DMG.error = "צריך תאריך ושעה של האירוע"; return App.render(); }
     DMG.busy = true; DMG.error = null; DMG.msg = "שולח..."; App.render();
     try{
-      const id = await App.apiRpc("worker_damage_create", {p_token:session.token, p});
+      const id = await App.apiRpc(asMgr ? "mgr_damage_create" : "worker_damage_create", {p_token:tok, p});
       const ups = [];
       DMG.parties.forEach((pt,i)=>DMG_DOCS.forEach(([dk])=>pt.docs[dk].forEach(src=>ups.push({src, meta:{sec:"party", i, kind:dk}}))));
       DMG.vehicles.forEach((v,i)=>v.photos.forEach(src=>ups.push({src, meta:{sec:"vehicle", i, kind:"photo"}})));
       for(let k=0;k<ups.length;k++){
         DMG.msg = `מעלה תמונה ${k+1}/${ups.length}...`; App.render();
-        await App.apiRpc("worker_damage_add_image2", {p_token:session.token, p_report_id:id, p_image:ups[k].src, p_meta:ups[k].meta});
+        await App.apiRpc(asMgr ? "mgr_damage_add_image2" : "worker_damage_add_image2", {p_token:tok, p_report_id:id, p_image:ups[k].src, p_meta:ups[k].meta});
       }
+      if(asMgr){ DMG.busy = false; DMG.open = false; DMG.mgrMode = false; DMG.form = {}; DMG.parties = []; DMG.vehicles = []; DMG.msg = null; DMG.list = null;
+        pvGo(App, "dmg-list", {}); PV.msg = "הדיווח נשלח."; return App.render(); }
       DMG.busy = false; DMG.open = false; DMG.form = {}; DMG.parties = []; DMG.vehicles = []; DMG.mine = null; DMG.msg = null;
       L.msg = "הדיווח נשלח לקב\"ט ולסרגיי."; return App.render();
     }catch(e){ DMG.busy = false; DMG.msg = null; DMG.error = e.message; return App.render(); }
@@ -705,13 +724,18 @@ function dmgMgrLoad(App, ms, force){
 }
 function renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs){
   const esc = App.escapeHtml;
+  if(pg==="dmg-new"){
+    if(!DMG.open) return wrap(`<p class="muted">הטופס נסגר.</p>`);
+    return `<div class="card">${dmgFormHtml(App, ms.name)}</div>`;
+  }
   if(pg==="dmg-list"){
     dmgMgrLoad(App, ms);
     if(!DMG.list) return loading();
-    return wrap(`<h2>⚠️ דיווחי נזק/תאונה</h2>
+    return wrap(`<div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;"><h2 style="margin:0;">⚠️ דיווחי נזק/תאונה</h2>
+      <button class="btn" style="background:#b42318;border-color:#b42318;" data-action="portal-dmg-mnew">➕ דיווח חדש</button></div>${msgs}
       ${DMG.list.length ? DMG.list.map(r=>`<div class="portal-task${r.seen?"":" portal-unread"}" data-action="portal-pv" data-page="dmg-view" data-id="${r.id}">
         <span class="portal-task-icon">${r.seen?"📄":"🔔"}</span>
-        <span><b>${esc(r.worker_name)}</b> · ${esc(r.branch||"")} · ${esc(dmgFmtDate(r.event_at))}${r.images?` · 📷 ${r.images}`:""}
+        <span><b>${esc(r.worker_name)}</b>${r.mine?' <span class="muted">(הדיווח שלי)</span>':(r.reporter_manager?' <span class="muted">(קב"ט)</span>':"")} · ${esc(r.branch||"")} · ${esc(dmgFmtDate(r.event_at))}${r.images?` · 📷 ${r.images}`:""}
         <span class="muted" style="display:block;font-size:.85em;">${esc((r.description||"").slice(0,90))}</span></span></div>`).join("") : `<p class="muted">אין דיווחים.</p>`}`);
   }
   if(pg==="dmg-view"){
@@ -2302,7 +2326,7 @@ async function calClick(App, a, el){
 }
 
 /* ---------- עמודי משנה (view "pview") ---------- */
-const PV_TITLES = { "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
+const PV_TITLES = { "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
   "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה", "cal":"יומן משותף" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
@@ -2466,7 +2490,7 @@ function renderPView(App){
   if(PV.data && PV.data.error) return wrap(`<p class="shortage">${esc(PV.data.error)}</p>`);
   if(pg && pg.indexOf("inc-")===0) return renderIncident(App, ms, pg, a, wrap, loading, msgs);
   if(pg==="cal") return renderCalendar(App, ms, back);
-  if(pg==="dmg-list" || pg==="dmg-view"){ const h = renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
+  if(pg==="dmg-list" || pg==="dmg-view" || pg==="dmg-new"){ const h = renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
   if(pg==="k-msg-guards" || pg==="k-msg-mgmt" || pg==="mgmt-inbox"){ const h = renderMsgPages(App, ms, pg, wrap, loading, msgs); if(h) return h; }
   if(pg==="unit-dash") return `<div class="card">${back}<h2 style="margin-bottom:0;">📊 לוח מנהל יחידה</h2><p class="muted">כך רואה את המערכת מנהל היחידה.</p></div>` + renderUnitDashboard(App, ms);
 
@@ -3322,6 +3346,9 @@ function renderManagerHome(App, ms){
   ${(logi.length || ms.is_admin) ? `<div class="card">
     <h3>🚨 דו"ח אירוע חריג</h3>
     <div class="grid-teams">
+      ${(()=>{ dmgMgrLoad(App, ms); const n = (DMG.list||[]).filter(x=>!x.seen).length;
+        return `<div class="team-tile" data-action="portal-dmg-mnew" style="border-color:#f3c4c0;"><div style="font-size:1.1em;font-weight:700;">⚠️ דיווח נזק/תאונה</div><div class="muted" style="font-size:.85em;margin-top:4px;">דיווח ראשוני חדש</div></div>
+        <div class="team-tile" data-action="portal-pv" data-page="dmg-list"${n?' style="border-color:#b42318;"':""}><div style="font-size:1.1em;font-weight:700;${n?"color:#b42318;":""}">📋 ${n?`${n} דיווחי נזק חדשים`:"דיווחי נזק / תאונה"}</div><div class="muted" style="font-size:.85em;margin-top:4px;">מהמאבטחים ומהקב"טים</div></div>`; })()}
       <div class="team-tile" data-action="portal-inc-new"><div style="font-size:1.1em;font-weight:700;">➕ דו"ח חדש</div><div class="muted" style="font-size:.85em;margin-top:4px;">תחקיר אירוע חריג</div></div>
       <div class="team-tile" data-action="portal-pv" data-page="inc-list"><div style="font-size:1.1em;font-weight:700;">📋 ${ms.is_admin?"כל הדו\"חות":"הדו\"חות שלי"}</div><div class="muted" style="font-size:.85em;margin-top:4px;">טיוטות ודו"חות שנשלחו</div></div>
       ${INC.pendCount ? `<div class="team-tile" data-action="portal-pv" data-page="inc-list" style="border-color:#b42318;"><div style="font-size:1.1em;font-weight:700;color:#b42318;">🔔 ${INC.pendCount} ${INC.pendCount===1?"אירוע חדש":"אירועים"} מהמוקד</div><div class="muted" style="font-size:.85em;margin-top:4px;">ממתינים לתחקיר</div></div>` : ""}
@@ -3348,8 +3375,7 @@ function renderManagerHome(App, ms){
   <div class="card">
     <h3>לוגיסטי</h3>
     <p class="muted" style="margin-top:-6px;">${names(logi)}</p>
-    <div class="grid-teams">${tile("portal-mh-equip", "בקשות ציוד", "החלפה / ציוד נוסף")}${(()=>{ dmgMgrLoad(App, ms); const n = (DMG.list||[]).filter(x=>!x.seen).length;
-      return `<div class="team-tile" data-action="portal-pv" data-page="dmg-list"${n?' style="border-color:#b42318;"':""}><div style="font-size:1.1em;font-weight:700;${n?"color:#b42318;":""}">⚠️ ${n?`${n} דיווחי נזק חדשים`:"דיווחי נזק / תאונה"}</div><div class="muted" style="font-size:.85em;margin-top:4px;">מהמאבטחים</div></div>`; })()}</div>
+    <div class="grid-teams">${tile("portal-mh-equip", "בקשות ציוד", "החלפה / ציוד נוסף")}</div>
   </div>
   <div class="card">
     <h3>הדרכה</h3>
