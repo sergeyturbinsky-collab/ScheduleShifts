@@ -678,7 +678,8 @@ function dmgFormHtml(App, reporterName){
     ${acc ? `${inp("visibility","ראות במקום","")}
     ${inp("body_damage","נזק בגוף","")}
     ${inp("mech_damage","נזק מכני","")}
-
+    <div class="field"><label>האם מעורב צד ג׳</label>
+      <select id="dmg_tp_yn" data-action="portal-dmg-tp"><option value="לא" ${f.tp_yn!=="כן"?"selected":""}>לא</option><option value="כן" ${f.tp_yn==="כן"?"selected":""}>כן</option></select></div>
 
     ${inp("reported_to","למי דווח","")}
     ${inp("responsible_arrived","גורם אחראי שהגיע למקום","")}` : ""}
@@ -692,14 +693,12 @@ function dmgFormHtml(App, reporterName){
         </div>`).join("");
       let ownN = 0;
       const own = DMG.parties.map((pt,i)=>isTP(pt)?"":partyCard(pt, i, ["מאבטח"], `העובד המעורב${DMG.parties.filter(x=>!isTP(x)).length>1?" "+(++ownN):""}`)).join("");
-      const tp = `<h3 style="margin:16px 0 6px;">🚙 פרטי צד ג׳ מעורב</h3>
-        <div class="field"><label>האם מעורב צד ג׳</label>
-      <select id="dmg_tp_yn" data-action="portal-dmg-tp"><option value="לא" ${f.tp_yn!=="כן"?"selected":""}>לא</option><option value="כן" ${f.tp_yn==="כן"?"selected":""}>כן</option></select></div>
-        ${f.tp_yn==="כן" ? `<div class="dmg-tp">
+      const tp = f.tp_yn==="כן" ? `<h3 style="margin:16px 0 6px;">🚙 פרטי צד ג׳ מעורב</h3>
+        <div class="dmg-tp">
           <p class="muted" style="margin:0 0 6px;font-size:.88em;">לכל צד ג׳: פרטי הנהג והרכב, צילום רשיון רכב, תעודה מזהה ותעודת ביטוח (המערכת ממלאת את השדות אוטומטית — בדקו ותקנו), ותמונות של הרכב.</p>
           ${DMG.parties.map((pt,i)=>isTP(pt)?partyCard(pt, i, ["צד ג׳ — נהג","צד ג׳ — אחר"], "צד ג׳"):"").join("")}
           <button class="btn secondary small" data-action="portal-dmg-addtp">➕ הוספת צד ג׳ נוסף</button>
-        </div>` : ""}`;
+        </div>` : "";
       return `<h3 style="margin:16px 0 6px;">👷 פרטי עובד מעורב</h3>
         <p class="muted" style="margin-top:0;">צלמו רשיון רכב ותעודה מזהה — המערכת קוראת מהם אוטומטית שם, טלפון ומספר רישוי. בדקו ותקנו אם צריך.${f.tp_yn==="כן"?" פרטי צד ג׳ — בהמשך.":""}</p>
         ${own}<button class="btn secondary small" data-action="portal-dmg-addparty">➕ הוספת עובד מעורב</button>
