@@ -2825,7 +2825,7 @@ async function onChangeTraining(App, e){
 function renderSection(App, view){
   const session = loadSession(App);
   if(!session){ App.S.view = "home"; return renderHome(App); }
-  if(N.state!=="on"){ App.S.view = "home"; return renderHome(App); }
+  if(!DEMO && N.state!=="on"){ App.S.view = "home"; return renderHome(App); } // בדמו אין חובת התראות - בלי זה לוגיסטי/הדרכה/עדכונים לא נפתחו בדמו
   const title = view==="training" ? "הדרכה" : "לוגיסטי";
   if(view==="training" && T.quiz) return `<div class="card">${renderQuiz(App, session)}</div>`;
   if(view==="training" && T.controlOpen) return `<div class="card">${renderControlDoc(App, session)}</div>`;
