@@ -165,7 +165,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=67"></script>
+<script src="portal.js?v=68"></script>
 <script>
 (function(){
 "use strict";
@@ -578,7 +578,11 @@ function render(){
   else if(S.view==="pview" && window.Portal) html = window.Portal.renderPView(App);
   else if(S.view==="mgrview" && window.Portal) html = renderMgrScheduleView();
   else if(S.view==="submit") html = renderSubmit();
-  else if(S.view==="aggregate") html = renderAggregate();
+  else if(S.view==="aggregate"){
+    // (2026-10-20) תקלה במסך הבנייה הציגה "טוען..." לנצח - עכשיו שגיאה תוצג על המסך במקום להיתקע
+    try{ html = renderAggregate(); }
+    catch(err){ console.error(err); html = `<div class="card"><span class="backlink" data-action="go-home">◀ חזרה</span><h3>שגיאה בהצגת המסך</h3><p class="shortage" dir="ltr" style="text-align:left;white-space:pre-wrap;font-size:.8em;">${escapeHtml(String(err && (err.stack||err.message) || err).slice(0,600))}</p></div>`; }
+  }
   else if(S.view==="admin") html = renderAdmin();
   app.innerHTML = html;
   attachHandlers();
