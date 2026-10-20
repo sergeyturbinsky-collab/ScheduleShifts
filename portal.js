@@ -616,7 +616,8 @@ function renderDamageWorker(App, session){
   }
   if(DMG.view){
     if(DMG.images===null && !DMG.loadingImgs && DMG.view.images){ DMG.loadingImgs = true; App.apiRpc("damage_images_get2", {p_token:session.token, p_report_id:DMG.view.id}).then(x=>{ DMG.images = x||[]; DMG.loadingImgs = false; App.render(); }).catch(()=>{ DMG.images = []; DMG.loadingImgs = false; App.render(); }); }
-    return `<span class="backlink" data-action="portal-dmg-close">◀ חזרה</span>${dmgReportHtml(App, DMG.view, DMG.view.images ? DMG.images : [])}`;
+    return `<span class="backlink" data-action="portal-dmg-close">◀ חזרה</span>${dmgReportHtml(App, DMG.view, DMG.view.images ? DMG.images : [])}
+      <div style="margin-top:10px;"><button class="btn" data-action="portal-dmg-pdf" data-who="w">📄 הפקת דו"ח PDF</button></div>`;
   }
   if(!DMG.open){
     const mine = DMG.mine||[];
@@ -671,8 +672,10 @@ function dmgFormHtml(App, reporterName){
     ${inp("branch","סניף","")}
     ${acc ? inp("vehicle_no","מספר כלי","") : ""}
     ${acc ? inp("moto_damage","נזק לאופנוע","") : ""}
-    <div class="field"><label>נזק לציוד <span class="muted" style="font-weight:400;font-size:.85em;">(אפשר לסמן כמה פריטים)</span></label>
-      <div class="dmg-checklist">${["ללא נזק"].concat(items.map(it=>it.name)).concat(["אחר (פירוט בהערה)"]).map(n=>`<label class="${n==="ללא נזק"?"dmg-none":""}"><input type="checkbox" class="dmg-item" data-action="portal-dmg-item" value="${esc(n)}" ${(f.items||[]).includes(n)?"checked":""}> ${esc(n)}</label>`).join("")}</div></div>
+    <div class="field"><label>נזק לציוד</label>
+      <button type="button" class="btn secondary dmg-items-btn" data-action="portal-dmg-itemstoggle">${DMG.itemsOpen?"▲ סגירת הרשימה":"▼ בחירת ציוד שניזוק"}</button>
+      <div id="dmgItemsSum" class="dmg-items-sum">${(f.items||[]).length?"נבחר: "+esc((f.items||[]).join(", ")):'<span class="muted">לא נבחר עדיין</span>'}</div>
+      <div class="dmg-checklist${DMG.itemsOpen?" open":""}">${["ללא נזק"].concat(items.map(it=>it.name)).concat(["אחר (פירוט בהערה)"]).map(n=>`<label class="${n==="ללא נזק"?"dmg-none":""}"><input type="checkbox" class="dmg-item" data-action="portal-dmg-item" value="${esc(n)}" ${(f.items||[]).includes(n)?"checked":""}> ${esc(n)}</label>`).join("")}</div></div>
     ${inp("location","מיקום האירוע","")}
     ${inp("description","תאור האירוע","",true)}
     ${acc ? `${inp("visibility","ראות במקום","")}
@@ -739,6 +742,11 @@ async function dmgAction(App, a, el){
     const dr = el.dataset.fresh ? null : dmgLoadDraft(App, false);
     if(dr){ DMG.open = true; dmgRestore(dr); DMG.error = null; DMG.msg = null; return App.render(); }
     DMG.open = true; DMG.form = {branch: tm ? ((tm.sectors&&tm.sectors.length) ? tm.sectors.join(" / ") : tm.name) : ""}; DMG.parties = [dmgNewParty("מאבטח", session ? session.name : "")]; DMG.vehicles = [{label:"", photos:[]}]; DMG.equipPhotos = []; DMG.error = null; DMG.msg = null; return App.render(); }
+  if(a==="portal-dmg-itemstoggle"){
+    DMG.itemsOpen = !DMG.itemsOpen;
+    const box = document.querySelector(".dmg-checklist"); if(box) box.classList.toggle("open", DMG.itemsOpen);
+    el.textContent = DMG.itemsOpen ? "▲ סגירת הרשימה" : "▼ בחירת ציוד שניזוק"; return;
+  }
   if(a==="portal-dmg-kind"){ dmgCollect(); DMG.form = Object.assign({}, DMG.form, {kind: el.dataset.k || null}); return App.render(); }
   if(a==="portal-dmg-discard"){ dmgClearDraft(App); DMG.restored = null; const m = DMG.mgrMode;
     if(m){ DMG.open = false; DMG.mgrMode = false; return pvGo(App, "dmg-list", {}); }
@@ -808,12 +816,40 @@ async function dmgAction(App, a, el){
   }
   // מנהלים
   if(a==="portal-dmg-copy"){ const r = DMG.mview; if(r && navigator.clipboard) navigator.clipboard.writeText(dmgText(r)).then(()=>{ PV.msg = "הדו\"ח הועתק."; App.render(); }).catch(()=>{}); return; }
+  if(a==="portal-dmg-pdf"){
+    const r = el.dataset.who==="w" ? DMG.view : DMG.mview; if(!r) return;
+    const imgs = el.dataset.who==="w" ? (DMG.images||[]) : (DMG.mimages||[]);
+    const old = el.textContent; el.textContent = "מכין PDF..."; el.disabled = true;
+    try{ await dmgMakePdf(App, r, imgs); el.textContent = old; }
+    catch(e){ el.textContent = "⚠️ הפקת ה-PDF נכשלה — נסו שוב"; setTimeout(()=>{ el.textContent = old; }, 4000); }
+    el.disabled = false; return;
+  }
   if(a==="portal-dmg-print"){
     const r = DMG.mview; if(!r) return;
     const w = window.open("", "_blank"); if(!w) return;
     w.document.write(`<!doctype html><html dir="rtl" lang="he"><head><meta charset="utf-8"><title>דיווח נזק - ${App.escapeHtml(r.worker_name)}</title><style>body{font-family:Arial,sans-serif;padding:20px;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #999;padding:6px 8px;text-align:right;vertical-align:top;}th{background:#f1f1f1;width:30%;}img{max-width:48%;margin:4px;}</style></head><body>${dmgReportHtml(App, r, DMG.mimages||[])}<script>setTimeout(()=>window.print(),400)<\/script></body></html>`);
     w.document.close(); return;
   }
+}
+/* הפקת דו"ח PDF (2026-10-20, סרגיי) - html2pdf.js נטען רק בלחיצה, מהטבלה המסודרת + התמונות */
+function loadHtml2Pdf(){
+  if(window.html2pdf) return Promise.resolve();
+  return new Promise((res, rej)=>{ const sc = document.createElement("script"); sc.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+    sc.onload = ()=>res(); sc.onerror = ()=>rej(new Error("טעינת רכיב ה-PDF נכשלה")); document.head.appendChild(sc); });
+}
+async function dmgMakePdf(App, r, images){
+  await loadHtml2Pdf();
+  const box = document.createElement("div");
+  box.dir = "rtl"; box.style.cssText = "position:fixed;left:-10000px;top:0;width:760px;background:#fff;color:#111;font-family:Arial,sans-serif;padding:18px;";
+  box.innerHTML = `<style>.dmg-table{width:100%;border-collapse:collapse;font-size:13px;}.dmg-table th,.dmg-table td{border:1px solid #999;padding:6px 8px;text-align:right;vertical-align:top;}
+    .dmg-table th{background:#f1f1f1;width:32%;} h3{font-size:19px;} h4{font-size:15px;} .dmg-imgs{display:flex;flex-wrap:wrap;gap:6px;} .dmg-imgs img{width:230px;height:auto;max-height:230px;object-fit:contain;border:1px solid #ccc;page-break-inside:avoid;} .muted{color:#666;}</style>
+    <div style="font-size:12px;color:#666;margin-bottom:6px;">הופק ${App.escapeHtml(dmgFmtDate(new Date().toISOString()))}</div>${dmgReportHtml(App, r, images)}`;
+  document.body.appendChild(box);
+  const nm = String(r.worker_name||"").replace(/\s+/g,"-"), dt = String(r.event_at||"").slice(0,10);
+  try{
+    await window.html2pdf().set({margin:[10,8,10,8], filename:`${r.kind==="equipment"?"נזק-לציוד":"תאונה"}-${nm}-${dt}.pdf`, image:{type:"jpeg", quality:0.92},
+      html2canvas:{scale:2, useCORS:true}, jsPDF:{unit:"mm", format:"a4", orientation:"portrait"}, pagebreak:{mode:["css","legacy"]}}).from(box).save();
+  } finally { box.remove(); }
 }
 function dmgMgrLoad(App, ms, force){
   if(DMG.mgrTok !== ms.token){ DMG.mgrTok = ms.token; DMG.list = null; DMG.listAt = 0; }
@@ -847,7 +883,7 @@ function renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs){
     if(!r.seen){ r.seen = true; App.apiRpc("mgr_damage_seen", {p_token:ms.token, p_id:r.id}).catch(()=>{}); }
     if(DMG.mimages===null && !DMG.mloadingImgs){ DMG.mloadingImgs = true; App.apiRpc("damage_images_get2", {p_token:ms.token, p_report_id:r.id}).then(x=>{ DMG.mimages = x||[]; DMG.mloadingImgs = false; App.render(); }).catch(()=>{ DMG.mimages = []; DMG.mloadingImgs = false; App.render(); }); }
     return wrap(`${dmgReportHtml(App, r, DMG.mimages)}
-      <div class="row" style="margin-top:10px;"><button class="btn secondary" data-action="portal-dmg-copy">📋 העתקת הדו"ח</button><button class="btn secondary" data-action="portal-dmg-print">🖨️ הדפסה / PDF</button></div>${msgs}`);
+      <div class="row" style="margin-top:10px;"><button class="btn" data-action="portal-dmg-pdf" data-who="m">📄 הפקת דו"ח PDF</button><button class="btn secondary" data-action="portal-dmg-copy">📋 העתקת הדו"ח</button><button class="btn secondary" data-action="portal-dmg-print">🖨️ הדפסה / PDF</button></div>${msgs}`);
   }
   return null;
 }
@@ -3299,6 +3335,8 @@ async function onChangeTraining(App, e){
     const all = [...document.querySelectorAll(".dmg-item")];
     if(t.checked && t.value==="ללא נזק") all.forEach(x=>{ if(x!==t) x.checked = false; });
     else if(t.checked) all.forEach(x=>{ if(x.value==="ללא נזק") x.checked = false; });
+    const sel = all.filter(x=>x.checked).map(x=>x.value), sum = document.getElementById("dmgItemsSum");
+    if(sum) sum.innerHTML = sel.length ? "נבחר: " + App.escapeHtml(sel.join(", ")) : '<span class="muted">לא נבחר עדיין</span>';
     return;
   }
   if(a==="portal-dmg-tp"){
@@ -3811,7 +3849,8 @@ function onClick(App, a, el){
   .inc-sec-h{font-weight:700;margin:4px 0 6px;color:#374151;}
   .dmg-tp{border:2px solid #f59e0b;background:#fffbeb;border-radius:10px;padding:10px;margin:-4px 0 12px;}
   .dmg-kind{font-size:.75em;border-radius:999px;padding:1px 7px;font-weight:700;} .dmg-kind.eq{background:#fff3cd;color:#7a5200;} .dmg-kind.acc{background:#fde7e5;color:#b42318;}
-  .dmg-checklist{max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px 8px;background:#fff;}
+  .dmg-checklist{display:none;} .dmg-checklist.open{display:block;} .dmg-items-sum{margin:6px 0;font-size:.9em;} .dmg-items-btn{margin-bottom:2px;}
+  .dmg-checklist{max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px 8px;background:#fff;}
   .dmg-checklist label{display:flex;align-items:center;gap:8px;padding:7px 2px;border-bottom:1px solid #f1f3f5;cursor:pointer;font-weight:400;}
   .dmg-checklist label:last-child{border-bottom:none;} .dmg-checklist input{width:20px;height:20px;flex:none;} .dmg-checklist .dmg-none{font-weight:700;}
   .dmg-multi{width:100%;min-height:150px;padding:4px;border:1px solid var(--border);border-radius:8px;} .dmg-multi option{padding:5px 6px;}
