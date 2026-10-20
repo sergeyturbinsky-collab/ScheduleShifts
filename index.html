@@ -165,7 +165,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=56"></script>
+<script src="portal.js?v=57"></script>
 <script>
 (function(){
 "use strict";
@@ -390,6 +390,10 @@ function submitOptionLabel(ot, dateStr){
     const q = (S.quotas||[]).find(x=>x.sector==="מוקד" && x.day_type==="saturday" && x.shift_type==="evening");
     if(q) return `ערב (${q.start_time.slice(0,5)}-${q.end_time.slice(0,5)})`;
   }
+  // טופס ההגשה של המאבטחים (2026-10-20, סרגיי): שישי - רק "בוקר"/"לילה", מוצ"ש - רק "מוצ"ש", בלי שעות
+  if(ot==="friday_morning") return "בוקר";
+  if(ot==="friday_night") return "לילה";
+  if(ot==="motzash") return 'מוצ"ש';
   return SHIFT_LABELS[ot];
 }
 function blockingEntryTypes(quotaShiftType){
@@ -723,11 +727,11 @@ function renderSubmitPeriod(){
     </div>
     <div class="banner ${bannerCls}">${bannerTxt}</div>
     ${windowState.state==="notyet" ? `<p class="muted">ניתן עדיין לנווט בין תקופות, אך לא להגיש בזמן שהטופס עדיין לא נפתח.</p>` : `
-      ${(!readOnly && !isMokedTeam(team)) ? `<p class="muted">סמנו בכל יום את המשמרות שבהן אתם <b>כן</b> יכולים לעבוד. משמרת שלא תסומן תיחשב כלא זמינה עבורכם. ניתן גם לסמן טווח שעות מותאם נוסף שבו אתם זמינים.<br><b>חובה להתייחס לכל יום</b> — יום שלא מתאים לכם: "לא יכול" או "אחר" (ופרטו בהערה). <b>בסוף חובה לכתוב הערה.</b></p>` : ""}
+      ${(!readOnly && !isMokedTeam(team)) ? `<p class="muted">סמנו בכל יום את המשמרות שבהן אתם <b>כן</b> יכולים לעבוד. משמרת שלא תסומן תיחשב כלא זמינה עבורכם. ניתן גם לסמן טווח שעות מותאם נוסף שבו אתם זמינים.<br><b>חובה להתייחס לכל יום</b> — יום שלא מתאים לכם: "לא יכול" או "אחר" (אפשר לפרט בהערה).</p>` : ""}
       ${readOnly ? `<p class="muted">הטופס נעול לעריכה — מוצגת ההגשה האחרונה שנשמרה, לצפייה בלבד.</p>` : ""}
       ${daysHtml}
       <div class="field" style="margin-top:10px;">
-        <label>הערה${readOnly?"":(isMokedTeam(team)?" (אופציונלי)":" (חובה)")}</label>
+        <label>הערה${readOnly?"":" (אופציונלי)"}</label>
         <textarea id="submitNote" rows="2" style="width:100%;"${readOnly?" disabled":""}>${escapeHtml(ui.note||"")}</textarea>
       </div>
       ${readOnly ? "" : `<button class="btn" data-action="save-submission">שמור/י אילוצים</button>`}
@@ -793,7 +797,6 @@ async function saveSubmission(){
     const missing = periodDates(ui.periodStart, team).filter(d=>{ const e = ui.entries[d]; return !e || !(e.dayStatus || e.customOn || (e.types||[]).length); });
     const noteTxt = (document.getElementById("submitNote")||{}).value || "";
     if(missing.length){ ui.saveOk = false; ui.saveMsg = `צריך לסמן כל יום. חסר: ${missing.map(fmtDateHeb).join(", ")} — סמנו משמרות, או "לא יכול" / "אחר".`; ui.note = noteTxt; return render(); }
-    if(!noteTxt.trim()){ ui.saveOk = false; ui.saveMsg = "צריך לכתוב הערה לפני השמירה."; return render(); }
   }
   try{
     const sub = await apiUpsertSubmission({
