@@ -165,7 +165,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=68"></script>
+<script src="portal.js?v=69"></script>
 <script>
 (function(){
 "use strict";
@@ -862,6 +862,8 @@ function renderAggregate(){
   }
   if(!ui.periodStart) ui.periodStart = currentPeriodStart(team);
   if(!ui.loaded){ loadAggregateData(team); return `<div class="card"><p>טוען...</p></div>`; }
+  // (2026-10-20) אם הטעינה נכשלה - מציגים את השגיאה ולחצן "נסה שוב" במקום מסך ריק/"טוען..." לנצח.
+  if(ui.loadError || !ui.workers) return `<div class="card"><span class="backlink" data-action="go-home">◀ חזרה</span><h3>הטעינה נכשלה</h3><p class="shortage">${escapeHtml(ui.loadError||"שגיאה לא ידועה")}</p><button class="btn" data-action="agg-reload">🔄 נסה שוב</button></div>`;
 
   if(ui.printOpen) return `<div class="card">${renderPrintView(team)}</div>`;
 
@@ -1111,6 +1113,7 @@ async function runMonthlyReport(){
 
 async function loadAggregateData(team){
   const ui = S.ui;
+  ui.loadError = null;
   const group = sectorGroupForTeam(team);
   try{
     const teamFilter = group.teamIds.length>1 ? `in.(${group.teamIds.join(",")})` : `eq.${group.teamIds[0]}`;
@@ -2630,6 +2633,8 @@ function renderMgrScheduleView(){
   // עובד ("סידור מלא", 2026-10-18): נפתח על התקופה הנוכחית (שבה נמצא היום), לא על התקופה הבאה
   if(!ui.periodStart) ui.periodStart = ui.workerView ? shiftPeriod(currentPeriodStart(team), team, -1) : currentPeriodStart(team);
   if(!ui.loaded){ loadAggregateData(team); return `<div class="card"><p>טוען...</p></div>`; }
+  // (2026-10-20) אם הטעינה נכשלה - מציגים את השגיאה ולחצן "נסה שוב" במקום מסך ריק/"טוען..." לנצח.
+  if(ui.loadError || !ui.workers) return `<div class="card"><span class="backlink" data-action="go-home">◀ חזרה</span><h3>הטעינה נכשלה</h3><p class="shortage">${escapeHtml(ui.loadError||"שגיאה לא ידועה")}</p><button class="btn" data-action="agg-reload">🔄 נסה שוב</button></div>`;
   const group = sectorGroupForTeam(team);
   const published = isSchedulePublished(group, ui);
   const viewLabel = !(team.sectors||[]).length ? "מוקד" : (group.citySectors.some(c=>POOLED_CITY_SECTORS.includes(c)) ? "ירושלים וסובב ירושלים" : group.citySectors.join(" / "));
@@ -3462,6 +3467,7 @@ function onAppClick(e){
     ui.tmplAddWorkerOpen=false; ui.tmplAddWorkerMsg=null; ui.tmplShowOtherSectors=false; ui.tmplRoleOverride=null;
     return render();
   }
+  if(a==="agg-reload"){ ui.loaded = false; ui.loadError = null; return render(); }
   if(a==="agg-avail-toggle"){ ui.showAvailByDay = !ui.showAvailByDay; return render(); }
   if(a==="tmpl-other-sectors-toggle"){ ui.tmplShowOtherSectors = !ui.tmplShowOtherSectors; return render(); }
   if(a==="tmpl-add-worker-toggle"){ ui.tmplAddWorkerOpen = !ui.tmplAddWorkerOpen; ui.tmplAddWorkerMsg=null; return render(); }
