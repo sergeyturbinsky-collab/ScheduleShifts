@@ -481,7 +481,165 @@ async function loadLogistics(App, session){
   App.render();
 }
 
+
+/* ================================================================
+   דיווח נזק/תאונה ראשוני (2026-10-20, לבקשת סרגיי): המאבטח מדווח מהאיזור האישי (לוגיסטי) לפי הפורמט של סרגיי,
+   כולל בחירת הציוד שניזוק מרשימת הציוד, צילום והוספת תמונות. התראה לקב"ט של הגזרה ולסרגיי, ושניהם רואים
+   את הדו"ח המסודר (העתקה/הדפסה). השרת: worker_damage_create / _add_image / _list, mgr_damage_list / _seen,
+   damage_images_get.
+   ================================================================ */
+const DMG = { open:false, busy:false, msg:null, error:null, files:[], previews:[], mine:null, list:null, listAt:0, view:null, images:null };
+const DMG_FIELDS = [
+  ["event_at","תאריך אירוע"], ["worker_name","שם המאבטח"], ["branch","סניף"], ["vehicle_no","מספר כלי"], ["items","ציוד שניזוק"],
+  ["location","מיקום האירוע"], ["description","תאור האירוע בקצרה"], ["visibility","ראות במקום"], ["body_damage","נזק בגוף"],
+  ["mech_damage","נזק מכני"], ["third_party","האם מעורב צד ג׳"], ["reported_to","למי דווח"], ["responsible_arrived","גורם אחראי שהגיע למקום"], ["note","הערה"]
+];
+function dmgFmtDate(iso){ if(!iso) return ""; const d = new Date(iso); const p = n=>String(n).padStart(2,"0"); return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`; }
+function dmgVal(r, k){ if(k==="event_at") return dmgFmtDate(r.event_at); if(k==="items") return (r.items||[]).join(", "); return r[k]||""; }
+function dmgText(r){ return "דיווח נזק/תאונה ראשוני\n\n" + DMG_FIELDS.map(([k,l])=>`${l}: ${dmgVal(r,k)}`).join("\n"); }
+function dmgReportHtml(App, r, images){
+  const esc = App.escapeHtml;
+  return `<div class="dmg-report">
+    <h3 style="margin:0 0 8px;">דיווח נזק/תאונה ראשוני</h3>
+    <table class="dmg-table">${DMG_FIELDS.map(([k,l])=>`<tr><th>${l}</th><td style="white-space:pre-wrap;">${esc(dmgVal(r,k))||'<span class="muted">—</span>'}</td></tr>`).join("")}</table>
+    ${images===null ? (r.images?`<p class="muted">טוען ${r.images} תמונות...</p>`:"") : images.length ? `<div class="dmg-imgs">${images.map(src=>`<a href="${src}" target="_blank"><img src="${src}" alt=""></a>`).join("")}</div>` : ""}
+  </div>`;
+}
+function renderDamageWorker(App, session){
+  const esc = App.escapeHtml;
+  if(DMG.mine===null && !DMG.loadingMine){
+    DMG.loadingMine = true;
+    App.apiRpc("worker_damage_list", {p_token:session.token}).then(d=>{ DMG.mine = d||[]; DMG.loadingMine = false; App.render(); }).catch(()=>{ DMG.loadingMine = false; DMG.mine = []; });
+  }
+  if(DMG.view){
+    if(DMG.images===null && !DMG.loadingImgs && DMG.view.images){ DMG.loadingImgs = true; App.apiRpc("damage_images_get", {p_token:session.token, p_report_id:DMG.view.id}).then(x=>{ DMG.images = x||[]; DMG.loadingImgs = false; App.render(); }).catch(()=>{ DMG.images = []; DMG.loadingImgs = false; App.render(); }); }
+    return `<span class="backlink" data-action="portal-dmg-close">◀ חזרה</span>${dmgReportHtml(App, DMG.view, DMG.view.images ? DMG.images : [])}`;
+  }
+  if(!DMG.open){
+    const mine = DMG.mine||[];
+    return `<div class="dmg-box">
+      <button class="btn" style="background:#b42318;border-color:#b42318;" data-action="portal-dmg-new">⚠️ דיווח נזק / תאונה</button>
+      ${mine.length ? `<div style="margin-top:8px;"><b style="font-size:.9em;">הדיווחים שלי</b>${mine.slice(0,5).map(r=>`<div class="portal-task" data-action="portal-dmg-open" data-id="${r.id}"><span class="portal-task-icon">📄</span><span>${esc(dmgFmtDate(r.event_at))} · ${esc((r.description||"").slice(0,60))}</span></div>`).join("")}</div>` : ""}
+    </div>`;
+  }
+  const items = L.items || [];
+  const now = new Date(); const pad = n=>String(n).padStart(2,"0");
+  const nowLocal = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const f = DMG.form || {};
+  const inp = (id, label, ph, area)=>`<div class="field"><label>${label}</label>${area?`<textarea id="dmg_${id}" rows="3">${esc(f[id]||"")}</textarea>`:`<input type="text" id="dmg_${id}" value="${esc(f[id]||"")}" placeholder="${ph||""}">`}</div>`;
+  return `<span class="backlink" data-action="portal-dmg-close">◀ ביטול</span>
+    <h3 style="margin-top:6px;">⚠️ דיווח נזק/תאונה ראשוני</h3>
+    <div class="field"><label>תאריך ושעת האירוע</label><input type="datetime-local" id="dmg_event_at" value="${esc(f.event_at||nowLocal)}"></div>
+    <p class="muted" style="margin:0 0 8px;">שם המאבטח: <b>${esc(session.name)}</b> · הסניף ימולא אוטומטית לפי הגזרה (אפשר לשנות בשדה "סניף")</p>
+    ${inp("branch","סניף","אוטומטי")}
+    ${inp("vehicle_no","מספר כלי","")}
+    <div class="field"><label>ציוד שניזוק</label><div class="dmg-items">${items.map(it=>`<label><input type="checkbox" class="dmg-item" value="${esc(it.name)}" ${(f.items||[]).includes(it.name)?"checked":""}> ${esc(it.name)}</label>`).join("")}</div>
+      <input type="text" id="dmg_items_other" placeholder="ציוד אחר (לא ברשימה)" value="${esc(f.items_other||"")}" style="margin-top:6px;"></div>
+    ${inp("location","מיקום האירוע","")}
+    ${inp("description","תאור האירוע בקצרה (חובה)","",true)}
+    ${inp("visibility","ראות במקום","")}
+    ${inp("body_damage","נזק בגוף","")}
+    ${inp("mech_damage","נזק מכני","")}
+    <div class="field"><label>האם מעורב צד ג׳</label>
+      <select id="dmg_tp_yn"><option value="לא" ${f.tp_yn!=="כן"?"selected":""}>לא</option><option value="כן" ${f.tp_yn==="כן"?"selected":""}>כן</option></select>
+      <input type="text" id="dmg_tp_details" placeholder="אם כן - פרטים (שם, טלפון, מספר רכב)" value="${esc(f.tp_details||"")}" style="margin-top:6px;"></div>
+    ${inp("reported_to","למי דווח","")}
+    ${inp("responsible_arrived","גורם אחראי שהגיע למקום","")}
+    ${inp("note","הערה","",true)}
+    <div class="field"><label>תמונות (עד 10)</label>
+      <div class="row">
+        <label class="btn secondary small" style="cursor:pointer;">📷 צילום<input type="file" accept="image/*" capture="environment" data-action="portal-dmg-files" style="display:none;"></label>
+        <label class="btn secondary small" style="cursor:pointer;">🖼️ הוספת תמונות<input type="file" accept="image/*" multiple data-action="portal-dmg-files" style="display:none;"></label>
+      </div>
+      ${DMG.previews.length?`<div class="dmg-imgs">${DMG.previews.map((src,i)=>`<span style="position:relative;display:inline-block;"><img src="${src}" alt=""><span data-action="portal-dmg-rmimg" data-i="${i}" style="position:absolute;top:2px;left:2px;background:#fff;border-radius:50%;padding:0 6px;cursor:pointer;">✕</span></span>`).join("")}</div>`:""}
+    </div>
+    <button class="btn ok" data-action="portal-dmg-send" ${DMG.busy?"disabled":""}>${DMG.busy?(DMG.msg||"שולח..."):"שליחת הדיווח"}</button>
+    ${DMG.error?`<p class="shortage">${esc(DMG.error)}</p>`:""}`;
+}
+function dmgCollect(){
+  const v = id=>{ const x = document.getElementById("dmg_"+id); return x ? x.value : ""; };
+  const items = [...document.querySelectorAll(".dmg-item:checked")].map(x=>x.value);
+  const other = v("items_other").trim(); if(other) items.push(other);
+  const ev = v("event_at");
+  DMG.form = {event_at:ev, branch:v("branch"), vehicle_no:v("vehicle_no"), items:[...document.querySelectorAll(".dmg-item:checked")].map(x=>x.value), items_other:other,
+    location:v("location"), description:v("description"), visibility:v("visibility"), body_damage:v("body_damage"), mech_damage:v("mech_damage"),
+    tp_yn:v("tp_yn"), tp_details:v("tp_details"), reported_to:v("reported_to"), responsible_arrived:v("responsible_arrived"), note:v("note")};
+  const f = DMG.form;
+  return {event_at: ev ? new Date(ev).toISOString() : "", branch:f.branch, vehicle_no:f.vehicle_no, items, location:f.location, description:f.description,
+    visibility:f.visibility, body_damage:f.body_damage, mech_damage:f.mech_damage,
+    third_party: f.tp_yn==="כן" ? ("כן" + (f.tp_details.trim()?" — "+f.tp_details.trim():"")) : "לא",
+    reported_to:f.reported_to, responsible_arrived:f.responsible_arrived, note:f.note};
+}
+async function dmgAction(App, a, el){
+  const session = loadSession(App);
+  const ms = loadMgr(App);
+  if(a==="portal-dmg-new"){ DMG.open = true; DMG.form = {}; DMG.files = []; DMG.previews = []; DMG.error = null; DMG.msg = null; return App.render(); }
+  if(a==="portal-dmg-close"){ if(DMG.open) dmgCollect(); DMG.open = false; DMG.view = null; DMG.images = null; return App.render(); }
+  if(a==="portal-dmg-open"){ DMG.view = (DMG.mine||[]).find(x=>x.id===el.dataset.id) || null; DMG.images = null; return App.render(); }
+  if(a==="portal-dmg-rmimg"){ dmgCollect(); const i = Number(el.dataset.i); DMG.files.splice(i,1); DMG.previews.splice(i,1); return App.render(); }
+  if(a==="portal-dmg-send"){
+    if(!session || DMG.busy) return;
+    const p = dmgCollect();
+    if(!p.description.trim()){ DMG.error = "צריך לכתוב תיאור קצר של האירוע"; return App.render(); }
+    if(!p.event_at){ DMG.error = "צריך תאריך ושעה של האירוע"; return App.render(); }
+    DMG.busy = true; DMG.error = null; DMG.msg = "שולח..."; App.render();
+    try{
+      const id = await App.apiRpc("worker_damage_create", {p_token:session.token, p});
+      for(let i=0;i<DMG.files.length;i++){
+        DMG.msg = `מעלה תמונה ${i+1}/${DMG.files.length}...`; App.render();
+        await App.apiRpc("worker_damage_add_image", {p_token:session.token, p_report_id:id, p_image:DMG.files[i]});
+      }
+      DMG.busy = false; DMG.open = false; DMG.form = {}; DMG.files = []; DMG.previews = []; DMG.mine = null; DMG.msg = null;
+      L.msg = "הדיווח נשלח לקב\"ט ולסרגיי."; return App.render();
+    }catch(e){ DMG.busy = false; DMG.msg = null; DMG.error = e.message; return App.render(); }
+  }
+  // מנהלים
+  if(a==="portal-dmg-copy"){ const r = DMG.mview; if(r && navigator.clipboard) navigator.clipboard.writeText(dmgText(r)).then(()=>{ PV.msg = "הדו\"ח הועתק."; App.render(); }).catch(()=>{}); return; }
+  if(a==="portal-dmg-print"){
+    const r = DMG.mview; if(!r) return;
+    const w = window.open("", "_blank"); if(!w) return;
+    w.document.write(`<!doctype html><html dir="rtl" lang="he"><head><meta charset="utf-8"><title>דיווח נזק - ${App.escapeHtml(r.worker_name)}</title><style>body{font-family:Arial,sans-serif;padding:20px;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #999;padding:6px 8px;text-align:right;vertical-align:top;}th{background:#f1f1f1;width:30%;}img{max-width:48%;margin:4px;}</style></head><body>${dmgReportHtml(App, r, DMG.mimages||[])}<script>setTimeout(()=>window.print(),400)<\/script></body></html>`);
+    w.document.close(); return;
+  }
+}
+function dmgMgrLoad(App, ms, force){
+  if(DMG.mgrTok !== ms.token){ DMG.mgrTok = ms.token; DMG.list = null; DMG.listAt = 0; }
+  if(DMG.listLoading || (!force && DMG.list && Date.now()-DMG.listAt < 60000)) return;
+  DMG.listLoading = true;
+  App.apiRpc("mgr_damage_list", {p_token:ms.token}).then(d=>{ DMG.list = d||[]; DMG.listAt = Date.now(); DMG.listLoading = false; App.render(); })
+    .catch(()=>{ DMG.listLoading = false; DMG.listAt = Date.now(); });
+}
+function renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs){
+  const esc = App.escapeHtml;
+  if(pg==="dmg-list"){
+    dmgMgrLoad(App, ms);
+    if(!DMG.list) return loading();
+    return wrap(`<h2>⚠️ דיווחי נזק/תאונה</h2>
+      ${DMG.list.length ? DMG.list.map(r=>`<div class="portal-task${r.seen?"":" portal-unread"}" data-action="portal-pv" data-page="dmg-view" data-id="${r.id}">
+        <span class="portal-task-icon">${r.seen?"📄":"🔔"}</span>
+        <span><b>${esc(r.worker_name)}</b> · ${esc(r.branch||"")} · ${esc(dmgFmtDate(r.event_at))}${r.images?` · 📷 ${r.images}`:""}
+        <span class="muted" style="display:block;font-size:.85em;">${esc((r.description||"").slice(0,90))}</span></span></div>`).join("") : `<p class="muted">אין דיווחים.</p>`}`);
+  }
+  if(pg==="dmg-view"){
+    dmgMgrLoad(App, ms);
+    if(!DMG.list) return loading();
+    const r = DMG.list.find(x=>x.id===a.id);
+    if(!r) return wrap(`<p class="muted">הדו"ח לא נמצא.</p>`);
+    if(!DMG.mview || DMG.mview.id!==r.id){ DMG.mview = r; DMG.mimages = r.images ? null : []; }
+    if(!r.seen){ r.seen = true; App.apiRpc("mgr_damage_seen", {p_token:ms.token, p_id:r.id}).catch(()=>{}); }
+    if(DMG.mimages===null && !DMG.mloadingImgs){ DMG.mloadingImgs = true; App.apiRpc("damage_images_get", {p_token:ms.token, p_report_id:r.id}).then(x=>{ DMG.mimages = x||[]; DMG.mloadingImgs = false; App.render(); }).catch(()=>{ DMG.mimages = []; DMG.mloadingImgs = false; App.render(); }); }
+    return wrap(`${dmgReportHtml(App, r, DMG.mimages)}
+      <div class="row" style="margin-top:10px;"><button class="btn secondary" data-action="portal-dmg-copy">📋 העתקת הדו"ח</button><button class="btn secondary" data-action="portal-dmg-print">🖨️ הדפסה / PDF</button></div>${msgs}`);
+  }
+  return null;
+}
 function renderLogistics(App, session){
+  if(isMokedWorker(App, session)) return renderLogisticsInner(App, session);
+  if(!L.items || !L.data) return renderLogisticsInner(App, session);
+  if(DMG.open || DMG.view) return renderDamageWorker(App, session);
+  return renderDamageWorker(App, session) + renderLogisticsInner(App, session);
+}
+function renderLogisticsInner(App, session){
   const esc = App.escapeHtml;
   if(isMokedWorker(App, session)) return `<p class="muted">החלק הלוגיסטי מיועד למאבטחים בגזרות.</p>`;
   if(!L.items || !L.data){ loadLogistics(App, session); return `<p class="muted">טוען...</p>`; }
@@ -2050,7 +2208,7 @@ async function calClick(App, a, el){
 }
 
 /* ---------- עמודי משנה (view "pview") ---------- */
-const PV_TITLES = { "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
+const PV_TITLES = { "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
   "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה", "cal":"יומן משותף" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
@@ -2214,6 +2372,7 @@ function renderPView(App){
   if(PV.data && PV.data.error) return wrap(`<p class="shortage">${esc(PV.data.error)}</p>`);
   if(pg && pg.indexOf("inc-")===0) return renderIncident(App, ms, pg, a, wrap, loading, msgs);
   if(pg==="cal") return renderCalendar(App, ms, back);
+  if(pg==="dmg-list" || pg==="dmg-view"){ const h = renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
   if(pg==="k-msg-guards" || pg==="k-msg-mgmt" || pg==="mgmt-inbox"){ const h = renderMsgPages(App, ms, pg, wrap, loading, msgs); if(h) return h; }
   if(pg==="unit-dash") return `<div class="card">${back}<h2 style="margin-bottom:0;">📊 לוח מנהל יחידה</h2><p class="muted">כך רואה את המערכת מנהל היחידה.</p></div>` + renderUnitDashboard(App, ms);
 
@@ -2901,6 +3060,15 @@ async function onChangeTraining(App, e){
   if(a==="portal-swapm-sel"){ if(PV.swap) PV.swap.sel = t.dataset.k; PV.error = null; return; }
   if(a==="portal-swapm-hsel"){ if(PV.swap) PV.swap.hsel = t.dataset.w; PV.error = null; return; }
   if(a==="portal-quiz-answer"){ if(T.quiz){ T.quiz.answers[+t.dataset.q] = +t.dataset.o; T.quiz.error = null; } return; }
+  if(a==="portal-dmg-files"){
+    dmgCollect();
+    const files = [...(t.files||[])]; t.value = "";
+    for(const f of files){
+      if(DMG.files.length >= 10){ DMG.error = "אפשר עד 10 תמונות"; break; }
+      try{ const d = await compressImage(f); DMG.files.push(d); DMG.previews.push(d); DMG.error = null; }catch(err){ DMG.error = err.message; }
+    }
+    return App.render();
+  }
   const ms = loadMgr(App); if(!ms) return;
   if(a==="portal-quiz-file"){ return loadQuizFile(App, t.files && t.files[0]); }
   if(a==="portal-quiz-correct"){ const Q = syncQuiz(); Q.questions[+t.dataset.q].correct = +t.dataset.o; return App.render(); }
@@ -3081,7 +3249,8 @@ function renderManagerHome(App, ms){
   <div class="card">
     <h3>לוגיסטי</h3>
     <p class="muted" style="margin-top:-6px;">${names(logi)}</p>
-    <div class="grid-teams">${tile("portal-mh-equip", "בקשות ציוד", "החלפה / ציוד נוסף")}</div>
+    <div class="grid-teams">${tile("portal-mh-equip", "בקשות ציוד", "החלפה / ציוד נוסף")}${(()=>{ dmgMgrLoad(App, ms); const n = (DMG.list||[]).filter(x=>!x.seen).length;
+      return `<div class="team-tile" data-action="portal-pv" data-page="dmg-list"${n?' style="border-color:#b42318;"':""}><div style="font-size:1.1em;font-weight:700;${n?"color:#b42318;":""}">⚠️ ${n?`${n} דיווחי נזק חדשים`:"דיווחי נזק / תאונה"}</div><div class="muted" style="font-size:.85em;margin-top:4px;">מהמאבטחים</div></div>`; })()}</div>
   </div>
   <div class="card">
     <h3>הדרכה</h3>
@@ -3335,6 +3504,7 @@ function onClick(App, a, el){
   if(a.indexOf("portal-inc-")===0) return incClick(App, a, el);
   if(a.indexOf("portal-cal-")===0 || a.indexOf("portal-calw-")===0) return calClick(App, a, el);
   if(a==="portal-kmsg-send" || a==="portal-mmsg-send") return msgAction(App, a);
+  if(a.indexOf("portal-dmg-")===0) return dmgAction(App, a, el);
   if(a==="portal-unit-refresh"){ U.data = null; U.error = null; U.loading = false; return App.render(); }
   if(a==="portal-quiz-addopt"){ const Q = syncQuiz(); if(Q){ Q.questions[+el.dataset.q].options.push(""); } return App.render(); }
   if(a==="portal-quiz-delopt"){ const Q = syncQuiz(); if(Q){ const q = Q.questions[+el.dataset.q], o = +el.dataset.o; q.options.splice(o,1); if(q.correct===o) q.correct = null; else if(q.correct>o) q.correct--; } return App.render(); }
@@ -3374,6 +3544,10 @@ function onClick(App, a, el){
   if(document.getElementById("portalStyles")) return;
   const st = document.createElement("style"); st.id = "portalStyles";
   st.textContent = `
+  .dmg-table{width:100%;border-collapse:collapse;} .dmg-table th,.dmg-table td{border:1px solid var(--border);padding:6px 8px;text-align:right;vertical-align:top;} .dmg-table th{background:#f4f7fb;width:34%;font-weight:600;}
+  .dmg-imgs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;} .dmg-imgs img{width:96px;height:96px;object-fit:cover;border-radius:6px;border:1px solid var(--border);}
+  .dmg-items{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 10px;} .dmg-box{border:1px solid #f3c4c0;background:#fff7f6;border-radius:10px;padding:10px;margin-bottom:12px;}
+
     .portal-list{max-height:240px;overflow-y:auto;border:1px solid #cfd8e3;border-radius:8px;background:#fff;margin-top:4px;}
     .portal-row{padding:9px 12px;border-bottom:1px solid #eef2f6;cursor:pointer;text-align:right;}
     .portal-row:last-child{border-bottom:none;}
