@@ -505,10 +505,11 @@ function dmgLoadDraft(App, mgr){ try{ const k = dmgDraftKeyFor(App, mgr); return
 function dmgSaveDraft(App){
   if(!DMG.open || DMG.busy) return;
   dmgCollect();
+  if(!DMG.form || !DMG.form.kind) return;
   const k = dmgDraftKeyFor(App, !!DMG.mgrMode); if(!k) return;
   const strip = keepImgs=>({form:DMG.form, savedAt:new Date().toISOString(), noImgs:!keepImgs,
     parties:DMG.parties.map(pt=>({role:pt.role, name:pt.name, phone:pt.phone, plate:pt.plate, insurer:pt.insurer, auto:pt.auto||{}, docs: keepImgs ? pt.docs : {license:[],id:[],insurance:[]}})),
-    vehicles:DMG.vehicles.map(v=>({label:v.label, photos: keepImgs ? v.photos : []}))});
+    vehicles:DMG.vehicles.map(v=>({label:v.label, photos: keepImgs ? v.photos : []})), equipPhotos: keepImgs ? (DMG.equipPhotos||[]) : []});
   try{ localStorage.setItem(k, JSON.stringify(strip(true))); }
   catch(e){ try{ localStorage.setItem(k, JSON.stringify(strip(false))); }catch(e2){} }
   const el = document.getElementById("dmgAutoMsg"); if(el) el.textContent = "💾 נשמר כטיוטה במכשיר " + new Date().toTimeString().slice(0,5);
@@ -519,6 +520,7 @@ function dmgRestore(d){
   DMG.parties = (d.parties||[]).map(pt=>Object.assign(dmgNewParty(pt.role, pt.name), pt, {ocr:0, docs: pt.docs || {license:[],id:[],insurance:[]}}));
   DMG.vehicles = (d.vehicles||[]).map(v=>({label:v.label||"", photos:v.photos||[]}));
   if(!DMG.vehicles.length) DMG.vehicles = [{label:"", photos:[]}];
+  DMG.equipPhotos = d.equipPhotos || [];
   DMG.restored = d;
 }
 function isTP(pt){ return /^צד ג/.test(String(pt.role||"")); }
@@ -566,16 +568,19 @@ const DMG_FIELDS = [
 ];
 function dmgFmtDate(iso){ if(!iso) return ""; const d = new Date(iso); const p = n=>String(n).padStart(2,"0"); return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`; }
 function dmgVal(r, k){ if(k==="event_at") return dmgFmtDate(r.event_at); if(k==="items") return (r.items||[]).join(", "); return r[k]||""; }
+const DMG_EQ_FIELDS = [["event_at","תאריך אירוע"], ["worker_name","שם המדווח"], ["branch","סניף"], ["items","ציוד שניזוק"], ["location","מיקום האירוע"], ["description","תאור האירוע בקצרה"], ["note","הערה"]];
+function dmgFieldsFor(r){ return r.kind==="equipment" ? DMG_EQ_FIELDS : DMG_FIELDS; }
+function dmgTitle(r){ return r.kind==="equipment" ? "דיווח נזק לציוד (לא תאונה)" : "דיווח נזק/תאונה ראשוני — תאונה"; }
 function dmgText(r){
   const parts = (r.parties||[]).map((p,i)=>`מעורב ${i+1} (${p.role||""}): ` + DMG_PFIELDS.map(([k,l])=>`${l}: ${p[k]||"-"}`).join(" | ")).join("\n");
   const veh = (r.vehicles||[]).map((v,i)=>`כלי רכב ${i+1}: ${v.label||"-"}`).join("\n");
-  return "דיווח נזק/תאונה ראשוני\n\n" + DMG_FIELDS.map(([k,l])=>`${l}: ${dmgVal(r,k)}`).join("\n") + (parts?"\n\nמעורבים:\n"+parts:"") + (veh?"\n\nכלי רכב:\n"+veh:"");
+  return dmgTitle(r) + "\n\n" + dmgFieldsFor(r).map(([k,l])=>`${l}: ${dmgVal(r,k)}`).join("\n") + (parts?"\n\nמעורבים:\n"+parts:"") + (veh?"\n\nכלי רכב:\n"+veh:"");
 }
 function dmgReportHtml(App, r, images){
   const esc = App.escapeHtml;
   return `<div class="dmg-report">
-    <h3 style="margin:0 0 8px;">דיווח נזק/תאונה ראשוני</h3>
-    <table class="dmg-table">${DMG_FIELDS.map(([k,l])=>`<tr><th>${l}</th><td style="white-space:pre-wrap;">${esc(dmgVal(r,k))||'<span class="muted">—</span>'}</td></tr>`).join("")}</table>
+    <h3 style="margin:0 0 8px;">${r.kind==="equipment"?"🔧":"⚠️"} ${dmgTitle(r)}</h3>
+    <table class="dmg-table">${dmgFieldsFor(r).map(([k,l])=>`<tr><th>${l}</th><td style="white-space:pre-wrap;">${esc(dmgVal(r,k))||'<span class="muted">—</span>'}</td></tr>`).join("")}</table>
     ${(()=>{
       const imgs = images===null ? null : (images||[]).map(x=>typeof x==="string" ? {src:x, meta:{}} : x);
       const thumbs = list=>list.length?`<div class="dmg-imgs">${list.map(x=>`<a href="${x.src}" target="_blank"><img src="${x.src}" alt=""></a>`).join("")}</div>`:"";
@@ -590,6 +595,7 @@ function dmgReportHtml(App, r, images){
         h += `<h4 style="margin:14px 0 4px;">🚗 כלי רכב ${i+1}${v.label?` — ${esc(v.label)}`:""}</h4>`;
         if(imgs) h += thumbs(imgs.filter(x=>x.meta && x.meta.sec==="vehicle" && x.meta.i===i));
       });
+      if(imgs){ const eq = imgs.filter(x=>x.meta && x.meta.sec==="equip"); if(eq.length) h += `<h4 style="margin:14px 0 4px;">🔧 תמונות הציוד שניזוק</h4>${thumbs(eq)}`; }
       if(imgs){ const rest = imgs.filter(x=>!x.meta || !x.meta.sec); if(rest.length) h += `<h4 style="margin:14px 0 4px;">📷 תמונות</h4>${thumbs(rest)}`; }
       else if(r.images) h += `<p class="muted">טוען ${r.images} תמונות...</p>`;
       return h;
@@ -612,7 +618,7 @@ function renderDamageWorker(App, session){
       <p style="margin-top:0;">דיווח ראשוני על נזק לציוד או תאונה — כולל המעורבים, כלי הרכב ותמונות. הדיווח נשלח לקב"ט ולסרגיי.</p>
       ${dmgLoadDraft(App, false) ? `<button class="btn" data-action="portal-dmg-new" style="margin-inline-end:6px;">📝 המשך הטיוטה שלא נשלחה</button>` : ""}
       <button class="btn" style="background:#b42318;border-color:#b42318;" data-action="portal-dmg-new"${dmgLoadDraft(App, false)?' data-fresh="1"':""}>➕ דיווח חדש</button>
-      ${mine.length ? `<div style="margin-top:8px;"><b style="font-size:.9em;">הדיווחים שלי</b>${mine.slice(0,5).map(r=>`<div class="portal-task" data-action="portal-dmg-open" data-id="${r.id}"><span class="portal-task-icon">📄</span><span>${esc(dmgFmtDate(r.event_at))} · ${esc((r.description||"").slice(0,60))}</span></div>`).join("")}</div>` : ""}
+      ${mine.length ? `<div style="margin-top:8px;"><b style="font-size:.9em;">הדיווחים שלי</b>${mine.slice(0,5).map(r=>`<div class="portal-task" data-action="portal-dmg-open" data-id="${r.id}"><span class="portal-task-icon">${r.kind==="equipment"?"🔧":"🚗"}</span><span>${esc(dmgFmtDate(r.event_at))} · ${esc((r.description||"").slice(0,60))}</span></div>`).join("")}</div>` : ""}
     </div>`;
   }
   return dmgFormHtml(App, session.name);
@@ -638,20 +644,29 @@ function dmgFormHtml(App, reporterName){
       ${pt.ocrErr?`<p class="muted" style="margin:6px 0;">${esc(pt.ocrErr)} — אפשר למלא ידנית.</p>`:""}
     </div>`;
   const inp = (id, label, ph, area)=>`<div class="field"><label>${label}</label>${area?`<textarea id="dmg_${id}" rows="3">${esc(f[id]||"")}</textarea>`:`<input type="text" id="dmg_${id}" value="${esc(f[id]||"")}" placeholder="${ph||""}">`}</div>`;
+  /* (2026-10-20, סרגיי) הפרדה בין נזק לציוד בלבד (לא תאונה) לבין תאונה */
+  if(!f.kind) return `<span class="backlink" data-action="portal-dmg-close">◀ ביטול</span>
+    <h3 style="margin-top:6px;">מה קרה?</h3>
+    <div class="grid-teams">
+      <div class="team-tile" data-action="portal-dmg-kind" data-k="equipment" style="border-color:#f0d58a;"><div style="font-size:1.15em;font-weight:700;">🔧 נזק לציוד בלבד</div><div class="muted" style="font-size:.85em;margin-top:4px;">לא תאונה — ציוד שנשבר, אבד או ניזוק</div></div>
+      <div class="team-tile" data-action="portal-dmg-kind" data-k="accident" style="border-color:#f3c4c0;"><div style="font-size:1.15em;font-weight:700;">🚗 תאונה</div><div class="muted" style="font-size:.85em;margin-top:4px;">כולל מעורבים, צד ג׳ וכלי רכב</div></div>
+    </div>`;
+  const acc = f.kind !== "equipment";
+  DMG.equipPhotos = DMG.equipPhotos || [];
   return `<span class="backlink" data-action="portal-dmg-close">◀ יציאה (נשמר כטיוטה)</span>
-    <h3 style="margin-top:6px;">⚠️ דיווח נזק/תאונה ראשוני</h3>
+    <h3 style="margin-top:6px;">${acc ? "⚠️ דיווח נזק/תאונה ראשוני — תאונה" : "🔧 דיווח נזק לציוד (לא תאונה)"} <span class="backlink" data-action="portal-dmg-kind" data-k="" style="font-size:.7em;font-weight:400;">שינוי סוג</span></h3>
     ${DMG.restored ? `<div class="dmg-draftbar">📝 המשך טיוטה שנשמרה ב-${esc(dmgFmtDate(DMG.restored.savedAt))}${DMG.restored.noImgs?" (בלי התמונות — לא היה מקום במכשיר)":""}
       <span class="backlink" data-action="portal-dmg-discard" style="margin-inline-start:8px;">🗑 מחיקת הטיוטה</span></div>` : ""}
     <p class="muted" style="margin:2px 0 8px;font-size:.85em;">הטופס נשמר אוטומטית כטיוטה במכשיר בזמן המילוי. <span id="dmgAutoMsg"></span></p>
     <div class="field"><label>תאריך ושעת האירוע</label><input type="datetime-local" id="dmg_event_at" value="${esc(f.event_at||nowLocal)}"></div>
     <p class="muted" style="margin:0 0 8px;">${DMG.mgrMode?"המדווח":"שם המאבטח"}: <b>${esc(reporterName)}</b> </p>
     ${inp("branch","סניף","")}
-    ${inp("vehicle_no","מספר כלי","")}
+    ${acc ? inp("vehicle_no","מספר כלי","") : ""}
     <div class="field"><label>ציוד שניזוק</label><div class="dmg-items">${items.map(it=>`<label><input type="checkbox" class="dmg-item" value="${esc(it.name)}" ${(f.items||[]).includes(it.name)?"checked":""}> ${esc(it.name)}</label>`).join("")}</div>
       <input type="text" id="dmg_items_other" placeholder="ציוד אחר (לא ברשימה)" value="${esc(f.items_other||"")}" style="margin-top:6px;"></div>
     ${inp("location","מיקום האירוע","")}
     ${inp("description","תאור האירוע בקצרה (חובה)","",true)}
-    ${inp("visibility","ראות במקום","")}
+    ${acc ? `${inp("visibility","ראות במקום","")}
     ${inp("body_damage","נזק בגוף","")}
     ${inp("mech_damage","נזק מכני","")}
     <div class="field"><label>האם מעורב צד ג׳</label>
@@ -663,9 +678,10 @@ function dmgFormHtml(App, reporterName){
         <button class="btn secondary small" data-action="portal-dmg-addtp">➕ הוספת צד ג׳ נוסף</button>
       </div>` : ""}
     ${inp("reported_to","למי דווח","")}
-    ${inp("responsible_arrived","גורם אחראי שהגיע למקום","")}
+    ${inp("responsible_arrived","גורם אחראי שהגיע למקום","")}` : ""}
     ${inp("note","הערה","",true)}
-    ${(()=>{
+    ${!acc ? `<h3 style="margin:16px 0 6px;">📷 תמונות הציוד שניזוק</h3><div>${pick("equip", 0, "photo")}${thumbs(DMG.equipPhotos, "equip", 0, "photo")}</div>` : ""}
+    ${!acc ? "" : (()=>{
       const vehicles = DMG.vehicles.map((v,i)=>`<div class="dmg-sub">
           <div class="flexbar" style="justify-content:space-between;"><b>🚗 כלי רכב ${i+1}</b>${DMG.vehicles.length>1?`<span class="backlink" data-action="portal-dmg-rmveh" data-i="${i}">✕ הסרה</span>`:""}</div>
           <div class="field" style="margin-top:6px;"><label>של מי / מספר רישוי</label><input type="text" id="dmg_v${i}_label" value="${esc(v.label||"")}" placeholder="למשל: האופנוע שלי / רכב צד ג׳ 12-345-67"></div>
@@ -682,19 +698,22 @@ function dmgFormHtml(App, reporterName){
     ${DMG.error?`<p class="shortage">${esc(DMG.error)}</p>`:""}`;
 }
 function dmgCollect(){
+  if(!document.getElementById("dmg_description")) return null; // מסך בחירת הסוג - אין שדות לאסוף
   const v = id=>{ const x = document.getElementById("dmg_"+id); return x ? x.value : ""; };
   const items = [...document.querySelectorAll(".dmg-item:checked")].map(x=>x.value);
   const other = v("items_other").trim(); if(other) items.push(other);
   const ev = v("event_at");
-  DMG.form = {event_at:ev, branch:v("branch"), vehicle_no:v("vehicle_no"), items:[...document.querySelectorAll(".dmg-item:checked")].map(x=>x.value), items_other:other,
+  DMG.form = {kind:(DMG.form||{}).kind, event_at:ev, branch:v("branch"), vehicle_no:v("vehicle_no"), items:[...document.querySelectorAll(".dmg-item:checked")].map(x=>x.value), items_other:other,
     location:v("location"), description:v("description"), visibility:v("visibility"), body_damage:v("body_damage"), mech_damage:v("mech_damage"),
     tp_yn:v("tp_yn"), reported_to:v("reported_to"), responsible_arrived:v("responsible_arrived"), note:v("note")};
   DMG.parties.forEach((p,i)=>{ const r = document.getElementById(`dmg_p${i}_role`); if(r) p.role = r.value;
     DMG_PFIELDS.forEach(([k])=>{ const x = document.getElementById(`dmg_p${i}_${k}`); if(x){ if(x.value!==p[k]) p.auto[k] = false; p[k] = x.value; } }); });
   DMG.vehicles.forEach((v,i)=>{ const x = document.getElementById(`dmg_v${i}_label`); if(x) v.label = x.value; });
   const f = DMG.form;
-  return {parties: DMG.parties.map(p=>({role:p.role, name:p.name.trim(), phone:p.phone.trim(), plate:p.plate.trim(), insurer:p.insurer.trim()})),
-    vehicles: DMG.vehicles.map(v=>({label:(v.label||"").trim()})),
+  const isEq = DMG.form.kind==="equipment";
+  return {kind: isEq ? "equipment" : "accident",
+    parties: isEq ? [] : DMG.parties.map(p=>({role:p.role, name:p.name.trim(), phone:p.phone.trim(), plate:p.plate.trim(), insurer:p.insurer.trim()})),
+    vehicles: isEq ? [] : DMG.vehicles.map(v=>({label:(v.label||"").trim()})),
     event_at: ev ? new Date(ev).toISOString() : "", branch:f.branch, vehicle_no:f.vehicle_no, items, location:f.location, description:f.description,
     visibility:f.visibility, body_damage:f.body_damage, mech_damage:f.mech_damage,
     third_party: f.tp_yn==="כן" ? ("כן" + (DMG.parties.filter(isTP).map(pt=>[pt.name, pt.plate].filter(x=>String(x||"").trim()).join(" ")).filter(Boolean).length ? " — " + DMG.parties.filter(isTP).map(pt=>[pt.name, pt.plate].filter(x=>String(x||"").trim()).join(" ")).filter(Boolean).join("; ") : "")) : "לא",
@@ -707,7 +726,8 @@ async function dmgAction(App, a, el){
     DMG.mgrMode = false; DMG.restored = null;
     const dr = el.dataset.fresh ? null : dmgLoadDraft(App, false);
     if(dr){ DMG.open = true; dmgRestore(dr); DMG.error = null; DMG.msg = null; return App.render(); }
-    DMG.open = true; DMG.form = {branch: tm ? ((tm.sectors&&tm.sectors.length) ? tm.sectors.join(" / ") : tm.name) : ""}; DMG.parties = [dmgNewParty("המאבטח", session ? session.name : "")]; DMG.vehicles = [{label:"", photos:[]}]; DMG.error = null; DMG.msg = null; return App.render(); }
+    DMG.open = true; DMG.form = {branch: tm ? ((tm.sectors&&tm.sectors.length) ? tm.sectors.join(" / ") : tm.name) : ""}; DMG.parties = [dmgNewParty("המאבטח", session ? session.name : "")]; DMG.vehicles = [{label:"", photos:[]}]; DMG.equipPhotos = []; DMG.error = null; DMG.msg = null; return App.render(); }
+  if(a==="portal-dmg-kind"){ dmgCollect(); DMG.form = Object.assign({}, DMG.form, {kind: el.dataset.k || null}); return App.render(); }
   if(a==="portal-dmg-discard"){ dmgClearDraft(App); DMG.restored = null; const m = DMG.mgrMode;
     if(m){ DMG.open = false; DMG.mgrMode = false; return pvGo(App, "dmg-list", {}); }
     DMG.open = false; return App.render(); }
@@ -722,7 +742,7 @@ async function dmgAction(App, a, el){
     if(!DMG.items) App.apiGet("logistics_items", "select=id,name,has_size,sort_order&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; });
     const mdr = el.dataset.fresh ? null : dmgLoadDraft(App, true);
     if(mdr){ dmgRestore(mdr); DMG.error = null; DMG.msg = null; return pvGo(App, "dmg-new", {}); }
-    DMG.form = {branch: Array.from(new Set(mgrTeams(App, ms.logistics_team_ids).flatMap(t=>(t.sectors&&t.sectors.length)?t.sectors:[t.name]))).join(" / ")}; DMG.parties = [dmgNewParty("הקב״ט", ms.name)]; DMG.vehicles = [{label:"", photos:[]}]; DMG.error = null; DMG.msg = null;
+    DMG.form = {branch: Array.from(new Set(mgrTeams(App, ms.logistics_team_ids).flatMap(t=>(t.sectors&&t.sectors.length)?t.sectors:[t.name]))).join(" / ")}; DMG.parties = [dmgNewParty("הקב״ט", ms.name)]; DMG.vehicles = [{label:"", photos:[]}]; DMG.equipPhotos = []; DMG.error = null; DMG.msg = null;
     if(!DMG.items) App.apiGet("logistics_items", "select=id,name,has_size,sort_order&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; });
     return pvGo(App, "dmg-new", {});
   }
@@ -733,20 +753,22 @@ async function dmgAction(App, a, el){
   }
   if(a==="portal-dmg-open"){ DMG.view = (DMG.mine||[]).find(x=>x.id===el.dataset.id) || null; DMG.images = null; return App.render(); }
   if(a==="portal-dmg-rmimg"){ dmgCollect(); const d = el.dataset, i = Number(d.i), j = Number(d.j);
-    if(d.sec==="party" && DMG.parties[i]) DMG.parties[i].docs[d.kind].splice(j,1); else if(DMG.vehicles[i]) DMG.vehicles[i].photos.splice(j,1); return App.render(); }
+    if(d.sec==="party" && DMG.parties[i]) DMG.parties[i].docs[d.kind].splice(j,1); else if(d.sec==="equip") (DMG.equipPhotos||[]).splice(j,1); else if(DMG.vehicles[i]) DMG.vehicles[i].photos.splice(j,1); return App.render(); }
   if(a==="portal-dmg-send"){
     const asMgr = !!DMG.mgrMode;
     if((asMgr ? !ms : !session) || DMG.busy) return;
     const tok = asMgr ? ms.token : session.token;
     const p = dmgCollect();
+    if(!p){ DMG.error = "בחרו סוג דיווח"; return App.render(); }
     if(!p.description.trim()){ DMG.error = "צריך לכתוב תיאור קצר של האירוע"; return App.render(); }
     if(!p.event_at){ DMG.error = "צריך תאריך ושעה של האירוע"; return App.render(); }
     DMG.busy = true; DMG.error = null; DMG.msg = "שולח..."; App.render();
     try{
       const id = await App.apiRpc(asMgr ? "mgr_damage_create" : "worker_damage_create", {p_token:tok, p});
       const ups = [];
-      DMG.parties.forEach((pt,i)=>DMG_DOCS.forEach(([dk])=>pt.docs[dk].forEach(src=>ups.push({src, meta:{sec:"party", i, kind:dk}}))));
-      DMG.vehicles.forEach((v,i)=>v.photos.forEach(src=>ups.push({src, meta:{sec:"vehicle", i, kind:"photo"}})));
+      if(p.kind==="equipment") (DMG.equipPhotos||[]).forEach(src=>ups.push({src, meta:{sec:"equip", i:0, kind:"photo"}}));
+      else DMG.parties.forEach((pt,i)=>DMG_DOCS.forEach(([dk])=>pt.docs[dk].forEach(src=>ups.push({src, meta:{sec:"party", i, kind:dk}}))));
+      if(p.kind!=="equipment") DMG.vehicles.forEach((v,i)=>v.photos.forEach(src=>ups.push({src, meta:{sec:"vehicle", i, kind:"photo"}})));
       for(let k=0;k<ups.length;k++){
         DMG.msg = `מעלה תמונה ${k+1}/${ups.length}...`; App.render();
         await App.apiRpc(asMgr ? "mgr_damage_add_image2" : "worker_damage_add_image2", {p_token:tok, p_report_id:id, p_image:ups[k].src, p_meta:ups[k].meta});
@@ -787,7 +809,7 @@ function renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs){
       <span>${dmgLoadDraft(App, true) ? `<button class="btn" data-action="portal-dmg-mnew" style="margin-inline-end:6px;">📝 המשך טיוטה</button>` : ""}<button class="btn" style="background:#b42318;border-color:#b42318;" data-action="portal-dmg-mnew"${dmgLoadDraft(App, true)?' data-fresh="1"':""}>➕ דיווח חדש</button></span></div>${msgs}
       ${DMG.list.length ? DMG.list.map(r=>`<div class="portal-task${r.seen?"":" portal-unread"}" data-action="portal-pv" data-page="dmg-view" data-id="${r.id}">
         <span class="portal-task-icon">${r.seen?"📄":"🔔"}</span>
-        <span><b>${esc(r.worker_name)}</b>${r.mine?' <span class="muted">(הדיווח שלי)</span>':(r.reporter_manager?' <span class="muted">(קב"ט)</span>':"")} · ${esc(r.branch||"")} · ${esc(dmgFmtDate(r.event_at))}${r.images?` · 📷 ${r.images}`:""}
+        <span>${r.kind==="equipment"?'<span class="dmg-kind eq">🔧 ציוד</span>':'<span class="dmg-kind acc">🚗 תאונה</span>'} <b>${esc(r.worker_name)}</b>${r.mine?' <span class="muted">(הדיווח שלי)</span>':(r.reporter_manager?' <span class="muted">(קב"ט)</span>':"")} · ${esc(r.branch||"")} · ${esc(dmgFmtDate(r.event_at))}${r.images?` · 📷 ${r.images}`:""}
         <span class="muted" style="display:block;font-size:.85em;">${esc((r.description||"").slice(0,90))}</span></span></div>`).join("") : `<p class="muted">אין דיווחים.</p>`}`);
   }
   if(pg==="dmg-view"){
@@ -3256,12 +3278,13 @@ async function onChangeTraining(App, e){
   if(a==="portal-dmg-files"){
     dmgCollect();
     const files = [...(t.files||[])]; const sec = t.dataset.sec, i = Number(t.dataset.i), kind = t.dataset.kind; t.value = "";
-    const total = ()=>DMG.parties.reduce((n,p)=>n+DMG_DOCS.reduce((m,[dk])=>m+p.docs[dk].length,0),0) + DMG.vehicles.reduce((n,v)=>n+v.photos.length,0);
+    const total = ()=>DMG.parties.reduce((n,p)=>n+DMG_DOCS.reduce((m,[dk])=>m+p.docs[dk].length,0),0) + DMG.vehicles.reduce((n,v)=>n+v.photos.length,0) + (DMG.equipPhotos||[]).length;
     for(const f of files){
       if(total() >= 40){ DMG.error = "אפשר עד 40 תמונות בדיווח"; break; }
       try{
         const d = await compressImage(f); DMG.error = null;
         if(sec==="party" && DMG.parties[i]){ DMG.parties[i].docs[kind].push(d); dmgOcr(App, i, d); }
+        else if(sec==="equip"){ DMG.equipPhotos = DMG.equipPhotos || []; DMG.equipPhotos.push(d); }
         else if(DMG.vehicles[i]) DMG.vehicles[i].photos.push(d);
       }catch(err){ DMG.error = err.message; }
     }
@@ -3755,6 +3778,7 @@ function onClick(App, a, el){
   .sayvu-badge{display:inline-block;background:#5b21b6;color:#fff;font-weight:800;font-size:.75em;letter-spacing:.5px;border-radius:6px;padding:1px 7px;vertical-align:middle;}
   .inc-sec-h{font-weight:700;margin:4px 0 6px;color:#374151;}
   .dmg-tp{border:2px solid #f59e0b;background:#fffbeb;border-radius:10px;padding:10px;margin:-4px 0 12px;}
+  .dmg-kind{font-size:.75em;border-radius:999px;padding:1px 7px;font-weight:700;} .dmg-kind.eq{background:#fff3cd;color:#7a5200;} .dmg-kind.acc{background:#fde7e5;color:#b42318;}
   .dmg-draftbar{background:#fff7e0;border:1px solid #f0d58a;border-radius:8px;padding:8px 10px;margin:6px 0;font-weight:600;}
   .dmg-sub{border:1px solid var(--border);border-radius:10px;padding:10px;margin:8px 0;background:#fafbfc;} .dmg-pick{display:inline-flex;gap:6px;margin-inline-start:6px;}
   .dmg-pfields{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:0 10px;margin-top:8px;} .dmg-auto{font-size:.78em;color:#1d4ed8;font-weight:600;}
