@@ -93,6 +93,7 @@
   .tmpl-table th{background:#f4f7fb;font-weight:600;}
   .tmpl-table th .shabbat-th{font-weight:500;font-size:.9em;color:#7a5c00;margin-top:2px;}
   .tmpl-table td.tmpl-pos{background:#f4f7fb;font-weight:600;}
+  .stask-cell{font-size:.9em;min-width:70px;}
   .tmpl-pos-hrs{font-size:.72em;font-weight:400;color:#4b5563;white-space:nowrap;line-height:1.35;}
   .tmpl-na{background:#2a2a2a;}
   .tmpl-missing{font-weight:800;}
@@ -146,7 +147,7 @@
 <main id="app"></main>
 <footer>מערכת פנימית · חברת אבטחה</footer>
 
-<script src="portal.js?v=44"></script>
+<script src="portal.js?v=45"></script>
 <script>
 (function(){
 "use strict";
@@ -1153,6 +1154,12 @@ async function loadAggregateData(team){
     }catch(e){ ui.streakAssignments = ui.allAssignments || []; }
     ui.streakIdx = buildStreakIndex(ui.streakAssignments);
 
+    // משימות שאינן משמרת (3 שורות לכל יום בתחתית טבלת השיבוץ) - 2026-10-20
+    try{
+      const tdates = periodDates(ui.periodStart, team);
+      ui.schedTasks = group.citySectors.length ? await apiRpc("sched_tasks_list", {p_sectors: group.citySectors, p_from: tdates[0], p_to: tdates[tdates.length-1]}) : [];
+    }catch(e){ ui.schedTasks = []; }
+
     ui.loaded = true;
   }catch(e){
     ui.loaded = true; ui.loadError = e.message;
@@ -1770,10 +1777,84 @@ function renderTemplateGrid(group, dates, ui, mode){
       </table>
       </div>`;
     }).join("");
-    return `<div class="tmpl-block"><div class="tmpl-sector-head">${escapeHtml(secData.sector)}</div>${bucketsHtml}</div>`;
+    return `<div class="tmpl-block"><div class="tmpl-sector-head">${escapeHtml(secData.sector)}</div>${bucketsHtml}${schedTasksBlock(secData.sector, dates, ui, mode)}</div>`;
   }).join("");
 
   return blocksHtml || `<p class="muted">אין תקן מוגדר לגזרות אלו.</p>`;
+}
+
+/* ================================================================
+   משימות שאינן משמרת (2026-10-20, לבקשת סרגיי): בתחתית טבלת השיבוץ - 3 שורות בכל יום. המשבץ בוחר מאבטח,
+   כותב מה המשימה (מלל חופשי) ושעות. המשימה מופיעה אצל המאבטח באיזור האישי (worker_sched_tasks) והוא מקבל
+   התראה. נשמר מיד (rpc_sched_task_save / rpc_sched_task_remove). בתצוגה/פלט - מוצג רק אם יש משימות.
+   ================================================================ */
+const STASK_ROWS = 3;
+function schedTasksBlock(sector, dates, ui, mode){
+  const tasks = (ui.schedTasks||[]).filter(t=>t.sector===sector);
+  if(mode!=="manual" && !tasks.some(t=>dates.includes(t.date))) return "";
+  const rows = Array.from({length:STASK_ROWS}, (_,i)=>i+1).map(slot=>{
+    const cells = dates.map(d=>{
+      const t = tasks.find(x=>x.date===d && x.slot===slot);
+      const hrs = t && (t.start||t.end) ? `<br><span class="muted" style="font-size:.85em;" dir="ltr">${escapeHtml(t.start||"")}${t.end?"-"+escapeHtml(t.end):""}</span>` : "";
+      const body = t ? `<b>${escapeHtml(t.worker_name||"?")}</b><br><span style="font-size:.85em;">${escapeHtml(t.title)}</span>${hrs}` : (mode==="manual" ? `<span class="muted">➕</span>` : "");
+      return mode==="manual"
+        ? `<td class="tmpl-cell stask-cell" data-action="stask-cell" data-sector="${escapeHtml(sector)}" data-date="${d}" data-slot="${slot}">${body}</td>`
+        : `<td class="stask-cell">${body}</td>`;
+    }).join("");
+    return `<tr><td class="tmpl-pos">משימה ${slot}</td>${cells}</tr>`;
+  }).join("");
+  return `
+      <div class="tmpl-bucket-head">משימות (לא משמרת)</div>
+      <div style="overflow-x:auto;">
+      <table class="tmpl-table">
+        <thead><tr><th></th>${dates.map(d=>`<th>${fmtDateHeb(d)}</th>`).join("")}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      </div>`;
+}
+async function schedTaskAction(a){
+    const ui = S.ui;
+    const c = ui.staskCell; if(!c || ui.staskBusy) return;
+    const v = id=>{ const x = document.getElementById(id); return x ? x.value : ""; };
+    const wid = v("stask_worker"), title = v("stask_title").trim(), st = v("stask_start"), en = v("stask_end");
+    if(a==="stask-save" && !wid){ ui.staskMsg = "צריך לבחור מאבטח"; return render(); }
+    if(a==="stask-save" && !title){ ui.staskMsg = "צריך לכתוב מה המשימה"; return render(); }
+    ui.staskBusy = true; render();
+    try{
+      if(a==="stask-save") await apiRpc("rpc_sched_task_save", {p_pin:S.pin, p_sector:c.sector, p_date:c.date, p_slot:c.slot, p_worker_id:wid, p_title:title, p_start:st||null, p_end:en||null});
+      else await apiRpc("rpc_sched_task_remove", {p_pin:S.pin, p_sector:c.sector, p_date:c.date, p_slot:c.slot});
+      const team = teamById(ui.teamId), group = sectorGroupForTeam(team), dts = periodDates(ui.periodStart, team);
+      ui.schedTasks = await apiRpc("sched_tasks_list", {p_sectors: group.citySectors, p_from: dts[0], p_to: dts[dts.length-1]});
+      ui.staskCell = null; ui.staskMsg = null;
+    }catch(err){ ui.staskMsg = /invalid pin/i.test(err.message) ? "אין הרשאה — צריך להתחבר מחדש" : err.message; }
+    ui.staskBusy = false; return render();
+}
+function renderSchedTaskOverlay(){
+  const ui = S.ui, c = ui.staskCell;
+  if(!c) return "";
+  const t = (ui.schedTasks||[]).find(x=>x.sector===c.sector && x.date===c.date && x.slot===c.slot);
+  const ws = (ui.workers||[]).slice().sort((a,b)=>a.name.localeCompare(b.name,"he"));
+  const sel = t ? t.worker_id : "";
+  return `
+  <div class="overlay" data-action="stask-close-bg">
+    <div class="card" data-action="noop">
+      <h3>${escapeHtml(c.sector)} · ${fmtDateHeb(c.date)} · משימה ${c.slot}</h3>
+      <div class="field"><label>מאבטח</label>
+        <select id="stask_worker"><option value="">— בחרו מאבטח —</option>${ws.map(w=>`<option value="${w.id}" ${w.id===sel?"selected":""}>${escapeHtml(w.name)}</option>`).join("")}</select></div>
+      <div class="field"><label>המשימה</label><input type="text" id="stask_title" maxlength="200" placeholder="למשל: ליווי מבקר, תדריך, השתלמות" value="${escapeHtml(t?t.title:"")}"></div>
+      <div class="row">
+        <div class="field"><label>משעה</label><input type="time" id="stask_start" value="${escapeHtml(t&&t.start||"")}"></div>
+        <div class="field"><label>עד שעה</label><input type="time" id="stask_end" value="${escapeHtml(t&&t.end||"")}"></div>
+      </div>
+      <p class="muted" style="font-size:.85em;">המשימה תופיע אצל המאבטח באיזור האישי, והוא יקבל התראה.</p>
+      ${ui.staskMsg? `<p class="shortage">${escapeHtml(ui.staskMsg)}</p>`:""}
+      <div class="row" style="margin-top:8px;">
+        <button class="btn ok" data-action="stask-save" ${ui.staskBusy?"disabled":""}>${ui.staskBusy?"שומר...":"שמירה"}</button>
+        ${t? `<button class="btn secondary" data-action="stask-remove" ${ui.staskBusy?"disabled":""} style="color:#b42318;">מחיקת המשימה</button>`:""}
+        <button class="btn secondary" data-action="stask-close">ביטול</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 /* אותו רעיון כמו renderTemplateGrid, אך לגזרת המוקד: השורות הן לפי תפקיד (אחמ"ש/מוקדן), לא "סייר N",
@@ -2852,7 +2933,8 @@ function renderManualBuild(team){
       <button class="btn secondary small" data-action="open-print" style="margin-top:8px;">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
     </div>
     ${bottomTables}
-    ${renderTmplCellOverlay()}`;
+    ${renderTmplCellOverlay()}
+    ${renderSchedTaskOverlay()}`;
   }
 
   return `
@@ -3404,6 +3486,9 @@ function onAppClick(e){
 
   // ---- manual build ----
   if(a==="manual-exit"){ ui.mode=null; return render(); }
+  if(a==="stask-cell"){ ui.staskCell = {sector:el.dataset.sector, date:el.dataset.date, slot:Number(el.dataset.slot)}; ui.staskMsg = null; ui.staskBusy = false; return render(); }
+  if(a==="stask-close" || a==="stask-close-bg"){ ui.staskCell = null; ui.staskMsg = null; return render(); }
+  if(a==="stask-save" || a==="stask-remove") return schedTaskAction(a);
   /* "סיימתי" בסוף שיבוץ ידני (2026-10-20, סרגיי): כל שיבוץ נשמר כבר בלחיצה; הכפתור מחזיר לטבלה המרוכזת
      ומזכיר לפרסם אם הסידור עוד לא פורסם */
   if(a==="manual-done"){

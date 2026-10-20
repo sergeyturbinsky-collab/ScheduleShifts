@@ -379,6 +379,29 @@ function pushGateHtml(App, name, N, act){
   return head + `<div class="card" style="border:2px solid #0c3a6e;"><h3 style="margin-top:0;">📲 חובה להפעיל התראות לטלפון</h3>${body}</div>`;
 }
 
+/* משימות שהמשבץ הקצה למאבטח מתוך טבלת השיבוץ (לא משמרת) - 2026-10-20, לבקשת סרגיי.
+   מוצג רק כשיש משימות; מתרענן בכל כניסה למסך הבית (ובקבלת פוש - App.render מהרענון הכללי). */
+const ST = { list:null, loading:false, at:0 };
+function renderWorkerSchedTasks(App, session){
+  const esc = App.escapeHtml;
+  if(!ST.loading && (!ST.list || Date.now()-ST.at > 60000)){
+    ST.loading = true;
+    App.apiRpc("worker_sched_tasks", {p_token: session.token})
+      .then(d=>{ ST.list = d||[]; ST.at = Date.now(); ST.loading = false; App.render(); })
+      .catch(()=>{ ST.loading = false; ST.at = Date.now(); ST.list = ST.list||[]; });
+  }
+  const list = ST.list||[];
+  if(!list.length) return "";
+  const days = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"];
+  const fmt = d=>{ const x = new Date(d+"T12:00:00"); return `יום ${days[x.getDay()]} ${x.getDate()}/${x.getMonth()+1}`; };
+  return `<div class="card">
+    <h3>📌 משימות שהוטלו עליי</h3>
+    ${list.map(t=>`<div style="padding:7px 0;border-bottom:1px solid var(--border);">
+      <b>${esc(t.title)}</b>
+      <div class="muted" style="font-size:.88em;">${fmt(t.date)}${t.start?` · <span dir="ltr">${esc(t.start)}${t.end?"-"+esc(t.end):""}</span>`:""}</div>
+    </div>`).join("")}
+  </div>`;
+}
 function renderWorkerHome(App, session){
   const esc = App.escapeHtml;
   const gate = pushGate(App, session); if(gate) return gate;
@@ -415,6 +438,7 @@ function renderWorkerHome(App, session){
         ${renderMyShifts(App, session)}
         <div style="margin-top:10px;"><button class="btn secondary" data-action="portal-full-schedule">📋 סידור מלא</button></div>
       </div>
+      ${renderWorkerSchedTasks(App, session)}
       <div class="card">
         <h3>משימות פתוחות</h3>
         ${renderTasks(App, session)}
@@ -3120,7 +3144,7 @@ function onClick(App, a, el){
   if(a==="portal-logout"){
     const s = loadSession(App);
     if(s) App.apiRpc("worker_logout", {p_token: s.token}).catch(()=>{});
-    saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null; T.data = null; F.data = null; N.state = null; SW.list = null; SW.open = false; SW.msg = null;
+    saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null; T.data = null; F.data = null; N.state = null; SW.list = null; SW.open = false; SW.msg = null; ST.list = null; ST.at = 0;
     return App.render();
   }
   if(a==="portal-go-updates"){ S.view = "updates"; S.ui = {}; F.data = null; T.postOpen = null; T.controlOpen = null; T.attError = null; return App.render(); }
