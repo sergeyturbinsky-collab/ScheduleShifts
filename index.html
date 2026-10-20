@@ -825,12 +825,16 @@ function renderAggregate(){
     quotaSection = `<p class="muted">אין נתוני התקנים למוקד — מסך זה מציג ריכוז אילוצים בלבד, ללא בניית סידור.</p>`;
   }
 
-  // "מי זמין לכל יום" - מתחת ללוח המשמרות (שתופס עכשיו את כל הרוחב), לבקשת סרגיי (2026-10-07)
+  // "מי זמין לכל יום" - מתחת ללוח המשמרות (שתופס עכשיו את כל הרוחב), לבקשת סרגיי (2026-10-07).
+  // (2026-10-20, סרגיי) לא מוצג כברירת מחדל - רק בלחיצה על לחצן נפרד, אם המשבץ רוצה לראות.
   const availCard = group.citySectors.length ? `
       <div class="card">
-        <h3>מי זמין לכל יום</h3>
-        <p class="muted" style="margin-top:-6px;">כולל גם עובדים שכבר שובצו לאותו יום — מציג זמינות אמיתית, לא רק חוסרים.</p>
-        ${renderAvailabilityByDay(dates, group, ui)}
+        <div class="flexbar" style="justify-content:space-between;">
+          <h3 style="margin:0;">מי זמין לכל יום</h3>
+          <button class="btn small secondary" data-action="agg-avail-toggle">${ui.showAvailByDay?"▲ הסתר":"👥 הצג מי זמין לכל יום"}</button>
+        </div>
+        ${ui.showAvailByDay ? `<p class="muted" style="margin-top:8px;">כולל גם עובדים שכבר שובצו לאותו יום — מציג זמינות אמיתית, לא רק חוסרים.</p>
+        ${renderAvailabilityByDay(dates, group, ui)}` : ""}
       </div>`:"";
 
   return `
@@ -3274,6 +3278,7 @@ function onAppClick(e){
     ui.tmplAddWorkerOpen=false; ui.tmplAddWorkerMsg=null; ui.tmplShowOtherSectors=false; ui.tmplRoleOverride=null;
     return render();
   }
+  if(a==="agg-avail-toggle"){ ui.showAvailByDay = !ui.showAvailByDay; return render(); }
   if(a==="tmpl-other-sectors-toggle"){ ui.tmplShowOtherSectors = !ui.tmplShowOtherSectors; return render(); }
   if(a==="tmpl-add-worker-toggle"){ ui.tmplAddWorkerOpen = !ui.tmplAddWorkerOpen; ui.tmplAddWorkerMsg=null; return render(); }
   if(a==="tmpl-add-worker-cancel"){ ui.tmplAddWorkerOpen = false; ui.tmplAddWorkerMsg=null; return render(); }
