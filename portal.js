@@ -640,7 +640,7 @@ function dmgFormHtml(App, reporterName){
   const thumbs = (list, sec, i, kind)=>list.length?`<div class="dmg-imgs">${list.map((src,j)=>`<span style="position:relative;display:inline-block;"><img src="${src}" alt=""><span data-action="portal-dmg-rmimg" data-sec="${sec}" data-i="${i}" data-kind="${kind}" data-j="${j}" style="position:absolute;top:2px;left:2px;background:#fff;border-radius:50%;padding:0 6px;cursor:pointer;">✕</span></span>`).join("")}</div>`:"";
   const partyCard = (pt, i, roles, title)=>`<div class="dmg-sub">
       <div class="flexbar" style="justify-content:space-between;"><b>👤 ${title}</b>
-        <span><select id="dmg_p${i}_role">${roles.map(o=>`<option ${pt.role===o?"selected":""}>${o}</option>`).join("")}</select>
+        <span>${roles.length>1?`<select id="dmg_p${i}_role">${roles.map(o=>`<option ${pt.role===o?"selected":""}>${o}</option>`).join("")}</select>`:""}
         ${DMG.parties.length>1?`<span class="backlink" data-action="portal-dmg-rmparty" data-i="${i}" style="margin-inline-start:8px;">✕ הסרה</span>`:""}</span></div>
       <div class="dmg-pfields">${dmgPFields(pt).map(([k,l])=>k==="vtype"
         ? `<div class="field"><label>${l}</label><select id="dmg_p${i}_vtype"><option value="">— בחרו —</option>${["אופנוע","רכב"].map(o=>`<option ${pt.vtype===o?"selected":""}>${o}</option>`).join("")}</select></div>`
