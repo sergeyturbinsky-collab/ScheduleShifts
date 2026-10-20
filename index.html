@@ -335,7 +335,9 @@ function effQuota(q, dateStr){
 function shabbatThHtml(dateStr, sector){
   if(dayTypeForDate(dateStr)!=="friday" || !SHABBAT_CITIES[sector]) return "";
   const m = candleLightingMinutes(dateStr, sector);
-  return m==null ? "" : `<div class="shabbat-th">🕯️ כניסת שבת ${fmtMinutes(m)}</div>`;
+  if(m==null) return "";
+  const fe = sector!=="מוקד" ? fridayMorningEnd(dateStr, sector) : null;
+  return `<div class="shabbat-th">🕯️ כניסת שבת ${fmtMinutes(m)}</div>${fe?`<div class="shabbat-th">סיום משמרת בוקר: ${fe} (שעתיים לפני כניסת שבת)</div>`:""}`;
 }
 /* (לא בשימוש מאז 2026-10-12 - הוחלף ב-shabbatThHtml) */
 function shabbatNoteHtml(group, dates){
@@ -1717,11 +1719,13 @@ function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDa
 const TMPL_DAY_NAMES = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"];
 function tmplBucketHoursHtml(bucket){
   const seen = {}, out = [];
+  // שישי בוקר: שעת הסיום = שעתיים לפני כניסת השבת (משתנה מדי שבוע) - מציגים את השעות בפועל בתקופה (2026-10-20)
+  const friEnds = Array.from(new Set(Object.values(bucket.perDate).filter(q=>q && q.shift_type==="friday_morning").map(q=>String(q.end_time).slice(0,5))));
   Object.values(bucket.perDate).forEach(q=>{
     if(!q || seen[q.shift_type]) return; seen[q.shift_type] = true;
     const st = String(q.start_time).slice(0,5), en = String(q.end_time).slice(0,5);
     let name, hrs = `${st}-${en}`;
-    if(q.shift_type==="friday_morning"){ name = "שישי"; hrs = `${st} עד כניסת שבת`; }
+    if(q.shift_type==="friday_morning"){ name = "שישי"; hrs = `${st}-${friEnds.join(" / ")}</span> <span>(שעתיים לפני כניסת שבת)`; }
     else if(q.shift_type==="friday_night") name = "שישי";
     else if(q.shift_type==="motzash") name = 'מוצ"ש';
     else if(q.weekday!=null) name = TMPL_DAY_NAMES[q.weekday];
