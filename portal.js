@@ -888,7 +888,7 @@ async function dmgAction(App, a, el){
   if(a==="portal-dmg-print"){
     const r = DMG.mview; if(!r) return;
     const w = window.open("", "_blank"); if(!w) return;
-    w.document.write(`<!doctype html><html dir="rtl" lang="he"><head><meta charset="utf-8"><title>דיווח נזק - ${App.escapeHtml(r.worker_name)}</title><style>body{font-family:Arial,sans-serif;padding:20px;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #999;padding:6px 8px;text-align:right;vertical-align:top;}th{background:#f1f1f1;width:30%;}img{max-width:48%;margin:4px;}</style></head><body>${dmgReportHtml(App, r, DMG.mimages||[])}<script>setTimeout(()=>window.print(),400)<\/script></body></html>`);
+    w.document.write(`<!doctype html><html dir="rtl" lang="he"><head><meta charset="utf-8"><title>דיווח נזק - ${App.escapeHtml(r.worker_name)}</title><style>body{font-family:Arial,sans-serif;padding:20px;}table{border-collapse:collapse;width:100%;}th,td{border:1px solid #999;padding:6px 8px;text-align:right;vertical-align:top;}th{background:#f1f1f1;width:30%;}img{max-width:48%;margin:4px;}.logo-strip{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:8px;margin-bottom:10px;border-bottom:2px solid #1f4e8c;}.logo-strip img{max-width:24%!important;margin:0;}</style></head><body>${App.logoStripHtml ? App.logoStripHtml(50) : ""}${dmgReportHtml(App, r, DMG.mimages||[])}<script>setTimeout(()=>window.print(),400)<\/script></body></html>`);
     w.document.close(); return;
   }
 }
@@ -904,7 +904,7 @@ async function dmgMakePdf(App, r, images){
   box.dir = "rtl"; box.style.cssText = "position:fixed;left:-10000px;top:0;width:760px;background:#fff;color:#111;font-family:Arial,sans-serif;padding:18px;";
   box.innerHTML = `<style>.dmg-table{width:100%;border-collapse:collapse;font-size:13px;}.dmg-table th,.dmg-table td{border:1px solid #999;padding:6px 8px;text-align:right;vertical-align:top;}
     .dmg-table th{background:#f1f1f1;width:32%;} h3{font-size:19px;} h4{font-size:15px;} .dmg-imgs{display:flex;flex-wrap:wrap;gap:6px;} .dmg-imgs img{width:230px;height:auto;max-height:230px;object-fit:contain;border:1px solid #ccc;page-break-inside:avoid;} .muted{color:#666;}</style>
-    <div style="font-size:12px;color:#666;margin-bottom:6px;">הופק ${App.escapeHtml(dmgFmtDate(new Date().toISOString()))}</div>${dmgReportHtml(App, r, images)}`;
+    ${App.logoStripHtml ? App.logoStripHtml(50) : ""}<div style="font-size:12px;color:#666;margin-bottom:6px;">הופק ${App.escapeHtml(dmgFmtDate(new Date().toISOString()))}</div>${dmgReportHtml(App, r, images)}`;
   document.body.appendChild(box);
   const nm = String(r.worker_name||"").replace(/\s+/g,"-"), dt = String(r.event_at||"").slice(0,10);
   try{
@@ -2172,6 +2172,7 @@ function renderIncident(App, ms, pg, a, wrap, loading, msgs){
             <button class="btn small" data-action="portal-inc-print">🖨️ הדפסה / PDF</button>
           </div>
         </div>
+        ${App.logoStripHtml ? App.logoStripHtml(46) : ""}
         <h2 style="text-align:center;margin:6px 0;">דו"ח תחקיר אירוע חריג</h2>
         <p class="muted" style="text-align:center;margin-top:0;">${incStatusChip(rep.status)} · נכתב ע"י ${esc(rep.author||"")}${rep.submitted_at?` · נשלח ${fmtDT(App, rep.submitted_at)}`:""}${rep.reopened_by?` · נפתח לתיקון ע"י ${esc(rep.reopened_by)} ${fmtDT(App, rep.reopened_at)}`:""}</p>
         ${err}${ok}
