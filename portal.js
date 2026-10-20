@@ -652,7 +652,7 @@ const W = { pin:null, list:null, error:null, msg:null };
 function renderManagerPasswords(App){
   const esc = App.escapeHtml;
   const ms = loadMgr(App);
-  if(!W.list && ms && ms.is_admin && !W.loading && !W.tried){ W.loading = true; W.tried = true; W.pin = "mgr:" + ms.token; pwLoad(App).finally(()=>{ W.loading = false; }); return `<div class="card"><p class="muted">טוען...</p></div>`; }
+  if(!W.list && ms && ms.is_admin && !W.loading && !W.tried){ W.loading = true; W.tried = true; W.pin = "mgr:" + ms.token; pwLoad(App).finally(()=>{ W.loading = false; App.render(); }); /* תיקון 20/10: בלי הרינדור הזה המסך נשאר על "טוען..." */ return `<div class="card"><p class="muted">טוען...</p></div>`; }
   if(W.loading) return `<div class="card"><p class="muted">טוען...</p></div>`;
   if(!W.list && ms && ms.is_admin){
     return `<div class="card">
