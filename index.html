@@ -165,7 +165,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=48"></script>
+<script src="portal.js?v=49"></script>
 <script>
 (function(){
 "use strict";
@@ -302,10 +302,10 @@ function israelUtcOffsetMin(dateUtc){
   return Math.round((asUtc - dateUtc.getTime())/60000);
 }
 /* שקיעה (שעון ישראל, בדקות מחצות, עם שבר) לתאריך "YYYY-MM-DD" - אלגוריתם NOAA המלא + תיקון גובה */
-function sunsetLocalMinutes(dateStr, lat, lng, elev){
+function sunsetLocalMinutes(dateStr, lat, lng, elev, altDeg){
   const [Y,M,D] = dateStr.split("-").map(Number);
   const rad = Math.PI/180;
-  const alt = -0.8333 - 2.076*Math.sqrt(elev||0)/60;
+  const alt = altDeg!=null ? altDeg : -0.8333 - 2.076*Math.sqrt(elev||0)/60;
   let t = 18*60 - lng*4; // דקות UTC, ניחוש התחלתי
   for(let it=0; it<3; it++){
     const jd = Date.UTC(Y, M-1, D)/86400000 + 2440587.5 + t/1440;
@@ -330,6 +330,16 @@ function candleLightingMinutes(dateStr, sector){
   const c = SHABBAT_CITIES[sector]; if(!c) return null;
   return Math.round(sunsetLocalMinutes(dateStr, c.lat, c.lng, c.elev) + (c.adj||0)) - c.before;
 }
+/* צאת שבת (2026-10-20): השמש 8.5° מתחת לאופק - כמו בלוחות השנה הנפוצים. dateStr = יום שבת. */
+function shabbatExitMinutes(dateStr, sector){
+  const c = SHABBAT_CITIES[sector]; if(!c) return null;
+  return Math.ceil(sunsetLocalMinutes(dateStr, c.lat, c.lng, 0, -8.5));
+}
+/* תחילת משמרת מוצ"ש של המאבטחים: שעה אחרי צאת שבת (לבקשת סרגיי, 2026-10-20) */
+function motzashStart(dateStr, sector){
+  const ex = shabbatExitMinutes(dateStr, sector); if(ex==null) return null;
+  return fmtMinutes(ex + 60);
+}
 function fmtMinutes(m){ const h = Math.floor(m/60), mm = Math.round(m%60); return `${String(h).padStart(2,"0")}:${String(mm).padStart(2,"0")}`; }
 /* סיום משמרת שישי בוקר: שעתיים לפני כניסת שבת, בחצאי שעות (לבקשת סרגיי, 2026-10-09):
    כניסה עד "ורבע" (17:15) → סיום בשעה העגולה שעתיים לפני (15:00);
@@ -343,6 +353,11 @@ function fridayMorningEnd(dateStr, sector){
 }
 /* התקן בפועל לתאריך מסוים: כמו התקן הרגיל, חוץ משישי בוקר של המאבטחים שמתעדכן לפי כניסת השבת */
 function effQuota(q, dateStr){
+  if(q && q.shift_type==="motzash" && q.sector!=="מוקד" && dayTypeForDate(dateStr)==="saturday"){
+    const st = motzashStart(dateStr, q.sector);
+    if(!st || st===String(q.start_time).slice(0,5)) return q;
+    return Object.assign({}, q, {start_time:st, label: String(q.label||"").replace(/\(\d{2}:\d{2}-(\d{2}:\d{2})\)/, `(${st}-$1)`), shabbat_adjusted:true});
+  }
   if(!q || q.shift_type!=="friday_morning" || q.sector==="מוקד" || dayTypeForDate(dateStr)!=="friday") return q;
   const end = fridayMorningEnd(dateStr, q.sector);
   if(!end || end===String(q.end_time).slice(0,5)) return q;
@@ -351,6 +366,10 @@ function effQuota(q, dateStr){
 /* כניסת שבת בתוך טבלת הסידור עצמה (2026-10-12, לבקשת סרגיי): בכותרת עמודת יום שישי, לכל עיר, רק השעה.
    מחושב לכל תאריך מחדש - מתעדכן אוטומטית מדי שבוע. שעות סיום שישי בוקר כבר מובנות במשבצות (effQuota). */
 function shabbatThHtml(dateStr, sector){
+  if(dayTypeForDate(dateStr)==="saturday" && SHABBAT_CITIES[sector]){
+    const ex = shabbatExitMinutes(dateStr, sector); if(ex==null) return "";
+    return `<div class="shabbat-th">✨ צאת שבת ${fmtMinutes(ex)}</div>${sector!=="מוקד"?`<div class="shabbat-th">מוצ"ש מ-${motzashStart(dateStr, sector)} (שעה אחרי צאת שבת)</div>`:""}`;
+  }
   if(dayTypeForDate(dateStr)!=="friday" || !SHABBAT_CITIES[sector]) return "";
   const m = candleLightingMinutes(dateStr, sector);
   if(m==null) return "";
@@ -1741,7 +1760,7 @@ function tmplBucketHoursHtml(bucket){
   const friEnds = Array.from(new Set(Object.values(bucket.perDate).filter(q=>q && q.shift_type==="friday_morning").map(q=>String(q.end_time).slice(0,5))));
   Object.values(bucket.perDate).forEach(q=>{
     if(!q || seen[q.shift_type]) return; seen[q.shift_type] = true;
-    if(q.shift_type==="friday_morning") return; // שישי בוקר - ההערה רק בכותרת יום שישי, לא בעמודת הסיירים (סרגיי, 2026-10-20)
+    if(q.shift_type==="friday_morning" || q.shift_type==="motzash") return; // שישי בוקר / מוצ"ש - ההערה רק בכותרת יום שישי, לא בעמודת הסיירים (סרגיי, 2026-10-20)
     const st = String(q.start_time).slice(0,5), en = String(q.end_time).slice(0,5);
     let name, hrs = `${st}-${en}`;
     if(q.shift_type==="friday_morning"){ name = "שישי"; hrs = `${st}-${friEnds.join(" / ")}</span> <span>(שעתיים לפני כניסת שבת)`; }
@@ -1811,7 +1830,7 @@ function renderTemplateGrid(group, dates, ui, mode){
    כותב מה המשימה (מלל חופשי) ושעות. המשימה מופיעה אצל המאבטח באיזור האישי (worker_sched_tasks) והוא מקבל
    התראה. נשמר מיד (rpc_sched_task_save / rpc_sched_task_remove). בתצוגה/פלט - מוצג רק אם יש משימות.
    ================================================================ */
-const STASK_ROWS = 3;
+const STASK_ROWS = 5; // (2026-10-20) הורחב מ-3 ל-5 שורות לבקשת סרגיי
 function schedTasksBlock(sector, dates, ui, mode){
   const tasks = (ui.schedTasks||[]).filter(t=>t.sector===sector);
   if(mode!=="manual" && mode!=="agg" && !tasks.some(t=>dates.includes(t.date))) return "";
