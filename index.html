@@ -147,7 +147,25 @@
 <main id="app"></main>
 <footer>מערכת פנימית · חברת אבטחה</footer>
 
-<script src="portal.js?v=46"></script>
+<script>
+/* עדכון אוטומטי לגרסה חדשה (2026-10-20): כשחוזרים לאפליקציה אחרי יותר מדקה, בודקים אם עלתה גרסה חדשה
+   (portal.js?v=N בדף שבשרת) - ואם כן טוענים מחדש. כך אפליקציה שמותקנת במסך הבית לא נשארת על גרסה ישנה. */
+(function(){
+  var mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || "", hiddenAt = 0;
+  function check(){
+    fetch(location.pathname + "?nc=" + Date.now(), {cache:"no-store"}).then(function(r){ return r.text(); }).then(function(t){
+      var m = t.match(/portal\.js\?v=(\d+)/), cur = mine.match(/portal\.js\?v=(\d+)/);
+      if(m && cur && m[1] !== cur[1] && !document.querySelector("input:focus, textarea:focus, select:focus")) location.reload();
+    }).catch(function(){});
+  }
+  document.addEventListener("visibilitychange", function(){
+    if(document.visibilityState === "hidden"){ hiddenAt = Date.now(); return; }
+    if(hiddenAt && Date.now() - hiddenAt > 60000) check();
+  });
+  window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
+})();
+</script>
+<script src="portal.js?v=47"></script>
 <script>
 (function(){
 "use strict";
@@ -825,7 +843,7 @@ function renderAggregate(){
     if(isMoked){
       quotaSection = renderMokedTemplateGrid(group, dates, ui, "view");
     } else {
-      quotaSection = renderTemplateGrid(group, dates, ui, "view");
+      quotaSection = renderTemplateGrid(group, dates, ui, "agg"); // "agg" = תצוגה כמו view, אבל שורות המשימות תמיד מוצגות
     }
   } else {
     quotaSection = `<p class="muted">אין נתוני התקנים למוקד — מסך זה מציג ריכוז אילוצים בלבד, ללא בניית סידור.</p>`;
@@ -1795,7 +1813,7 @@ function renderTemplateGrid(group, dates, ui, mode){
 const STASK_ROWS = 3;
 function schedTasksBlock(sector, dates, ui, mode){
   const tasks = (ui.schedTasks||[]).filter(t=>t.sector===sector);
-  if(mode!=="manual" && !tasks.some(t=>dates.includes(t.date))) return "";
+  if(mode!=="manual" && mode!=="agg" && !tasks.some(t=>dates.includes(t.date))) return "";
   const rows = Array.from({length:STASK_ROWS}, (_,i)=>i+1).map(slot=>{
     const cells = dates.map(d=>{
       const t = tasks.find(x=>x.date===d && x.slot===slot);
@@ -1808,7 +1826,7 @@ function schedTasksBlock(sector, dates, ui, mode){
     return `<tr><td class="tmpl-pos">משימה ${slot}</td>${cells}</tr>`;
   }).join("");
   return `
-      <div class="tmpl-bucket-head">משימות (לא משמרת)</div>
+      <div class="tmpl-bucket-head">משימות (לא משמרת)${mode==="agg"?` <span class="muted" style="font-weight:400;font-size:.85em;">— להוספה או עריכה: "שיבוץ ידני"</span>`:""}</div>
       <div style="overflow-x:auto;">
       <table class="tmpl-table">
         <thead><tr><th></th>${dates.map(d=>`<th>${fmtDateHeb(d)}</th>`).join("")}</tr></thead>
