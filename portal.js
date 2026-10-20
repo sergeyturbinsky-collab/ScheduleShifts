@@ -574,7 +574,7 @@ function dmgFmtDate(iso){ if(!iso) return ""; const d = new Date(iso); const p =
 function dmgVal(r, k){ if(k==="event_at") return dmgFmtDate(r.event_at); if(k==="items") return (r.items||[]).join(", "); return r[k]||""; }
 const DMG_EQ_FIELDS = [["event_at","תאריך אירוע"], ["worker_name","שם המדווח"], ["branch","סניף"], ["items","נזק לציוד"], ["location","מיקום האירוע"], ["description","תאור האירוע"], ["note","הערה"]];
 function dmgFieldsFor(r){ return r.kind==="equipment" ? DMG_EQ_FIELDS : DMG_FIELDS; }
-function dmgTitle(r){ return r.kind==="equipment" ? "דיווח נזק לציוד (לא תאונה)" : "דיווח נזק/תאונה ראשוני — תאונה"; }
+function dmgTitle(r){ return r.kind==="equipment" ? "דיווח נזק לציוד (לא תאונה)" : "דיווח נזק/תאונה ראשוני — תאונה/נזק לכלי רכב"; }
 function dmgText(r){
   const parts = (r.parties||[]).map((p,i)=>`${isTP(p)?"צד ג׳":"עובד מעורב"} ${i+1}: ` + dmgPFields(p).map(([k,l])=>`${l}: ${p[k]||"-"}`).join(" | ")).join("\n");
   const veh = (r.vehicles||[]).map((v,i)=>`כלי רכב ${i+1}: ${v.label||"-"}`).join("\n");
@@ -655,12 +655,12 @@ function dmgFormHtml(App, reporterName){
     <h3 style="margin-top:6px;">מה קרה?</h3>
     <div class="grid-teams">
       <div class="team-tile" data-action="portal-dmg-kind" data-k="equipment" style="border-color:#f0d58a;"><div style="font-size:1.15em;font-weight:700;">🔧 נזק לציוד בלבד</div><div class="muted" style="font-size:.85em;margin-top:4px;">לא תאונה — ציוד שנשבר, אבד או ניזוק</div></div>
-      <div class="team-tile" data-action="portal-dmg-kind" data-k="accident" style="border-color:#f3c4c0;"><div style="font-size:1.15em;font-weight:700;">🚗 תאונה</div><div class="muted" style="font-size:.85em;margin-top:4px;">כולל מעורבים, צד ג׳ וכלי רכב</div></div>
+      <div class="team-tile" data-action="portal-dmg-kind" data-k="accident" style="border-color:#f3c4c0;"><div style="font-size:1.15em;font-weight:700;">🚗 תאונה/נזק לכלי רכב</div><div class="muted" style="font-size:.85em;margin-top:4px;">כולל מעורבים, צד ג׳ וכלי רכב</div></div>
     </div>`;
   const acc = f.kind !== "equipment";
   DMG.equipPhotos = DMG.equipPhotos || [];
   return `<span class="backlink" data-action="portal-dmg-close">◀ יציאה (נשמר כטיוטה)</span>
-    <h3 style="margin-top:6px;">${acc ? "⚠️ דיווח נזק/תאונה ראשוני — תאונה" : "🔧 דיווח נזק לציוד (לא תאונה)"} <span class="backlink" data-action="portal-dmg-kind" data-k="" style="font-size:.7em;font-weight:400;">שינוי סוג</span></h3>
+    <h3 style="margin-top:6px;">${acc ? "⚠️ דיווח נזק/תאונה ראשוני — תאונה/נזק לכלי רכב" : "🔧 דיווח נזק לציוד (לא תאונה)"} <span class="backlink" data-action="portal-dmg-kind" data-k="" style="font-size:.7em;font-weight:400;">שינוי סוג</span></h3>
     ${DMG.restored ? `<div class="dmg-draftbar">📝 המשך טיוטה שנשמרה ב-${esc(dmgFmtDate(DMG.restored.savedAt))}${DMG.restored.noImgs?" (בלי התמונות — לא היה מקום במכשיר)":""}
       <span class="backlink" data-action="portal-dmg-discard" style="margin-inline-start:8px;">🗑 מחיקת הטיוטה</span></div>` : ""}
     <p class="muted" style="margin:2px 0 8px;font-size:.85em;">כל השדות חובה. הטופס נשמר אוטומטית כטיוטה במכשיר בזמן המילוי. <span id="dmgAutoMsg"></span></p>
@@ -831,7 +831,7 @@ function renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs){
       <span>${dmgLoadDraft(App, true) ? `<button class="btn" data-action="portal-dmg-mnew" style="margin-inline-end:6px;">📝 המשך טיוטה</button>` : ""}<button class="btn" style="background:#b42318;border-color:#b42318;" data-action="portal-dmg-mnew"${dmgLoadDraft(App, true)?' data-fresh="1"':""}>➕ דיווח חדש</button></span></div>${msgs}
       ${DMG.list.length ? DMG.list.map(r=>`<div class="portal-task${r.seen?"":" portal-unread"}" data-action="portal-pv" data-page="dmg-view" data-id="${r.id}">
         <span class="portal-task-icon">${r.seen?"📄":"🔔"}</span>
-        <span>${r.kind==="equipment"?'<span class="dmg-kind eq">🔧 ציוד</span>':'<span class="dmg-kind acc">🚗 תאונה</span>'} <b>${esc(r.worker_name)}</b>${r.mine?' <span class="muted">(הדיווח שלי)</span>':(r.reporter_manager?' <span class="muted">(קב"ט)</span>':"")} · ${esc(r.branch||"")} · ${esc(dmgFmtDate(r.event_at))}${r.images?` · 📷 ${r.images}`:""}
+        <span>${r.kind==="equipment"?'<span class="dmg-kind eq">🔧 ציוד</span>':'<span class="dmg-kind acc">🚗 תאונה/נזק לכלי רכב</span>'} <b>${esc(r.worker_name)}</b>${r.mine?' <span class="muted">(הדיווח שלי)</span>':(r.reporter_manager?' <span class="muted">(קב"ט)</span>':"")} · ${esc(r.branch||"")} · ${esc(dmgFmtDate(r.event_at))}${r.images?` · 📷 ${r.images}`:""}
         <span class="muted" style="display:block;font-size:.85em;">${esc((r.description||"").slice(0,90))}</span></span></div>`).join("") : `<p class="muted">אין דיווחים.</p>`}`);
   }
   if(pg==="dmg-view"){
