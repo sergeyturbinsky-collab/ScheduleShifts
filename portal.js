@@ -2107,6 +2107,7 @@ function fmtDT(App, iso){
    ================================================================ */
 const MM = { data:null, loading:false, at:0 };
 function mmLoad(App, ms, force){
+  if(MM.token !== ms.token){ MM.token = ms.token; MM.data = null; MM.at = 0; } // מנהל אחר נכנס באותו מכשיר
   if(MM.loading || (!force && MM.data && Date.now()-MM.at < 60000)) return;
   MM.loading = true;
   App.apiRpc("mgmt_msg_list", {p_token:ms.token}).then(d=>{ MM.data = d; MM.at = Date.now(); MM.loading = false; App.render(); })
@@ -2114,14 +2115,14 @@ function mmLoad(App, ms, force){
 }
 function renderMsgCard(App, ms){
   mmLoad(App, ms);
-  const isMg = MM.data && MM.data.is_mgmt;
+  const isMg = MM.token===ms.token && MM.data && MM.data.is_mgmt;
   const canGuards = ms.is_admin || (ms.logistics_team_ids||[]).length > 0;
   const unread = isMg ? (MM.data.items||[]).filter(x=>!x.read && !x.mine).length : 0;
   const t = (action, page, title, sub, warn)=>`<div class="team-tile" data-action="${action}" data-page="${page}"${warn?' style="border-color:#b42318;"':""}>
       <div style="font-size:1.1em;font-weight:700;${warn?"color:#b42318;":""}">${title}</div><div class="muted" style="font-size:.85em;margin-top:4px;">${sub}</div></div>`;
   const tiles = [
     canGuards ? t("portal-pv", "k-msg-guards", "📢 הודעה למאבטחים", ms.is_admin ? "לכל המאבטחים או לגזרה" : "לכלל המאבטחים שלך") : "",
-    !isMg ? t("portal-pv", "k-msg-mgmt", "📨 הודעה להנהלה", "לסרגיי ולמנהל היחידה") : "",
+    (MM.data && !isMg) ? t("portal-pv", "k-msg-mgmt", "📨 הודעה להנהלה", "לסרגיי ולמנהל היחידה") : "",
     isMg ? t("portal-pv", "mgmt-inbox", unread ? `📨 ${unread} הודעות חדשות` : "📨 הודעות מהקב\"טים", "הודעות שנשלחו להנהלה", unread>0) : ""
   ].filter(Boolean);
   if(!tiles.length) return "";

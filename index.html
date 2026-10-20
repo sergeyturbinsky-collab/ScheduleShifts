@@ -165,7 +165,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=49"></script>
+<script src="portal.js?v=50"></script>
 <script>
 (function(){
 "use strict";
@@ -250,10 +250,11 @@ function rangesOverlaps(aStart,aEnd,bStart,bEnd){
 const SHIFT_LABELS = {
   morning:"בוקר", evening:"ערב", night:"לילה", coordinated:'מתואמת (11:00-23:00)',
   friday_morning:'בוקר עד 17:00', friday_night:"לילה שישי", motzash:'מוצ"ש', custom:"שעות מותאמות אישית", combined:"משמרת (11:00-23:00)",
-  vacation:"חופשה", reserve:"מילואים", sick:"מחלה"
+  vacation:"חופשה", reserve:"מילואים", sick:"מחלה", unavailable:"לא יכול", other:"אחר (פירוט בהערה)"
 };
 /* סוגי "יום שלם" - חוסמים את כל המשמרות של אותו יום, ללא קשר לסוג המשמרת שנבדקת */
-const DAY_STATUS_TYPES = ["vacation","reserve","sick"];
+/* (2026-10-20) נוספו "לא יכול" ו"אחר" - מאבטח חייב לסמן כל יום בהגשה (ראו saveSubmission) */
+const DAY_STATUS_TYPES = ["vacation","reserve","sick","unavailable","other"];
 /* ארבע ה"ערים" הגיאוגרפיות שמשתתפות בבריכה המשותפת של "מאיר אזרואל" (דניאל כתב=ירושלים
    + אביחי קדוש=בית שמש/מודיעין עילית/ביתר עילית) - ראו computeWorkerCities ו-availableForSlot. */
 const POOLED_CITY_SECTORS = ["ירושלים","בית שמש","מודיעין עילית","ביתר עילית"];
@@ -338,7 +339,7 @@ function shabbatExitMinutes(dateStr, sector){
 /* תחילת משמרת מוצ"ש של המאבטחים: שעה אחרי צאת שבת (לבקשת סרגיי, 2026-10-20) */
 function motzashStart(dateStr, sector){
   const ex = shabbatExitMinutes(dateStr, sector); if(ex==null) return null;
-  return fmtMinutes(ex + 60);
+  return fmtMinutes(Math.round((ex + 60)/30)*30); // מעוגל לחצי השעה הקרובה (סרגיי, 2026-10-20)
 }
 function fmtMinutes(m){ const h = Math.floor(m/60), mm = Math.round(m%60); return `${String(h).padStart(2,"0")}:${String(mm).padStart(2,"0")}`; }
 /* סיום משמרת שישי בוקר: שעתיים לפני כניסת שבת, בחצאי שעות (לבקשת סרגיי, 2026-10-09):
@@ -721,11 +722,11 @@ function renderSubmitPeriod(){
     </div>
     <div class="banner ${bannerCls}">${bannerTxt}</div>
     ${windowState.state==="notyet" ? `<p class="muted">ניתן עדיין לנווט בין תקופות, אך לא להגיש בזמן שהטופס עדיין לא נפתח.</p>` : `
-      ${(!readOnly && !isMokedTeam(team)) ? `<p class="muted">סמנו בכל יום את המשמרות שבהן אתם <b>כן</b> יכולים לעבוד. משמרת שלא תסומן תיחשב כלא זמינה עבורכם. ניתן גם לסמן טווח שעות מותאם נוסף שבו אתם זמינים.</p>` : ""}
+      ${(!readOnly && !isMokedTeam(team)) ? `<p class="muted">סמנו בכל יום את המשמרות שבהן אתם <b>כן</b> יכולים לעבוד. משמרת שלא תסומן תיחשב כלא זמינה עבורכם. ניתן גם לסמן טווח שעות מותאם נוסף שבו אתם זמינים.<br><b>חובה להתייחס לכל יום</b> — יום שלא מתאים לכם: "לא יכול" או "אחר" (ופרטו בהערה). <b>בסוף חובה לכתוב הערה.</b></p>` : ""}
       ${readOnly ? `<p class="muted">הטופס נעול לעריכה — מוצגת ההגשה האחרונה שנשמרה, לצפייה בלבד.</p>` : ""}
       ${daysHtml}
       <div class="field" style="margin-top:10px;">
-        <label>הערה${readOnly?"":" (אופציונלי)"}</label>
+        <label>הערה${readOnly?"":(isMokedTeam(team)?" (אופציונלי)":" (חובה)")}</label>
         <textarea id="submitNote" rows="2" style="width:100%;"${readOnly?" disabled":""}>${escapeHtml(ui.note||"")}</textarea>
       </div>
       ${readOnly ? "" : `<button class="btn" data-action="save-submission">שמור/י אילוצים</button>`}
@@ -786,6 +787,13 @@ async function saveSubmission(){
   const ws = computeWindowState(team, ui.periodStart);
   if(ws.state!=="open" && !ui.hasException){ ui.saveMsg = "הטופס נעול להגשה — לא ניתן לשמור."; ui.saveOk = false; return render(); }
   ui.saveMsg = null;
+  // מאבטחים (לא מוקד): חובה להתייחס לכל יום בתקופה ולכתוב הערה (לבקשת סרגיי, 2026-10-20)
+  if(!isMokedTeam(team)){
+    const missing = periodDates(ui.periodStart, team).filter(d=>{ const e = ui.entries[d]; return !e || !(e.dayStatus || e.customOn || (e.types||[]).length); });
+    const noteTxt = (document.getElementById("submitNote")||{}).value || "";
+    if(missing.length){ ui.saveOk = false; ui.saveMsg = `צריך לסמן כל יום. חסר: ${missing.map(fmtDateHeb).join(", ")} — סמנו משמרות, או "לא יכול" / "אחר".`; ui.note = noteTxt; return render(); }
+    if(!noteTxt.trim()){ ui.saveOk = false; ui.saveMsg = "צריך לכתוב הערה לפני השמירה."; return render(); }
+  }
   try{
     const sub = await apiUpsertSubmission({
       team_id: team.id, worker_id: S.identity.workerId, worker_name: S.identity.name,
