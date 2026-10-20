@@ -669,9 +669,8 @@ function dmgFormHtml(App, reporterName){
     ${inp("branch","סניף","")}
     ${acc ? inp("vehicle_no","מספר כלי","") : ""}
     ${acc ? inp("moto_damage","נזק לאופנוע","") : ""}
-    <div class="field"><label>נזק לציוד <span class="muted" style="font-weight:400;font-size:.85em;">(אפשר לבחור כמה — בטלפון: לגעת בכל פריט; במחשב: Ctrl + לחיצה)</span></label>
-      <select id="dmg_items" multiple size="7" class="dmg-multi">${["ללא נזק"].concat(items.map(it=>it.name)).concat(["אחר (פירוט בהערה)"]).map(n=>`<option value="${esc(n)}" ${(f.items||[]).includes(n)?"selected":""}>${esc(n)}</option>`).join("")}</select>
-      ${(f.items||[]).length?`<div class="muted" style="font-size:.85em;margin-top:4px;">נבחר: ${esc((f.items||[]).join(", "))}</div>`:""}</div>
+    <div class="field"><label>נזק לציוד <span class="muted" style="font-weight:400;font-size:.85em;">(אפשר לסמן כמה פריטים)</span></label>
+      <div class="dmg-checklist">${["ללא נזק"].concat(items.map(it=>it.name)).concat(["אחר (פירוט בהערה)"]).map(n=>`<label class="${n==="ללא נזק"?"dmg-none":""}"><input type="checkbox" class="dmg-item" data-action="portal-dmg-item" value="${esc(n)}" ${(f.items||[]).includes(n)?"checked":""}> ${esc(n)}</label>`).join("")}</div></div>
     ${inp("location","מיקום האירוע","")}
     ${inp("description","תאור האירוע","",true)}
     ${acc ? `${inp("visibility","ראות במקום","")}
@@ -709,8 +708,7 @@ function dmgFormHtml(App, reporterName){
 function dmgCollect(){
   if(!document.getElementById("dmg_description")) return null; // מסך בחירת הסוג - אין שדות לאסוף
   const v = id=>{ const x = document.getElementById("dmg_"+id); return x ? x.value : ""; };
-  const selEl = document.getElementById("dmg_items");
-  const items = selEl ? [...selEl.selectedOptions].map(o=>o.value) : [];
+  const items = [...document.querySelectorAll(".dmg-item:checked")].map(x=>x.value);
   const ev = v("event_at");
   DMG.form = {kind:(DMG.form||{}).kind, event_at:ev, branch:v("branch"), vehicle_no:v("vehicle_no"), items, moto_damage:v("moto_damage"),
     location:v("location"), description:v("description"), visibility:v("visibility"), body_damage:v("body_damage"), mech_damage:v("mech_damage"),
@@ -3293,6 +3291,12 @@ async function onChangeTraining(App, e){
   if(a==="portal-swapm-sel"){ if(PV.swap) PV.swap.sel = t.dataset.k; PV.error = null; return; }
   if(a==="portal-swapm-hsel"){ if(PV.swap) PV.swap.hsel = t.dataset.w; PV.error = null; return; }
   if(a==="portal-quiz-answer"){ if(T.quiz){ T.quiz.answers[+t.dataset.q] = +t.dataset.o; T.quiz.error = null; } return; }
+  if(a==="portal-dmg-item"){
+    const all = [...document.querySelectorAll(".dmg-item")];
+    if(t.checked && t.value==="ללא נזק") all.forEach(x=>{ if(x!==t) x.checked = false; });
+    else if(t.checked) all.forEach(x=>{ if(x.value==="ללא נזק") x.checked = false; });
+    return;
+  }
   if(a==="portal-dmg-tp"){
     dmgCollect();
     if(t.value==="כן"){ if(!DMG.parties.some(isTP)) DMG.parties.push(dmgNewParty("צד ג׳ — נהג")); }
@@ -3803,6 +3807,9 @@ function onClick(App, a, el){
   .inc-sec-h{font-weight:700;margin:4px 0 6px;color:#374151;}
   .dmg-tp{border:2px solid #f59e0b;background:#fffbeb;border-radius:10px;padding:10px;margin:-4px 0 12px;}
   .dmg-kind{font-size:.75em;border-radius:999px;padding:1px 7px;font-weight:700;} .dmg-kind.eq{background:#fff3cd;color:#7a5200;} .dmg-kind.acc{background:#fde7e5;color:#b42318;}
+  .dmg-checklist{max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px 8px;background:#fff;}
+  .dmg-checklist label{display:flex;align-items:center;gap:8px;padding:7px 2px;border-bottom:1px solid #f1f3f5;cursor:pointer;font-weight:400;}
+  .dmg-checklist label:last-child{border-bottom:none;} .dmg-checklist input{width:20px;height:20px;flex:none;} .dmg-checklist .dmg-none{font-weight:700;}
   .dmg-multi{width:100%;min-height:150px;padding:4px;border:1px solid var(--border);border-radius:8px;} .dmg-multi option{padding:5px 6px;}
   .dmg-draftbar{background:#fff7e0;border:1px solid #f0d58a;border-radius:8px;padding:8px 10px;margin:6px 0;font-weight:600;}
   .dmg-sub{border:1px solid var(--border);border-radius:10px;padding:10px;margin:8px 0;background:#fafbfc;} .dmg-pick{display:inline-flex;gap:6px;margin-inline-start:6px;}
