@@ -23,7 +23,14 @@ jobs:
           ESBUILD_PATH=/tmp/eb/node_modules/esbuild python3 tools/build_demo.py
       - name: Deploy to Netlify
         if: env.NETLIFY_AUTH_TOKEN != ''
-        run: npx -y netlify-cli@17.38.1 deploy --prod --dir dist-demo --site "$NETLIFY_SITE_ID" --message "demo ${GITHUB_SHA::7}"
+        shell: bash
+        run: |
+          set +e
+          npx -y netlify-cli@17.38.1 deploy --prod --dir dist-demo --site "$NETLIFY_SITE_ID" --message "demo ${GITHUB_SHA::7}" > /tmp/nl.txt 2>&1
+          code=$?
+          cat /tmp/nl.txt
+          if [ $code -ne 0 ]; then echo "::error::netlify deploy failed: $(tail -c 1500 /tmp/nl.txt | tr '\n\r' '  ')"; fi
+          exit $code
       - name: Missing token
         if: env.NETLIFY_AUTH_TOKEN == ''
         run: echo "::warning::NETLIFY_AUTH_TOKEN secret is not set - demo was built but not deployed"
