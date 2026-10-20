@@ -562,13 +562,13 @@ async function dmgOcr(App, pi, dataUrl){
   party.ocr = Math.max(0, party.ocr-1); App.render();
 }
 const DMG_FIELDS = [
-  ["event_at","תאריך אירוע"], ["worker_name","שם המאבטח"], ["branch","סניף"], ["vehicle_no","מספר כלי"], ["items","ציוד שניזוק"],
-  ["location","מיקום האירוע"], ["description","תאור האירוע בקצרה"], ["visibility","ראות במקום"], ["body_damage","נזק בגוף"],
+  ["event_at","תאריך אירוע"], ["worker_name","שם המדווח"], ["branch","סניף"], ["vehicle_no","מספר כלי"], ["moto_damage","נזק לאופנוע"], ["items","נזק לציוד"],
+  ["location","מיקום האירוע"], ["description","תאור האירוע"], ["visibility","ראות במקום"], ["body_damage","נזק בגוף"],
   ["mech_damage","נזק מכני"], ["third_party","האם מעורב צד ג׳"], ["reported_to","למי דווח"], ["responsible_arrived","גורם אחראי שהגיע למקום"], ["note","הערה"]
 ];
 function dmgFmtDate(iso){ if(!iso) return ""; const d = new Date(iso); const p = n=>String(n).padStart(2,"0"); return `${p(d.getDate())}/${p(d.getMonth()+1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`; }
 function dmgVal(r, k){ if(k==="event_at") return dmgFmtDate(r.event_at); if(k==="items") return (r.items||[]).join(", "); return r[k]||""; }
-const DMG_EQ_FIELDS = [["event_at","תאריך אירוע"], ["worker_name","שם המדווח"], ["branch","סניף"], ["items","ציוד שניזוק"], ["location","מיקום האירוע"], ["description","תאור האירוע בקצרה"], ["note","הערה"]];
+const DMG_EQ_FIELDS = [["event_at","תאריך אירוע"], ["worker_name","שם המדווח"], ["branch","סניף"], ["items","נזק לציוד"], ["location","מיקום האירוע"], ["description","תאור האירוע"], ["note","הערה"]];
 function dmgFieldsFor(r){ return r.kind==="equipment" ? DMG_EQ_FIELDS : DMG_FIELDS; }
 function dmgTitle(r){ return r.kind==="equipment" ? "דיווח נזק לציוד (לא תאונה)" : "דיווח נזק/תאונה ראשוני — תאונה"; }
 function dmgText(r){
@@ -657,15 +657,17 @@ function dmgFormHtml(App, reporterName){
     <h3 style="margin-top:6px;">${acc ? "⚠️ דיווח נזק/תאונה ראשוני — תאונה" : "🔧 דיווח נזק לציוד (לא תאונה)"} <span class="backlink" data-action="portal-dmg-kind" data-k="" style="font-size:.7em;font-weight:400;">שינוי סוג</span></h3>
     ${DMG.restored ? `<div class="dmg-draftbar">📝 המשך טיוטה שנשמרה ב-${esc(dmgFmtDate(DMG.restored.savedAt))}${DMG.restored.noImgs?" (בלי התמונות — לא היה מקום במכשיר)":""}
       <span class="backlink" data-action="portal-dmg-discard" style="margin-inline-start:8px;">🗑 מחיקת הטיוטה</span></div>` : ""}
-    <p class="muted" style="margin:2px 0 8px;font-size:.85em;">הטופס נשמר אוטומטית כטיוטה במכשיר בזמן המילוי. <span id="dmgAutoMsg"></span></p>
+    <p class="muted" style="margin:2px 0 8px;font-size:.85em;">כל השדות חובה. הטופס נשמר אוטומטית כטיוטה במכשיר בזמן המילוי. <span id="dmgAutoMsg"></span></p>
     <div class="field"><label>תאריך ושעת האירוע</label><input type="datetime-local" id="dmg_event_at" value="${esc(f.event_at||nowLocal)}"></div>
     <p class="muted" style="margin:0 0 8px;">${DMG.mgrMode?"המדווח":"שם המאבטח"}: <b>${esc(reporterName)}</b> </p>
     ${inp("branch","סניף","")}
     ${acc ? inp("vehicle_no","מספר כלי","") : ""}
-    <div class="field"><label>ציוד שניזוק</label><div class="dmg-items">${items.map(it=>`<label><input type="checkbox" class="dmg-item" value="${esc(it.name)}" ${(f.items||[]).includes(it.name)?"checked":""}> ${esc(it.name)}</label>`).join("")}</div>
-      <input type="text" id="dmg_items_other" placeholder="ציוד אחר (לא ברשימה)" value="${esc(f.items_other||"")}" style="margin-top:6px;"></div>
+    ${acc ? inp("moto_damage","נזק לאופנוע","") : ""}
+    <div class="field"><label>נזק לציוד <span class="muted" style="font-weight:400;font-size:.85em;">(אפשר לבחור כמה — בטלפון: לגעת בכל פריט; במחשב: Ctrl + לחיצה)</span></label>
+      <select id="dmg_items" multiple size="7" class="dmg-multi">${["ללא נזק"].concat(items.map(it=>it.name)).concat(["אחר (פירוט בהערה)"]).map(n=>`<option value="${esc(n)}" ${(f.items||[]).includes(n)?"selected":""}>${esc(n)}</option>`).join("")}</select>
+      ${(f.items||[]).length?`<div class="muted" style="font-size:.85em;margin-top:4px;">נבחר: ${esc((f.items||[]).join(", "))}</div>`:""}</div>
     ${inp("location","מיקום האירוע","")}
-    ${inp("description","תאור האירוע בקצרה (חובה)","",true)}
+    ${inp("description","תאור האירוע","",true)}
     ${acc ? `${inp("visibility","ראות במקום","")}
     ${inp("body_damage","נזק בגוף","")}
     ${inp("mech_damage","נזק מכני","")}
@@ -700,10 +702,10 @@ function dmgFormHtml(App, reporterName){
 function dmgCollect(){
   if(!document.getElementById("dmg_description")) return null; // מסך בחירת הסוג - אין שדות לאסוף
   const v = id=>{ const x = document.getElementById("dmg_"+id); return x ? x.value : ""; };
-  const items = [...document.querySelectorAll(".dmg-item:checked")].map(x=>x.value);
-  const other = v("items_other").trim(); if(other) items.push(other);
+  const selEl = document.getElementById("dmg_items");
+  const items = selEl ? [...selEl.selectedOptions].map(o=>o.value) : [];
   const ev = v("event_at");
-  DMG.form = {kind:(DMG.form||{}).kind, event_at:ev, branch:v("branch"), vehicle_no:v("vehicle_no"), items:[...document.querySelectorAll(".dmg-item:checked")].map(x=>x.value), items_other:other,
+  DMG.form = {kind:(DMG.form||{}).kind, event_at:ev, branch:v("branch"), vehicle_no:v("vehicle_no"), items, moto_damage:v("moto_damage"),
     location:v("location"), description:v("description"), visibility:v("visibility"), body_damage:v("body_damage"), mech_damage:v("mech_damage"),
     tp_yn:v("tp_yn"), reported_to:v("reported_to"), responsible_arrived:v("responsible_arrived"), note:v("note")};
   DMG.parties.forEach((p,i)=>{ const r = document.getElementById(`dmg_p${i}_role`); if(r) p.role = r.value;
@@ -714,7 +716,7 @@ function dmgCollect(){
   return {kind: isEq ? "equipment" : "accident",
     parties: isEq ? [] : DMG.parties.map(p=>({role:p.role, name:p.name.trim(), phone:p.phone.trim(), plate:p.plate.trim(), insurer:p.insurer.trim()})),
     vehicles: isEq ? [] : DMG.vehicles.map(v=>({label:(v.label||"").trim()})),
-    event_at: ev ? new Date(ev).toISOString() : "", branch:f.branch, vehicle_no:f.vehicle_no, items, location:f.location, description:f.description,
+    event_at: ev ? new Date(ev).toISOString() : "", branch:f.branch, vehicle_no:f.vehicle_no, moto_damage:f.moto_damage, items, location:f.location, description:f.description,
     visibility:f.visibility, body_damage:f.body_damage, mech_damage:f.mech_damage,
     third_party: f.tp_yn==="כן" ? ("כן" + (DMG.parties.filter(isTP).map(pt=>[pt.name, pt.plate].filter(x=>String(x||"").trim()).join(" ")).filter(Boolean).length ? " — " + DMG.parties.filter(isTP).map(pt=>[pt.name, pt.plate].filter(x=>String(x||"").trim()).join(" ")).filter(Boolean).join("; ") : "")) : "לא",
     reported_to:f.reported_to, responsible_arrived:f.responsible_arrived, note:f.note};
@@ -760,6 +762,20 @@ async function dmgAction(App, a, el){
     const tok = asMgr ? ms.token : session.token;
     const p = dmgCollect();
     if(!p){ DMG.error = "בחרו סוג דיווח"; return App.render(); }
+    { // כל הרובריקות חובה (סרגיי, 2026-10-20)
+      const f = DMG.form, acc = p.kind!=="equipment", miss = [];
+      const req = (val, label)=>{ if(!String(val==null?"":val).trim()) miss.push(label); };
+      req(f.event_at, "תאריך ושעה"); req(f.branch, "סניף");
+      if(acc){ req(f.vehicle_no, "מספר כלי"); req(f.moto_damage, "נזק לאופנוע"); }
+      if(!p.items.length) miss.push("נזק לציוד"); else if(p.items.includes("ללא נזק") && p.items.length>1){ DMG.error = "\"ללא נזק\" לא יכול להיבחר יחד עם פריטים אחרים"; return App.render(); }
+      req(f.location, "מיקום האירוע"); req(f.description, "תאור האירוע");
+      if(acc){ req(f.visibility, "ראות במקום"); req(f.body_damage, "נזק בגוף"); req(f.mech_damage, "נזק מכני");
+        req(f.reported_to, "למי דווח"); req(f.responsible_arrived, "גורם אחראי שהגיע למקום");
+        DMG.parties.forEach((pt,i)=>{ const who = isTP(pt) ? "צד ג׳" : "מעורב"; DMG_PFIELDS.forEach(([k,l])=>req(pt[k], `${l} (${who}${pt.name?" "+pt.name:""})`)); });
+        DMG.vehicles.forEach((v,i)=>req(v.label, `כלי רכב ${i+1} — של מי / מספר רישוי`)); }
+      req(f.note, "הערה");
+      if(miss.length){ DMG.error = "חסר למילוי: " + miss.join(", "); return App.render(); }
+    }
     if(!p.description.trim()){ DMG.error = "צריך לכתוב תיאור קצר של האירוע"; return App.render(); }
     if(!p.event_at){ DMG.error = "צריך תאריך ושעה של האירוע"; return App.render(); }
     DMG.busy = true; DMG.error = null; DMG.msg = "שולח..."; App.render();
@@ -3779,6 +3795,7 @@ function onClick(App, a, el){
   .inc-sec-h{font-weight:700;margin:4px 0 6px;color:#374151;}
   .dmg-tp{border:2px solid #f59e0b;background:#fffbeb;border-radius:10px;padding:10px;margin:-4px 0 12px;}
   .dmg-kind{font-size:.75em;border-radius:999px;padding:1px 7px;font-weight:700;} .dmg-kind.eq{background:#fff3cd;color:#7a5200;} .dmg-kind.acc{background:#fde7e5;color:#b42318;}
+  .dmg-multi{width:100%;min-height:150px;padding:4px;border:1px solid var(--border);border-radius:8px;} .dmg-multi option{padding:5px 6px;}
   .dmg-draftbar{background:#fff7e0;border:1px solid #f0d58a;border-radius:8px;padding:8px 10px;margin:6px 0;font-weight:600;}
   .dmg-sub{border:1px solid var(--border);border-radius:10px;padding:10px;margin:8px 0;background:#fafbfc;} .dmg-pick{display:inline-flex;gap:6px;margin-inline-start:6px;}
   .dmg-pfields{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:0 10px;margin-top:8px;} .dmg-auto{font-size:.78em;color:#1d4ed8;font-weight:600;}
