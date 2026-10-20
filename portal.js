@@ -430,6 +430,7 @@ function renderWorkerHome(App, session){
       ${tile("portal-go-training", "הדרכה", "לומדות, בקרות ותכנים")}
       ${isMokedWorker(App, session) ? "" : tile("portal-go-logistics", "לוגיסטי", "הציוד שלי ובקשת ציוד")}
       ${isMokedWorker(App, session) ? "" : tile("portal-go-damage", "⚠️ דיווח נזק / תאונה", "דיווח ראשוני, מעורבים ותמונות")}
+      ${tile("portal-go-areq", "📝 בקשה מנהלתית", "חופשה / מילואים / מחלה")}
     </div>
   </div>
   ${session.schedule_editor ? (()=>{ const t = App.teamById(session.team_id); const lbl = t ? ((t.sectors&&t.sectors.length) ? t.sectors.join(" / ") : t.name) : "";
@@ -946,6 +947,234 @@ function renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs){
       <div class="row" style="margin-top:10px;"><button class="btn" data-action="portal-dmg-pdf" data-who="m">📄 הפקת דו"ח PDF</button><button class="btn secondary" data-action="portal-dmg-copy">📋 העתקת הדו"ח</button><button class="btn secondary" data-action="portal-dmg-print">🖨️ הדפסה / PDF</button></div>${msgs}`);
   }
   return null;
+}
+/* ================================================================
+   בקשה מנהלתית (2026-10-20, סרגיי): מאבטחים ומוקדנים מגישים בקשה לחופשה / יציאה למילואים / מחלה,
+   עם טווח תאריכים ומסמכים לפי הייעוד (מילואים: צו מילואים וטופס 3010 בנפרד; מחלה: אישור מחלה; חופשה: מסמך
+   תומך אם יש). אפשר להוסיף מסמכים גם אחרי השליחה (למשל 3010 בסוף המילואים). הבקשה נשלחת לקב"ט של הגזרה
+   ולסרגיי (מוקד - לסרגיי), שמאשרים או דוחים, והעובד מקבל התראה. השרת: worker_admin_req_create / _add_file /
+   _list, mgr_admin_req_list / _seen / _resolve, admin_req_files_get.
+   ================================================================ */
+const AREQ = { open:false, form:null, files:{}, busy:false, msg:null, error:null, okMsg:null, mine:null, view:null, vfiles:null,
+  list:null, listAt:0, mview:null, mfiles:null };
+const AREQ_KINDS = { vacation:{label:"חופשה", icon:"🏖️", sub:"בקשה לימי חופשה"}, reserve:{label:"מילואים", icon:"🪖", sub:"יציאה למילואים — צו מילואים ו-3010"}, sick:{label:"מחלה", icon:"🤒", sub:"ימי מחלה — אישור מחלה"} };
+const AREQ_DOCS = { vacation:[["vacation_doc","מסמך תומך (אם יש)"]],
+  reserve:[["reserve_order","צו מילואים"],["form3010","טופס 3010 (אישור על שירות מילואים)"]],
+  sick:[["sick_note","אישור מחלה"]] };
+const AREQ_DOCNAME = { vacation_doc:"מסמך תומך", reserve_order:"צו מילואים", form3010:"טופס 3010", sick_note:"אישור מחלה", other:"מסמך" };
+const AREQ_STATUS = { pending:"⏳ ממתינה לאישור", approved:"✅ אושרה", rejected:"❌ נדחתה" };
+function areqDates(r){ const f = d=>{ const [y,m,dd] = String(d||"").split("-"); return `${dd}/${m}/${y}`; }; return r.date_from===r.date_to ? f(r.date_from) : `${f(r.date_from)} – ${f(r.date_to)}`; }
+function areqDays(r){ return Math.round((new Date(r.date_to) - new Date(r.date_from)) / 864e5) + 1; }
+function areqFilesSummary(r){ const f = r.files||{}; const ks = Object.keys(f); return ks.length ? ks.map(k=>`${AREQ_DOCNAME[k]||k}${f[k]>1?` ×${f[k]}`:""}`).join(", ") : "אין מסמכים"; }
+async function areqReadFile(file){
+  if(file.type==="application/pdf"){
+    if(file.size > 4.5*1024*1024) throw new Error("קובץ PDF גדול מדי (עד 4.5MB)");
+    return await new Promise((res, rej)=>{ const fr = new FileReader(); fr.onload = ()=>res(fr.result); fr.onerror = ()=>rej(new Error("לא הצלחתי לקרוא את הקובץ")); fr.readAsDataURL(file); });
+  }
+  return compressImage(file);
+}
+// data: לא נפתח בלשונית חדשה בכרום - ממירים ל-blob: לצפייה/הורדה
+const AREQ_BLOBS = new Map();
+function areqBlobUrl(src){
+  if(AREQ_BLOBS.has(src)) return AREQ_BLOBS.get(src);
+  try{ const [h, b] = src.split(","); const mime = (h.match(/data:([^;]+)/)||[])[1] || "application/octet-stream";
+    const bin = atob(b); const u = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([u], {type:mime})); AREQ_BLOBS.set(src, url); return url; }catch(e){ return src; }
+}
+function areqThumb(src, rm){
+  const isPdf = String(src).startsWith("data:application/pdf");
+  return `<span class="areq-file">${isPdf ? `<a href="${areqBlobUrl(src)}" target="_blank" class="areq-pdf">📄 PDF</a>` : `<a href="${areqBlobUrl(src)}" target="_blank"><img src="${src}" alt=""></a>`}${rm||""}</span>`;
+}
+function areqPick(action, kind){
+  return `<span class="dmg-pick">
+    <label class="btn secondary small" style="cursor:pointer;">📷 צילום<input type="file" accept="image/*" capture="environment" data-action="${action}" data-kind="${kind}" style="display:none;"></label>
+    <label class="btn secondary small" style="cursor:pointer;">🖼️ תמונה / PDF<input type="file" accept="image/*,application/pdf" multiple data-action="${action}" data-kind="${kind}" style="display:none;"></label></span>`;
+}
+function areqDocsHtml(App, files){
+  const by = {}; (files||[]).forEach(f=>{ (by[f.kind] = by[f.kind]||[]).push(f); });
+  const ks = Object.keys(by);
+  if(!ks.length) return `<p class="muted">לא צורפו מסמכים.</p>`;
+  return ks.map(k=>`<div style="margin-top:8px;"><b>${AREQ_DOCNAME[k]||k}</b><div class="dmg-imgs">${by[k].map(f=>areqThumb(f.data)).join("")}</div></div>`).join("");
+}
+function areqDetailsTable(App, r){
+  const esc = App.escapeHtml, k = AREQ_KINDS[r.kind]||{label:r.kind, icon:"📝"};
+  const rows = [["עובד", r.worker_name], ["סוג הבקשה", `${k.icon} ${k.label}`], ["תאריכים", `${areqDates(r)} (${areqDays(r)} ימים)`], ["הערה", r.note||""],
+    ["סטטוס", AREQ_STATUS[r.status]||r.status], ["טופל ע\"י", r.handled_by_name ? `${r.handled_by_name}${r.handled_at?" · "+dmgFmtDate(r.handled_at):""}` : ""], ["תשובת המנהל", r.mgr_note||""], ["הוגשה", dmgFmtDate(r.created_at)]];
+  return `<table class="dmg-table">${rows.filter(x=>x[1]).map(([l,v])=>`<tr><th>${l}</th><td style="white-space:pre-wrap;">${esc(v)}</td></tr>`).join("")}</table>`;
+}
+function areqLoadMine(App, session){
+  if(AREQ.mine!==null || AREQ.loadingMine) return;
+  AREQ.loadingMine = true;
+  App.apiRpc("worker_admin_req_list", {p_token:session.token}).then(d=>{ AREQ.mine = d||[]; AREQ.loadingMine = false; App.render(); })
+    .catch(e=>{ AREQ.loadingMine = false; AREQ.mine = []; AREQ.error = e.message; App.render(); });
+}
+function renderAdminReqWorker(App, session){
+  const esc = App.escapeHtml;
+  areqLoadMine(App, session);
+  const moked = isMokedWorker(App, session);
+  if(AREQ.view){
+    const r = AREQ.view;
+    if(AREQ.vfiles===null && !AREQ.vloading){ AREQ.vloading = true; App.apiRpc("admin_req_files_get", {p_token:session.token, p_req:r.id}).then(x=>{ AREQ.vfiles = x||[]; AREQ.vloading = false; App.render(); }).catch(()=>{ AREQ.vfiles = []; AREQ.vloading = false; App.render(); }); }
+    return `<span class="backlink" data-action="portal-areq-close">◀ חזרה לבקשות שלי</span>
+      <h3 style="margin:8px 0;">${(AREQ_KINDS[r.kind]||{}).icon||"📝"} בקשה ל${esc((AREQ_KINDS[r.kind]||{}).label||"")}</h3>
+      ${areqDetailsTable(App, r)}
+      <h4 style="margin:14px 0 4px;">📎 מסמכים</h4>
+      ${AREQ.vfiles===null ? `<p class="muted">טוען...</p>` : areqDocsHtml(App, AREQ.vfiles)}
+      ${r.status!=="rejected" ? `<div class="dmg-sub" style="margin-top:10px;"><b>➕ הוספת מסמך</b>${r.kind==="reserve"?`<p class="muted" style="margin:4px 0;">את טופס 3010 מוסיפים כאן בסוף המילואים.</p>`:""}
+        ${(AREQ_DOCS[r.kind]||[]).map(([dk,dl])=>`<div style="margin-top:6px;"><span style="font-weight:600;">${dl}</span> ${areqPick("portal-areq-addfile", dk)}</div>`).join("")}</div>` : ""}
+      ${AREQ.busy ? `<p class="muted">${esc(AREQ.msg||"מעלה...")}</p>` : ""}${AREQ.error?`<p class="shortage">${esc(AREQ.error)}</p>`:""}${AREQ.okMsg?`<p style="color:#1b7f3b;font-weight:700;">${esc(AREQ.okMsg)}</p>`:""}`;
+  }
+  if(!AREQ.open){
+    const mine = AREQ.mine;
+    return `${AREQ.okMsg?`<p style="color:#1b7f3b;font-weight:700;">${esc(AREQ.okMsg)}</p>`:""}
+      <p style="margin-top:0;">בקשה לחופשה, יציאה למילואים או ימי מחלה — עם תאריכים ומסמכים. הבקשה נשלחת ${moked?"לסרגיי":"לקב\"ט ולסרגיי"}, ותקבלו התראה כשהיא מאושרת.</p>
+      <button class="btn" data-action="portal-areq-new">➕ בקשה חדשה</button>
+      <h3 style="margin:16px 0 6px;">הבקשות שלי</h3>
+      ${mine===null ? `<p class="muted">טוען...</p>` : (mine.length ? mine.map(r=>`<div class="portal-task" data-action="portal-areq-open" data-id="${r.id}">
+        <span class="portal-task-icon">${(AREQ_KINDS[r.kind]||{}).icon||"📝"}</span>
+        <span><b>${esc((AREQ_KINDS[r.kind]||{}).label||"")}</b> · ${esc(areqDates(r))} · ${esc(AREQ_STATUS[r.status]||"")}
+        <span class="muted" style="display:block;font-size:.85em;">📎 ${esc(areqFilesSummary(r))}${r.mgr_note?` · ${esc(r.mgr_note)}`:""}</span></span></div>`).join("") : `<p class="muted">עדיין לא הגשת בקשות.</p>`)}
+      ${AREQ.error?`<p class="shortage">${esc(AREQ.error)}</p>`:""}`;
+  }
+  const f = AREQ.form || {};
+  if(!f.kind) return `<span class="backlink" data-action="portal-areq-cancel">◀ ביטול</span>
+    <h3 style="margin-top:6px;">מה הבקשה?</h3>
+    <div class="grid-teams">${Object.keys(AREQ_KINDS).map(k=>`<div class="team-tile" data-action="portal-areq-kind" data-k="${k}"><div style="font-size:1.15em;font-weight:700;">${AREQ_KINDS[k].icon} ${AREQ_KINDS[k].label}</div><div class="muted" style="font-size:.85em;margin-top:4px;">${AREQ_KINDS[k].sub}</div></div>`).join("")}</div>`;
+  const today = App.fmtDate(new Date());
+  return `<span class="backlink" data-action="portal-areq-cancel">◀ ביטול</span>
+    <h3 style="margin-top:6px;">${AREQ_KINDS[f.kind].icon} בקשה ל${AREQ_KINDS[f.kind].label} <span class="backlink" data-action="portal-areq-kind" data-k="" style="font-size:.7em;font-weight:400;">שינוי סוג</span></h3>
+    <div class="dmg-pfields">
+      <div class="field"><label>מתאריך</label><input type="date" id="areq_from" value="${esc(f.date_from||today)}"></div>
+      <div class="field"><label>עד תאריך (כולל)</label><input type="date" id="areq_to" value="${esc(f.date_to||f.date_from||today)}"></div>
+    </div>
+    <div class="field"><label>הערה (לא חובה)</label><textarea id="areq_note" rows="2">${esc(f.note||"")}</textarea></div>
+    <h3 style="margin:14px 0 6px;">📎 מסמכים</h3>
+    ${(AREQ_DOCS[f.kind]||[]).map(([dk,dl])=>`<div class="dmg-sub"><b>${dl}</b> ${areqPick("portal-areq-files", dk)}
+      ${(AREQ.files[dk]||[]).length ? `<div class="dmg-imgs">${(AREQ.files[dk]||[]).map((src,j)=>areqThumb(src, `<span data-action="portal-areq-rmfile" data-kind="${dk}" data-j="${j}" class="areq-rm">✕</span>`)).join("")}</div>` : ""}</div>`).join("")}
+    ${f.kind==="reserve" ? `<p class="muted" style="font-size:.88em;">אין עדיין 3010? אפשר לשלוח עכשיו ולהוסיף אותו אחר כך מתוך הבקשה.</p>` : ""}
+    ${f.kind==="sick" ? `<p class="muted" style="font-size:.88em;">אין עדיין אישור מחלה? אפשר לשלוח עכשיו ולהוסיף אותו אחר כך מתוך הבקשה.</p>` : ""}
+    <div style="margin-top:14px;"><button class="btn ok" data-action="portal-areq-send" ${AREQ.busy?"disabled":""} style="font-size:1.05em;padding:10px 20px;">${AREQ.busy?esc(AREQ.msg||"שולח..."):"✔ שליחת הבקשה"}</button></div>
+    ${AREQ.error?`<p class="shortage">${esc(AREQ.error)}</p>`:""}`;
+}
+function areqCollect(){
+  const v = id=>{ const x = document.getElementById(id); return x ? x.value : undefined; };
+  if(!AREQ.form) return;
+  const fr = v("areq_from"), to = v("areq_to"), nt = v("areq_note");
+  if(fr!==undefined) AREQ.form.date_from = fr; if(to!==undefined) AREQ.form.date_to = to; if(nt!==undefined) AREQ.form.note = nt;
+}
+async function areqAction(App, a, el){
+  const session = loadSession(App);
+  if(a==="portal-areq-new"){ AREQ.open = true; AREQ.form = {}; AREQ.files = {}; AREQ.error = null; AREQ.okMsg = null; AREQ.view = null; return App.render(); }
+  if(a==="portal-areq-cancel"){ AREQ.open = false; AREQ.form = null; AREQ.files = {}; AREQ.error = null; return App.render(); }
+  if(a==="portal-areq-kind"){ areqCollect(); AREQ.form = Object.assign({}, AREQ.form, {kind: el.dataset.k || null}); AREQ.files = {}; AREQ.error = null; return App.render(); }
+  if(a==="portal-areq-rmfile"){ areqCollect(); (AREQ.files[el.dataset.kind]||[]).splice(Number(el.dataset.j),1); return App.render(); }
+  if(a==="portal-areq-open"){ AREQ.view = (AREQ.mine||[]).find(x=>x.id===el.dataset.id) || null; AREQ.vfiles = null; AREQ.error = null; AREQ.okMsg = null; return App.render(); }
+  if(a==="portal-areq-close"){ AREQ.view = null; AREQ.vfiles = null; AREQ.error = null; AREQ.okMsg = null; return App.render(); }
+  if(a==="portal-areq-send"){
+    if(!session || AREQ.busy) return;
+    areqCollect(); const f = AREQ.form || {};
+    if(!f.kind){ AREQ.error = "בחרו סוג בקשה"; return App.render(); }
+    if(!f.date_from || !f.date_to){ AREQ.error = "בחרו תאריכים"; return App.render(); }
+    if(f.date_to < f.date_from){ AREQ.error = "תאריך הסיום לפני תאריך ההתחלה"; return App.render(); }
+    AREQ.busy = true; AREQ.error = null; AREQ.msg = "שולח..."; App.render();
+    try{
+      const id = await App.apiRpc("worker_admin_req_create", {p_token:session.token, p:{kind:f.kind, date_from:f.date_from, date_to:f.date_to, note:f.note||""}});
+      const ups = []; Object.keys(AREQ.files).forEach(k=>(AREQ.files[k]||[]).forEach(src=>ups.push({k, src})));
+      let failed = 0;
+      for(let i=0;i<ups.length;i++){
+        AREQ.msg = `מעלה מסמך ${i+1}/${ups.length}...`; App.render();
+        try{ await App.apiRpc("worker_admin_req_add_file", {p_token:session.token, p_req:id, p_kind:ups[i].k, p_file:ups[i].src}); }catch(e){ failed++; }
+      }
+      AREQ.busy = false; AREQ.open = false; AREQ.form = null; AREQ.files = {}; AREQ.mine = null; AREQ.msg = null;
+      AREQ.okMsg = "✔ הבקשה נשלחה." + (failed ? ` ${failed} מסמכים לא עלו — אפשר להוסיף אותם מתוך הבקשה.` : "");
+      return App.render();
+    }catch(e){ AREQ.busy = false; AREQ.msg = null; AREQ.error = e.message; return App.render(); }
+  }
+}
+async function areqOnChange(App, t){
+  const a = t.dataset.action;
+  const files = [...(t.files||[])]; const kind = t.dataset.kind; t.value = "";
+  if(a==="portal-areq-files"){
+    areqCollect();
+    for(const fl of files){
+      const n = Object.values(AREQ.files).reduce((m,l)=>m+l.length,0);
+      if(n >= 20){ AREQ.error = "אפשר עד 20 קבצים לבקשה"; break; }
+      try{ const d = await areqReadFile(fl); (AREQ.files[kind] = AREQ.files[kind]||[]).push(d); AREQ.error = null; }catch(err){ AREQ.error = err.message; }
+    }
+    return App.render();
+  }
+  if(a==="portal-areq-addfile"){
+    const session = loadSession(App); const r = AREQ.view; if(!session || !r) return;
+    AREQ.busy = true; AREQ.error = null; AREQ.okMsg = null;
+    let ok = 0;
+    for(let i=0;i<files.length;i++){
+      AREQ.msg = `מעלה ${i+1}/${files.length}...`; App.render();
+      try{ const d = await areqReadFile(files[i]); await App.apiRpc("worker_admin_req_add_file", {p_token:session.token, p_req:r.id, p_kind:kind, p_file:d}); ok++; }
+      catch(err){ AREQ.error = err.message; }
+    }
+    AREQ.busy = false; AREQ.msg = null; AREQ.vfiles = null; AREQ.mine = null;
+    if(ok) AREQ.okMsg = `✔ ${AREQ_DOCNAME[kind]||"המסמך"} נוסף לבקשה.`;
+    return App.render();
+  }
+}
+/* ממשק המנהל: קב"ט (הגזרות שלו) וסרגיי (הכל) */
+function areqMgrLoad(App, ms, force){
+  if(AREQ.mgrTok !== ms.token){ AREQ.mgrTok = ms.token; AREQ.list = null; AREQ.listAt = 0; }
+  if(AREQ.listLoading || (!force && AREQ.list && Date.now()-AREQ.listAt < 60000)) return;
+  AREQ.listLoading = true;
+  App.apiRpc("mgr_admin_req_list", {p_token:ms.token}).then(d=>{ AREQ.list = d||[]; AREQ.listAt = Date.now(); AREQ.listLoading = false; App.render(); })
+    .catch(()=>{ AREQ.listLoading = false; AREQ.listAt = Date.now(); });
+}
+function areqMgrTile(App, ms){
+  areqMgrLoad(App, ms);
+  const L2 = AREQ.list||[]; const pend = L2.filter(r=>r.status==="pending").length, unseen = L2.filter(r=>!r.seen).length;
+  return `<div class="team-tile" data-action="portal-pv" data-page="areq-list"${pend?' style="border-color:#b42318;"':""}><div style="font-size:1.1em;font-weight:700;${pend?"color:#b42318;":""}">📝 ${pend?`${pend} בקשות ממתינות`:"בקשות מנהלתיות"}</div><div class="muted" style="font-size:.85em;margin-top:4px;">חופשה / מילואים / מחלה${unseen?` · ${unseen} חדשות`:""}</div></div>`;
+}
+function renderAdminReqMgrPages(App, ms, pg, a, wrap, loading, msgs){
+  const esc = App.escapeHtml;
+  if(pg==="areq-list"){
+    areqMgrLoad(App, ms);
+    if(!AREQ.list) return loading();
+    const row = r=>`<div class="portal-task${r.seen?"":" portal-unread"}" data-action="portal-pv" data-page="areq-view" data-id="${r.id}">
+      <span class="portal-task-icon">${(AREQ_KINDS[r.kind]||{}).icon||"📝"}</span>
+      <span><b>${esc(r.worker_name)}</b> · ${esc((AREQ_KINDS[r.kind]||{}).label||"")} · ${esc(areqDates(r))} (${areqDays(r)} ימים) · ${esc(AREQ_STATUS[r.status]||"")}
+      <span class="muted" style="display:block;font-size:.85em;">📎 ${esc(areqFilesSummary(r))}${r.note?` · ${esc(r.note.slice(0,80))}`:""}</span></span></div>`;
+    const pend = AREQ.list.filter(r=>r.status==="pending"), done = AREQ.list.filter(r=>r.status!=="pending");
+    return wrap(`<h2 style="margin-top:4px;">📝 בקשות מנהלתיות</h2>${msgs}
+      <h3 style="margin:10px 0 4px;">ממתינות (${pend.length})</h3>${pend.length ? pend.map(row).join("") : `<p class="muted">אין בקשות ממתינות.</p>`}
+      ${done.length ? `<h3 style="margin:14px 0 4px;">טופלו</h3>${done.slice(0,60).map(row).join("")}` : ""}`);
+  }
+  if(pg==="areq-view"){
+    areqMgrLoad(App, ms);
+    if(!AREQ.list) return loading();
+    const r = AREQ.list.find(x=>x.id===a.id);
+    if(!r) return wrap(`<p class="muted">הבקשה לא נמצאה.</p>`);
+    if(!AREQ.mview || AREQ.mview.id!==r.id){ AREQ.mview = r; AREQ.mfiles = null; }
+    if(!r.seen){ r.seen = true; App.apiRpc("mgr_admin_req_seen", {p_token:ms.token, p_req:r.id}).catch(()=>{}); }
+    if(AREQ.mfiles===null && !AREQ.mloading){ AREQ.mloading = true; App.apiRpc("admin_req_files_get", {p_token:ms.token, p_req:r.id}).then(x=>{ AREQ.mfiles = x||[]; AREQ.mloading = false; App.render(); }).catch(()=>{ AREQ.mfiles = []; AREQ.mloading = false; App.render(); }); }
+    return wrap(`<h2 style="margin-top:4px;">${(AREQ_KINDS[r.kind]||{}).icon||"📝"} בקשה ל${esc((AREQ_KINDS[r.kind]||{}).label||"")} — ${esc(r.worker_name)}</h2>
+      ${areqDetailsTable(App, r)}
+      <h4 style="margin:14px 0 4px;">📎 מסמכים</h4>${AREQ.mfiles===null ? `<p class="muted">טוען...</p>` : areqDocsHtml(App, AREQ.mfiles)}
+      ${r.kind==="reserve" && !(r.files||{}).form3010 ? `<p class="muted" style="font-size:.88em;">טופס 3010 עדיין לא צורף — העובד יכול להוסיף אותו מתוך הבקשה, ותקבלו התראה.</p>` : ""}
+      <div class="field" style="margin-top:12px;"><label>תשובה לעובד (לא חובה)</label><textarea id="areq_mgr_note" rows="2">${esc(r.mgr_note||"")}</textarea></div>
+      <div class="row">
+        <button class="btn ok" data-action="portal-areq-resolve" data-id="${r.id}" data-s="approved" ${PV.busy?"disabled":""}>✅ אישור</button>
+        <button class="btn danger" data-action="portal-areq-resolve" data-id="${r.id}" data-s="rejected" ${PV.busy?"disabled":""}>❌ דחייה</button>
+        ${r.status!=="pending" ? `<button class="btn secondary" data-action="portal-areq-resolve" data-id="${r.id}" data-s="pending" ${PV.busy?"disabled":""}>↩ החזרה להמתנה</button>` : ""}
+      </div>${msgs}`);
+  }
+  return null;
+}
+async function areqResolve(App, el){
+  const ms = loadMgr(App); if(!ms || PV.busy) return;
+  const note = (document.getElementById("areq_mgr_note")||{}).value || "";
+  PV.busy = true; PV.error = null; PV.msg = null; App.render();
+  try{
+    await App.apiRpc("mgr_admin_req_resolve", {p_token:ms.token, p_req:el.dataset.id, p_status:el.dataset.s, p_note:note});
+    PV.busy = false; AREQ.list = null; AREQ.mview = null;
+    PV.msg = el.dataset.s==="approved" ? "הבקשה אושרה — העובד קיבל התראה." : el.dataset.s==="rejected" ? "הבקשה נדחתה — העובד קיבל התראה." : "הבקשה הוחזרה להמתנה.";
+  }catch(e){ PV.busy = false; PV.error = e.message; }
+  App.render();
 }
 function renderLogistics(App, session){ return renderLogisticsInner(App, session); }
 function renderLogisticsInner(App, session){
@@ -2539,7 +2768,7 @@ async function calClick(App, a, el){
 }
 
 /* ---------- עמודי משנה (view "pview") ---------- */
-const PV_TITLES = { "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
+const PV_TITLES = { "areq-list":"בקשות מנהלתיות", "areq-view":"בקשה מנהלתית", "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
   "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה", "cal":"יומן משותף" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
@@ -2704,6 +2933,7 @@ function renderPView(App){
   if(pg && pg.indexOf("inc-")===0) return renderIncident(App, ms, pg, a, wrap, loading, msgs);
   if(pg==="cal") return renderCalendar(App, ms, back);
   if(pg==="dmg-list" || pg==="dmg-view" || pg==="dmg-new"){ const h = renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
+  if(pg==="areq-list" || pg==="areq-view"){ const h = renderAdminReqMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
   if(pg==="k-msg-guards" || pg==="k-msg-mgmt" || pg==="mgmt-inbox"){ const h = renderMsgPages(App, ms, pg, wrap, loading, msgs); if(h) return h; }
   if(pg==="unit-dash") return `<div class="card">${back}<h2 style="margin-bottom:0;">📊 לוח מנהל יחידה</h2><p class="muted">כך רואה את המערכת מנהל היחידה.</p></div>` + renderUnitDashboard(App, ms);
 
@@ -3405,6 +3635,7 @@ async function onChangeTraining(App, e){
     else DMG.parties = DMG.parties.filter(pt=>!isTP(pt));
     return App.render();
   }
+  if(a==="portal-areq-files" || a==="portal-areq-addfile") return areqOnChange(App, t);
   if(a==="portal-dmg-files"){
     dmgCollect();
     const files = [...(t.files||[])]; const sec = t.dataset.sec, i = Number(t.dataset.i), kind = t.dataset.kind; t.value = "";
@@ -3446,7 +3677,7 @@ function renderSection(App, view){
   const session = loadSession(App);
   if(!session){ App.S.view = "home"; return renderHome(App); }
   if(!DEMO && N.state!=="on"){ App.S.view = "home"; return renderHome(App); } // בדמו אין חובת התראות - בלי זה לוגיסטי/הדרכה/עדכונים לא נפתחו בדמו
-  const title = view==="training" ? "הדרכה" : view==="damage" ? "⚠️ דיווח נזק / תאונה" : "לוגיסטי";
+  const title = view==="training" ? "הדרכה" : view==="damage" ? "⚠️ דיווח נזק / תאונה" : view==="adminreq" ? "📝 בקשה מנהלתית" : "לוגיסטי";
   if(view==="training" && T.quiz) return `<div class="card">${renderQuiz(App, session)}</div>`;
   if(view==="training" && T.controlOpen) return `<div class="card">${renderControlDoc(App, session)}</div>`;
   if((view==="training" || view==="updates") && T.postOpen) return `<div class="card">${renderPostDoc(App)}</div>`;
@@ -3456,7 +3687,7 @@ function renderSection(App, view){
     ${renderAllUpdates(App, session)}
   </div>`;
   if(view==="damage" && !DMG.items && !DMG.itemsLoading){ DMG.itemsLoading = true; App.apiGet("logistics_items", "select=id,name,has_size,sort_order&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; }); }
-  const body = view==="logistics" ? renderLogistics(App, session) : view==="damage" ? renderDamageWorker(App, session) : renderTraining(App, session);
+  const body = view==="logistics" ? renderLogistics(App, session) : view==="damage" ? renderDamageWorker(App, session) : view==="adminreq" ? renderAdminReqWorker(App, session) : renderTraining(App, session);
   return `<div class="card">
     <span class="backlink" data-action="go-home">◀ חזרה לאיזור האישי</span>
     <h2>${title}</h2>
@@ -3608,7 +3839,7 @@ function renderManagerHome(App, ms){
   <div class="card">
     <h3>לוגיסטי</h3>
     <p class="muted" style="margin-top:-6px;">${names(logi)}</p>
-    <div class="grid-teams">${tile("portal-mh-equip", "בקשות ציוד", "החלפה / ציוד נוסף")}</div>
+    <div class="grid-teams">${tile("portal-mh-equip", "בקשות ציוד", "החלפה / ציוד נוסף")}${areqMgrTile(App, ms)}</div>
   </div>
   <div class="card">
     <h3>הדרכה</h3>
@@ -3780,6 +4011,9 @@ function onClick(App, a, el){
   }
   if(a==="portal-go-updates"){ S.view = "updates"; S.ui = {}; F.data = null; T.postOpen = null; T.controlOpen = null; T.attError = null; return App.render(); }
   if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; T.data = null; F.data = null; T.controlOpen = null; T.postOpen = null; T.quiz = null; return App.render(); }
+  if(a==="portal-go-areq"){ S.view = "adminreq"; S.ui = {}; AREQ.open = false; AREQ.view = null; AREQ.mine = null; AREQ.okMsg = null; AREQ.error = null; return App.render(); }
+  if(a.indexOf("portal-areq-")===0 && a!=="portal-areq-resolve") return areqAction(App, a, el);
+  if(a==="portal-areq-resolve") return areqResolve(App, el);
   if(a==="portal-go-damage"){ S.view = "damage"; S.ui = {}; DMG.open = false; DMG.view = null; DMG.images = null; DMG.mgrMode = false; DMG.okMsg = null; return App.render(); }
   if(a==="portal-go-logistics"){ S.view = "logistics"; S.ui = {}; T.data = null; L.data = null; L.msg = null; L.error = null; return App.render(); }
   if(a==="portal-log-save") return saveLogistics(App);
@@ -3917,6 +4151,8 @@ function onClick(App, a, el){
   st.textContent = `
   .dmg-table{width:100%;border-collapse:collapse;} .dmg-table th,.dmg-table td{border:1px solid var(--border);padding:6px 8px;text-align:right;vertical-align:top;} .dmg-table th{background:#f4f7fb;width:34%;font-weight:600;}
   .dmg-imgs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;} .dmg-imgs img{width:96px;height:96px;object-fit:cover;border-radius:6px;border:1px solid var(--border);}
+  .areq-file{position:relative;display:inline-block;} .areq-pdf{display:inline-flex;align-items:center;justify-content:center;width:96px;height:96px;border:1px solid var(--border);border-radius:6px;background:#f7f9fc;font-weight:700;text-decoration:none;}
+  .areq-rm{position:absolute;top:2px;left:2px;background:#fff;border-radius:50%;padding:0 6px;cursor:pointer;}
   .sayvu-badge{display:inline-block;background:#5b21b6;color:#fff;font-weight:800;font-size:.75em;letter-spacing:.5px;border-radius:6px;padding:1px 7px;vertical-align:middle;}
   .inc-sec-h{font-weight:700;margin:4px 0 6px;color:#374151;}
   .dmg-tp{border:2px solid #f59e0b;background:#fffbeb;border-radius:10px;padding:10px;margin:-4px 0 12px;}
