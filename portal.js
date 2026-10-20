@@ -616,12 +616,15 @@ function dmgReportHtml(App, r, images){
       const docName = k=>((DMG_DOCS.find(d=>d[0]===k)||[])[1]||"");
       let h = "";
       const partyBlock = (p,i)=>{
+        // בלי צד ג׳ פרטי העובד המעורב לא חובה - בלוק ריק (בלי פרטים ובלי תמונות) לא מוצג
+        if(!dmgPFields(p).some(([k])=>String(p[k]||"").trim()) && !(imgs||[]).some(x=>x.meta && x.meta.sec==="party" && x.meta.i===i)) return;
         h += `<h4 style="margin:14px 0 4px;">👤 ${isTP(p)?`צד ג׳ — ${esc(p.role||"")}`:"העובד המעורב"}</h4>
           <table class="dmg-table">${dmgPFields(p).map(([k,l])=>`<tr><th>${l}</th><td>${esc(p[k]||"")||'<span class="muted">—</span>'}</td></tr>`).join("")}</table>`;
         if(imgs) dmgDocsFor(p).forEach(([dk,dl])=>{ const l = imgs.filter(x=>x.meta && x.meta.sec==="party" && x.meta.i===i && x.meta.kind===dk); if(l.length) h += `<div class="muted" style="margin-top:6px;font-size:.85em;">${dl}</div>${thumbs(l)}`; });
       };
       (r.parties||[]).forEach((p,i)=>{ if(!isTP(p)) partyBlock(p,i); });
       (r.vehicles||[]).forEach((v,i)=>{
+        if(!String(v.label||"").trim() && !(imgs||[]).some(x=>x.meta && x.meta.sec==="vehicle" && x.meta.i===i)) return;
         h += `<h4 style="margin:14px 0 4px;">🏍️ כלי רכב רשף ${i+1}${v.label?` — ${esc(v.label)}`:""}</h4>`;
         if(imgs) h += thumbs(imgs.filter(x=>x.meta && x.meta.sec==="vehicle" && x.meta.i===i));
       });
