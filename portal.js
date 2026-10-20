@@ -432,7 +432,7 @@ function renderWorkerHome(App, session){
       ${isMokedWorker(App, session) ? "" : tile("portal-go-damage", "⚠️ דיווח נזק / תאונה", "דיווח ראשוני, מעורבים ותמונות")}
     </div>
   </div>
-  ${session.schedule_editor ? (()=>{ const t = App.teamById(session.team_id); const lbl = t ? App.sectorGroupForTeam(t).label : "";
+  ${session.schedule_editor ? (()=>{ const t = App.teamById(session.team_id); const lbl = t ? ((t.sectors&&t.sectors.length) ? t.sectors.join(" / ") : t.name) : "";
     return `<div class="card">
     <h3>✏️ סידור עבודה${lbl?` — ${esc(lbl)}`:""}</h3>
     <p class="muted" style="margin-top:-6px;">עריכת הסידור לכל העובדים בגזרה — כמו אצל הקב"ט</p>
@@ -3646,7 +3646,7 @@ async function doLogin(App){
     if(!res){ P.error = "קוד שגוי"; P.code=""; return App.render(); }
     saveMgr(App, null); clearMgrMode(App);
     saveSession(App, res);
-    P.selectedId = null; P.code = ""; P.query = ""; P.shifts = null; P.checkedSession = true; T.data = null; F.data = null;
+    P.selectedId = null; P.code = ""; P.query = ""; P.shifts = null; P.checkedSession = false; T.data = null; F.data = null; // false: לבדוק מיד הרשאות (למשל עריכת סידור)
     App.render();
   }catch(err){
     P.busy = false;
