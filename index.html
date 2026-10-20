@@ -165,7 +165,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=50"></script>
+<script src="portal.js?v=51"></script>
 <script>
 (function(){
 "use strict";
@@ -1009,7 +1009,9 @@ function renderWorkloadSummary(team, dates, ui){
     const out = {}; Object.keys(sets).forEach(id=>out[id]=sets[id].size);
     return out;
   };
-  const fmt = (assigned, avail, id)=> avail ? `${assigned} <span class="muted">(${avail[id]||0})</span>` : `${assigned}`;
+  const tgtOf = {}; workers.forEach(w=>tgtOf[w.id]=w.target_shifts);
+  const tgtTxt = id=> tgtOf[id]!=null ? ` <span style="color:#1d4ed8;font-size:.85em;">/ יעד ${tgtOf[id]}</span>` : "";
+  const fmt = (assigned, avail, id, noTgt)=> (avail ? `${assigned} <span class="muted">(${avail[id]||0})</span>` : `${assigned}`) + (noTgt ? "" : tgtTxt(id));
   const countInRange = (rangeDates)=>{
     const set = new Set(rangeDates);
     const counts = {}; workers.forEach(w=>counts[w.id]=0);
@@ -1028,7 +1030,7 @@ function renderWorkloadSummary(team, dates, ui){
     const c1 = countInRange(week1), c2 = countInRange(week2);
     const a1 = availInRange(week1), a2 = availInRange(week2);
     const aTot = a1 && a2 ? (()=>{ const o={}; workers.forEach(w=>o[w.id]=(a1[w.id]||0)+(a2[w.id]||0)); return o; })() : null;
-    const rows = workers.map(w=>`<tr><td style="text-align:right;">${escapeHtml(w.name)}</td><td>${fmt(c1[w.id]||0,a1,w.id)}</td><td>${fmt(c2[w.id]||0,a2,w.id)}</td><td><b>${fmt((c1[w.id]||0)+(c2[w.id]||0),aTot,w.id)}</b></td></tr>`).join("");
+    const rows = workers.map(w=>`<tr><td style="text-align:right;">${escapeHtml(w.name)}</td><td>${fmt(c1[w.id]||0,a1,w.id)}</td><td>${fmt(c2[w.id]||0,a2,w.id)}</td><td><b>${fmt((c1[w.id]||0)+(c2[w.id]||0),aTot,w.id,true)}</b></td></tr>`).join("");
     return `<div style="overflow-x:auto;"><table><thead><tr><th>עובד</th><th>שבוע 1</th><th>שבוע 2</th><th>סה"כ</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">אין עובדים</td></tr>'}</tbody></table></div>
     ${a1?'<p class="muted" style="font-size:.85em;">המספר בסוגריים = כמה משמרות העובד יכול לעבוד באותו שבוע לפי ההגשה שלו.</p>':''}`;
   }
@@ -1036,7 +1038,7 @@ function renderWorkloadSummary(team, dates, ui){
   const av = availInRange(dates);
   const rows = workers.map(w=>`<tr><td style="text-align:right;">${escapeHtml(w.name)}</td><td>${fmt(c[w.id]||0,av,w.id)}</td></tr>`).join("");
   return `<div style="overflow-x:auto;"><table><thead><tr><th>עובד</th><th>משמרות</th></tr></thead><tbody>${rows || '<tr><td colspan="2" class="muted">אין עובדים</td></tr>'}</tbody></table></div>
-  ${av?'<p class="muted" style="font-size:.85em;">המספר בסוגריים = כמה משמרות העובד יכול לעבוד בשבוע לפי ההגשה שלו.</p>':''}`;
+  ${av?'<p class="muted" style="font-size:.85em;">המספר בסוגריים = כמה משמרות העובד יכול לעבוד בשבוע לפי ההגשה שלו. "יעד" = כמה משמרות המשבץ רוצה לתת לו (נקבע בניהול עובדים).</p>':''}`;
 }
 
 /* --------- פילוח חודשי: הגישו מול שובצו, לכל עובד, לחודש קלנדרי נבחר (חוצה תקופות הגשה אם צריך) --------- */
@@ -1106,7 +1108,7 @@ async function loadAggregateData(team){
     const teamFilter = group.teamIds.length>1 ? `in.(${group.teamIds.join(",")})` : `eq.${group.teamIds[0]}`;
     // auto_assign_exempt נוסף כאן ב-2026-10-06 אחרי שה-SQL של migration_auto_assign_exempt רץ בהצלחה
     // (מוסיף את העמודה ל-roster_workers) - נדרש כדי ש-runAutoAssign יוכל לסנן עובדים מוחרגים.
-    const workers = await apiGet("roster_workers", `select=id,team_id,name,role,city_sectors,auto_assign_exempt,shadow_trainee,shabbat_observer&team_id=${teamFilter}&order=name`);
+    const workers = await apiGet("roster_workers", `select=id,team_id,name,role,city_sectors,auto_assign_exempt,shadow_trainee,shabbat_observer,target_shifts&team_id=${teamFilter}&order=name`);
     workers.forEach(w=>{ w.cities = computeWorkerCities(w); });
     ui.workers = workers;
 
@@ -2697,6 +2699,12 @@ async function runAutoAssign(){
     (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a);
     assignCount[a.worker_id] = (assignCount[a.worker_id]||0) + 1;
   });
+  // כמה משמרות המשבץ רוצה לתת לעובד בשבוע (roster_workers.target_shifts, "ניהול עובדים") - 2026-10-20.
+  // השיבוץ האוטומטי לא עובר את המספר הזה; שיבוץ ידני יכול לעבור אותו.
+  const weekOf = d => Math.max(0, Math.floor(dates.indexOf(d)/7));
+  const tgtCount = {};
+  (ui.assignments||[]).forEach(a=>{ if(a.shadow_of) return; const k = a.worker_id+"|"+weekOf(a.entry_date); tgtCount[k] = (tgtCount[k]||0) + 1; });
+  const underTarget = (w, d)=> w.target_shifts==null || (tgtCount[w.id+"|"+weekOf(d)]||0) < w.target_shifts;
   const fairnessRatio = w => availCount[w.id]>0 ? (assignCount[w.id]/availCount[w.id]) : Infinity;
   const byFairness = (a,b)=> (fairnessRatio(a)-fairnessRatio(b)) || (assignCount[a.id]-assignCount[b.id]) || a.name.localeCompare(b.name,"he");
 
@@ -2752,7 +2760,7 @@ async function runAutoAssign(){
     const st = unit.map(slot=>{
       const alreadyAll = (assignmentsByDate[slot.date]||[]).filter(a=>a.sector===slot.sector && a.shift_type===slot.shiftType);
       const need = slot.required - alreadyAll.filter(a=>!a.shadow_of).length;
-      const avail = streakFilter(availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType)).filter(w=>!w.auto_assign_exempt), slot);
+      const avail = streakFilter(availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType)).filter(w=>!w.auto_assign_exempt && underTarget(w, slot.date)), slot);
       const {ok, bad, newInterval} = splitByRest(avail, slot);
       return {slot, need, ok, bad, newInterval, chosen:[]};
     });
@@ -2795,7 +2803,7 @@ async function runAutoAssign(){
     const eveNeed = eve ? eve.required - existing("evening").length : 0;
     const motAch = existing("motzash").filter(a=>roleOf(a)==='אחמ"ש');
     const motAchNeed = ((mot.roleCounts||{})['אחמ"ש']||0) - motAch.length;
-    const avMot = streakFilter(availableForSlot(mot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(mot.sector, mot.shiftType)).filter(w=>w.role==='אחמ"ש' && !w.auto_assign_exempt), mot);
+    const avMot = streakFilter(availableForSlot(mot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(mot.sector, mot.shiftType)).filter(w=>w.role==='אחמ"ש' && !w.auto_assign_exempt && underTarget(w, mot.date)), mot);
     const avEve = eve ? availableForSlot(eve, workers, ui.entriesByWorker, assignmentsByDate, slotKey(eve.sector, eve.shiftType)) : [];
     const eveFallback = ()=>{
       if(sergeyW && avEve.some(x=>x.id===sergeyW.id)){ satSergey++; return sergeyW; }
@@ -2831,7 +2839,7 @@ async function runAutoAssign(){
     // עובד עם auto_assign_exempt=true (למשל סרגיי, לבקשתו 2026-10-06: "אל תשבץ אותי בשיבוצים אוטומטי")
     // מודר כאן בלבד - מהמועמדים לשיבוץ אוטומטי. הוא עדיין מוצג כזמין/לא-זמין רגיל בכל מסך אחר
     // (כולל בורר השיבוץ הידני, ששם אפשר עדיין לבחור בו ידנית בכוונה).
-    const avail = streakFilter(availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType)).filter(w=>!w.auto_assign_exempt), slot);
+    const avail = streakFilter(availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType)).filter(w=>!w.auto_assign_exempt && underTarget(w, slot.date)), slot);
     let chosen = [];
     const planned = plannedBySlot.get(slot);
     const {ok: restOk, bad: restBad, newInterval} = planned ? {ok:[], bad:[], newInterval:planned.newInterval} : splitByRest(avail, slot);
@@ -2887,7 +2895,7 @@ async function runAutoAssign(){
         if(pickedRole.length < needRole && role==="מוקדן"){
           // fallback: אחמ"שים זמינים (ללא סינון תפקיד) למשבצת זו, שלא נבחרו כבר לתקן האחמ"ש שלה
           if(availAnyRole===null){
-            availAnyRole = streakFilter(availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType), true).filter(w=>!w.auto_assign_exempt), slot);
+            availAnyRole = streakFilter(availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType), true).filter(w=>!w.auto_assign_exempt && underTarget(w, slot.date)), slot);
           }
           const fallbackPool = availAnyRole.filter(w=>w.role==='אחמ"ש' && !chosen.some(c=>c.id===w.id) && !pickedRole.some(c=>c.id===w.id));
           const {ok: fbOk, bad: fbBad} = splitByRest(fallbackPool, slot);
@@ -2935,7 +2943,7 @@ async function runAutoAssign(){
         await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:wid, p_custom_start:customFor[wid][0], p_custom_end:customFor[wid][1]});
       }
       filled++;
-      chosen.forEach(w=>{ assignCount[w.id]++; recordChosenInterval(w.id, customFor[w.id] ? shiftInterval({sector:slot.sector, shift_type:slot.shiftType, entry_date:slot.date, custom_start:customFor[w.id][0], custom_end:customFor[w.id][1]}) : newInterval); streakAdd(streakIdx, w.id, slot.date, slot.shiftType); (assignmentsByDate[slot.date]=assignmentsByDate[slot.date]||[]).push({sector:slot.sector, shift_type:slot.shiftType, worker_id:w.id, entry_date:slot.date}); });
+      chosen.forEach(w=>{ assignCount[w.id]++; tgtCount[w.id+"|"+weekOf(slot.date)] = (tgtCount[w.id+"|"+weekOf(slot.date)]||0) + 1; recordChosenInterval(w.id, customFor[w.id] ? shiftInterval({sector:slot.sector, shift_type:slot.shiftType, entry_date:slot.date, custom_start:customFor[w.id][0], custom_end:customFor[w.id][1]}) : newInterval); streakAdd(streakIdx, w.id, slot.date, slot.shiftType); (assignmentsByDate[slot.date]=assignmentsByDate[slot.date]||[]).push({sector:slot.sector, shift_type:slot.shiftType, worker_id:w.id, entry_date:slot.date}); });
     }catch(e){ ui.buildMsg = "שגיאה בשמירת שיבוץ: " + e.message; render(); return; }
   }
   }
@@ -3160,7 +3168,7 @@ function renderAdmin(){
     ${ui.teamCodeMsg? `<p>${escapeHtml(ui.teamCodeMsg)}</p>`:""}
     ${isLockActive(ui.teamCodeLockedUntil)? `<p class="shortage">🔒 קוד הקב"ט נעול כרגע (יותר מדי ניסיונות שגויים) — ייפתח אוטומטית בעוד כ-${lockMinutesLeft(ui.teamCodeLockedUntil)} דק'. <button class="btn small" data-action="admin-unlock-team">פתח נעילה עכשיו</button></p>`:""}`}
     <table>
-      <thead><tr><th>שם</th><th title="עובד בהכשרה - אפשר לשבץ אותו בחפיפה, באותה קוביה עם עובד שכבר משובץ">חפיפה</th><th title="לא יוצג כאפשרות לשיבוץ בשישי ערב, שישי לילה ושבת ערב">שומר שבת</th><th>קוד אישי</th>${merged?"<th>גזרה</th>":""}${avihaiTeam?"<th title=\"סדר העדיפות לשיבוץ האוטומטי, מימין לשמאל\">ערים (לפי עדיפות)</th>":""}${anyMoked?"<th>תפקיד</th>":""}<th title="כשמסומן, העובד לעולם לא ייבחר ב&quot;שיבוץ אוטומטי&quot; - עדיין אפשר לשבץ אותו ידנית">לא לשבץ אוטומטית</th><th></th></tr></thead>
+      <thead><tr><th>שם</th><th title="עובד בהכשרה - אפשר לשבץ אותו בחפיפה, באותה קוביה עם עובד שכבר משובץ">חפיפה</th><th title="לא יוצג כאפשרות לשיבוץ בשישי ערב, שישי לילה ושבת ערב">שומר שבת</th><th>קוד אישי</th>${merged?"<th>גזרה</th>":""}${avihaiTeam?"<th title=\"סדר העדיפות לשיבוץ האוטומטי, מימין לשמאל\">ערים (לפי עדיפות)</th>":""}${anyMoked?"<th>תפקיד</th>":""}<th title="כשמסומן, העובד לעולם לא ייבחר ב&quot;שיבוץ אוטומטי&quot; - עדיין אפשר לשבץ אותו ידנית">לא לשבץ אוטומטית</th><th title="כמה משמרות בשבוע לתת לעובד בשיבוץ האוטומטי. ריק = ללא הגבלה. בשיבוץ ידני אפשר לשבץ מעבר">משמרות בשבוע</th><th></th></tr></thead>
       <tbody>
         ${ui.workers.map(w=>{
           const workerIsMoked = isMokedTeam(teamById(w.team_id));
@@ -3169,17 +3177,18 @@ function renderAdmin(){
               <option value='אחמ"ש' ${w.role==='אחמ"ש'?"selected":""}>אחמ"ש</option>
               <option value="מוקדן" ${w.role==="מוקדן"?"selected":""}>מוקדן</option>
             </select></td>`);
-          const exemptCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-auto-exempt" data-id="${w.id}" ${w.auto_assign_exempt?"checked":""}></td>`;
+          const exemptCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-auto-exempt" data-id="${w.id}" ${w.auto_assign_exempt?"checked":""}></td>`
+            + `<td style="text-align:center;"><input type="number" min="0" max="14" inputmode="numeric" data-action="admin-target-shifts" data-id="${w.id}" value="${w.target_shifts!=null?w.target_shifts:""}" placeholder="ללא" style="width:64px;text-align:center;"></td>`;
           const shadowCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-shadow" data-id="${w.id}" ${w.shadow_trainee?"checked":""}></td>`;
           const shabbatCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-shabbat" data-id="${w.id}" ${w.shabbat_observer?"checked":""}></td>`;
-          return `<tr><td>${escapeHtml(w.name)}</td>${shadowCell}${shabbatCell}<td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${isCityPoolTeam(teamById(w.team_id)) ? `${escapeHtml(cityPrefsText(w))} <button class="btn small secondary" data-action="admin-city-edit" data-id="${w.id}">✏️ שינוי</button>` : "-"}</td>`:""}${roleCell}${exemptCell}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>${ui.cityEditId===w.id ? `<tr><td colspan="${1+1+1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1+1}" style="background:#f7f9fc;">
+          return `<tr><td>${escapeHtml(w.name)}</td>${shadowCell}${shabbatCell}<td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${isCityPoolTeam(teamById(w.team_id)) ? `${escapeHtml(cityPrefsText(w))} <button class="btn small secondary" data-action="admin-city-edit" data-id="${w.id}">✏️ שינוי</button>` : "-"}</td>`:""}${roleCell}${exemptCell}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>${ui.cityEditId===w.id ? `<tr><td colspan="${1+1+1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1+1+1}" style="background:#f7f9fc;">
             <div style="font-weight:700;margin-bottom:4px;">סדר עדיפות ערים — ${escapeHtml(w.name)}</div>
             ${cityPrefSelectsHtml("cityEdit", w.city_sectors)}
             <p class="muted" style="margin:4px 0;">"ללא העדפה" בכולן = זמין לכל הערים. עדיפות שאחרי "ללא העדפה" לא נחשבת.</p>
             <div class="row"><button class="btn small" data-action="admin-city-save" data-id="${w.id}">שמור</button><button class="btn small secondary" data-action="admin-city-cancel">ביטול</button></div>
             ${ui.cityEditMsg? `<p class="shortage">${escapeHtml(ui.cityEditMsg)}</p>`:""}
           </td></tr>` : ""}`;
-        }).join("") || `<tr><td colspan="${1+1+1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1+1}" class="muted">אין עדיין עובדים</td></tr>`}
+        }).join("") || `<tr><td colspan="${1+1+1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1+1+1}" class="muted">אין עדיין עובדים</td></tr>`}
       </tbody>
     </table>
     <h3>הוספה / עדכון</h3>
@@ -3226,9 +3235,9 @@ async function loadAdminWorkers(){
     ui.workers = workerLists.flat().sort((a,b)=>a.name.localeCompare(b.name,"he"));
     // סימון "חפיפה" נטען ישירות מהטבלה (admin_list_workers לא מחזירה אותו) - 2026-10-07
     try{
-      const flags = await apiGet("roster_workers", `select=id,shadow_trainee,shabbat_observer&team_id=in.(${ui.teamIds.join(",")})`);
+      const flags = await apiGet("roster_workers", `select=id,shadow_trainee,shabbat_observer,target_shifts&team_id=in.(${ui.teamIds.join(",")})`);
       const fm = {}; flags.forEach(r=>fm[r.id]=r);
-      ui.workers.forEach(w=>{ w.shadow_trainee = !!(fm[w.id]&&fm[w.id].shadow_trainee); w.shabbat_observer = !!(fm[w.id]&&fm[w.id].shabbat_observer); });
+      ui.workers.forEach(w=>{ w.shadow_trainee = !!(fm[w.id]&&fm[w.id].shadow_trainee); w.shabbat_observer = !!(fm[w.id]&&fm[w.id].shabbat_observer); w.target_shifts = fm[w.id] ? fm[w.id].target_shifts : null; });
     }catch(e){ ui.workers.forEach(w=>{ w.shadow_trainee = !!w.shadow_trainee; w.shabbat_observer = !!w.shabbat_observer; }); }
     ui.teamCode = teamCode;
     ui.codeTeamId = codeTeamId;
@@ -3285,6 +3294,15 @@ function onAppChange(e){
     const ui = S.ui;
     (async()=>{
       try{ await apiRpc("admin_update_worker_shadow_trainee",{p_pin:S.pin,p_worker_id:id,p_value:val}); ui.adminMsg="עודכן."; ui.workers=null; render(); }
+      catch(err){ ui.adminMsg="שגיאה: "+err.message; render(); }
+    })();
+  }
+  if(t.dataset.action==="admin-target-shifts"){
+    const id = t.dataset.id, raw = String(t.value||"").trim();
+    const val = raw==="" ? null : Math.max(0, Math.min(14, parseInt(raw,10)||0));
+    const ui = S.ui;
+    (async()=>{
+      try{ await apiRpc("admin_update_worker_target_shifts",{p_pin:S.pin,p_worker_id:id,p_target:val}); ui.adminMsg = val==null ? "עודכן: ללא הגבלה." : `עודכן: ${val} משמרות בשבוע.`; const w = (ui.workers||[]).find(x=>x.id===id); if(w) w.target_shifts = val; render(); }
       catch(err){ ui.adminMsg="שגיאה: "+err.message; render(); }
     })();
   }
