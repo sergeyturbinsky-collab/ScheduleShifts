@@ -165,7 +165,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=70"></script>
+<script src="portal.js?v=71"></script>
 <script>
 (function(){
 "use strict";
@@ -589,6 +589,9 @@ function render(){
   if(S.ui.afterRender){ const f=S.ui.afterRender; S.ui.afterRender=null; f(); }
 }
 
+/* קוד העריכה הוא סשן אישי (לא הקוד המשותף): מנהל ("mgr:") או עובד עם הרשאת עריכת סידור ("wrk:", 2026-10-20) */
+function isSessionPin(){ return typeof S.pin==="string" && (S.pin.startsWith("mgr:") || S.pin.startsWith("wrk:")); }
+function actorName(){ return isSessionPin() ? (S.actorName || "") : "קוד עריכה"; }
 function goHome(){ S.view = S.managerMode ? "managers" : "home"; S.ui={}; render(); }
 
 /* ============== HOME ============== */
@@ -848,7 +851,7 @@ function renderAggregate(){
     </div>`;
   }
   const team = teamById(ui.teamId);
-  if(!S.teamAccess[team.id] && typeof S.pin==="string" && S.pin.startsWith("mgr:")){
+  if(!S.teamAccess[team.id] && isSessionPin()){
     return `<div class="card"><span class="backlink" data-action="agg-back">◀ חזרה</span><p class="muted">אין לך הרשאה לגזרה הזו.</p></div>`;
   }
   if(!S.teamAccess[team.id]){
@@ -901,7 +904,7 @@ function renderAggregate(){
 
   return `
   <div class="card">
-    <span class="backlink" data-action="agg-back">${(typeof S.pin==="string" && S.pin.startsWith("mgr:") && !ui.mgrPick) ? "◀ חזרה" : "◀ בחירת צוות אחר"}</span>
+    <span class="backlink" data-action="agg-back">${(isSessionPin() && !ui.mgrPick) ? "◀ חזרה" : "◀ בחירת צוות אחר"}</span>
     <h2>טבלה מרוכזת — ${escapeHtml(group.label)}</h2>
     ${renderSwapHistoryBox(group, dates)}
     ${streakWarningsHtml(group, dates)}
@@ -921,11 +924,18 @@ function renderAggregate(){
         <button class="btn" data-action="open-pin" data-next="manual">שיבוץ ידני</button>
         <button class="btn secondary" data-action="toggle-monthly">פילוח חודשי (הגישו מול שובצו)</button>
         ${group.citySectors.length ? (isSchedulePublished(group, ui)
-          ? `<button class="btn secondary" data-action="open-pin" data-next="unpublish">בטל פרסום</button>`
+          ? `<button class="btn ok" data-action="open-pin" data-next="publish">📢 פרסם שוב (עם השינויים)</button>
+             <button class="btn secondary" data-action="open-pin" data-next="unpublish">בטל פרסום</button>`
           : `<button class="btn ok" data-action="open-pin" data-next="publish">📢 פרסם סידור לעובדים</button>`) : ""}
         <button class="btn secondary" data-action="open-print">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
       </div>
       ${group.citySectors.length ? `<p class="muted" style="margin-top:8px;">${isSchedulePublished(group, ui) ? "✅ הסידור לתקופה הזו פורסם — העובדים רואים אותו ב\"המשמרות שלי\"." : "📝 טיוטה — העובדים עדיין לא רואים את הסידור לתקופה הזו."}</p>` : ""}
+      ${publishInfoHtml(group, ui)}
+      ${ui.pubConfirm ? `<div class="note-box" style="margin-top:10px;border-color:#e0a800;">
+        <b>${escapeHtml(ui.pubConfirm)} פרסם כבר סידור. האם אתה בטוח שאתה רוצה לפרסם?</b>
+        <p class="muted" style="margin:6px 0;">הפרסום שלך יחליף את הפרסום הקודם — העובדים יראו את הסידור כפי שהוא עכשיו.</p>
+        <div class="row"><button class="btn ok" data-action="agg-publish-force">כן, פרסם</button><button class="btn secondary" data-action="agg-publish-cancel">ביטול</button></div>
+      </div>` : ""}
       ${ui.buildMsg? `<p style="margin-top:8px;">${escapeHtml(ui.buildMsg)}</p>`:""}
       ${renderMonthlyPanel(ui, isMoked)}
   </div>
@@ -1166,7 +1176,7 @@ async function loadAggregateData(team){
       ui.assignments = await apiGet("shift_assignments", `select=*&sector=${secFilter}&entry_date=in.(${dates.join(",")})&order=created_at.asc`);
     }
     // סטטוס פרסום הסידור לעובדים לתקופה המוצגת (2026-10-07)
-    try{ ui.publications = await apiGet("schedule_publications", `select=sector,period_start,published_at&period_start=eq.${ui.periodStart}`); }
+    try{ ui.publications = await apiGet("schedule_publications", `select=sector,period_start,published_at,published_by&period_start=eq.${ui.periodStart}`); }
     catch(e){ ui.publications = []; }
 
     // --- זמינות עובדים מגזרות אחרות (לכפתור "הצג זמינים מגזרות אחרות") - לפי מה שהם עצמם הגישו,
@@ -2637,7 +2647,7 @@ function renderPinOverlay(){
 
 async function confirmPin(){
   const ui = S.ui;
-  const isMgr = typeof S.pin==="string" && S.pin.startsWith("mgr:"); // מנהל מחובר: הסשן שלו במקום הקוד
+  const isMgr = isSessionPin(); // מנהל מחובר: הסשן שלו במקום הקוד
   const pin = isMgr ? S.pin : document.getElementById("pinInput").value;
   ui.pinError = null;
   try{
@@ -2722,14 +2732,37 @@ function isSchedulePublished(group, ui){
   const pubs = ui.publications || [];
   return group.citySectors.length>0 && group.citySectors.every(sec=>pubs.some(p=>p.sector===sec));
 }
-async function setSchedulePublished(publish){
+/* מי פרסם ומתי (2026-10-20): כמה עורכים לאותה גזרה (למשל אלירן ואנדרי בחיפה) עובדים על אותו סידור משותף -
+   כל שינוי נשמר מיד ומופיע אצל העובדים אונליין אם התקופה פורסמה. "פרסם שוב" של מי שלא פרסם בפעם הקודמת
+   מבקש אישור ("XXX פרסם כבר סידור...") - ואחרי אישור הפרסום שלו מחליף את הקודם. */
+function publishInfo(group, ui){
+  const pubs = (ui.publications||[]).filter(p=>group.citySectors.includes(p.sector));
+  if(!pubs.length) return null;
+  const last = pubs.slice().sort((a,b)=>String(b.published_at).localeCompare(String(a.published_at)))[0];
+  return {by: last.published_by || "", at: last.published_at};
+}
+function publishInfoHtml(group, ui){
+  if(!isSchedulePublished(group, ui)) return "";
+  const pi = publishInfo(group, ui); if(!pi || !pi.by) return "";
+  const d = new Date(pi.at); const when = isNaN(d) ? "" : ` · ${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+  return `<p class="muted" style="margin-top:4px;">פורסם ע"י ${escapeHtml(pi.by)}${when}. שינויים שנשמרים מעכשיו מופיעים אצל העובדים מיד.</p>`;
+}
+async function setSchedulePublished(publish, force){
   const ui = S.ui;
   const team = teamById(ui.teamId);
   const group = sectorGroupForTeam(team);
   const dates = periodDates(ui.periodStart, team);
+  ui.pubConfirm = null;
   try{
+    if(publish && !force){
+      // בדיקה טרייה מול השרת - אולי מישהו אחר פרסם בינתיים
+      try{ ui.publications = await apiGet("schedule_publications", `select=sector,period_start,published_at,published_by&period_start=eq.${ui.periodStart}`); }catch(e){}
+      const pi = isSchedulePublished(group, ui) ? publishInfo(group, ui) : null;
+      if(pi && pi.by && pi.by !== actorName()){ ui.pubConfirm = pi.by; render(); return; }
+    }
+    const wasPublished = isSchedulePublished(group, ui);
     await apiRpc("rpc_set_schedule_published", {p_pin:S.pin, p_sectors:group.citySectors, p_period_start:ui.periodStart, p_period_end:dates[dates.length-1], p_published:publish});
-    ui.buildMsg = publish ? "הסידור פורסם לעובדים." : "הפרסום בוטל — העובדים כבר לא רואים את הסידור לתקופה הזו.";
+    ui.buildMsg = publish ? (wasPublished ? "הסידור פורסם מחדש — העובדים רואים את הסידור העדכני." : "הסידור פורסם לעובדים.") : "הפרסום בוטל — העובדים כבר לא רואים את הסידור לתקופה הזו.";
     await loadAggregateData(team);
   }catch(e){ ui.buildMsg = "שגיאה: " + e.message; render(); }
 }
@@ -3326,9 +3359,9 @@ function renderAdmin(){
   const anyMoked = teams.some(isMokedTeam);
   const avihaiTeam = teams.find(t=>isCityPoolTeam(t)); // צוותי מאיר אזרואל (דניאל כתב / אביחי קדוש) - עמודת עדיפות ערים
   return `<div class="card">
-    <span class="backlink" data-action="admin-back">${(typeof S.pin==="string" && S.pin.startsWith("mgr:") && !ui.mgrPick) ? "◀ חזרה" : "◀ נמען אחר"}</span>
+    <span class="backlink" data-action="admin-back">${(isSessionPin() && !ui.mgrPick) ? "◀ חזרה" : "◀ נמען אחר"}</span>
     <h2>ניהול עובדים — ${escapeHtml(ui.recipientLabel)}</h2>
-    ${(typeof S.pin==="string" && S.pin.startsWith("mgr:")) ? "" : `<h3>קוד קב"ט (לצפייה בטבלה המרוכזת ובניית הסידור)</h3>
+    ${(isSessionPin()) ? "" : `<h3>קוד קב"ט (לצפייה בטבלה המרוכזת ובניית הסידור)</h3>
     <div class="row">
       <div class="field"><label>קוד נוכחי</label><input type="text" id="adminTeamCode" value="${escapeHtml(ui.teamCode||"")}"></div>
       <button class="btn" data-action="admin-set-team-code">שמור קוד</button>
@@ -3571,7 +3604,7 @@ function onAppClick(e){
 
   // ---- aggregate ----
   if(a==="agg-pick-team"){ ui.teamId = el.dataset.id; ui.loaded=false; return render(); }
-  if(a==="agg-back"){ if(typeof S.pin==="string" && S.pin.startsWith("mgr:") && !(S.ui.mgrPick && S.ui.teamId)) return goHome(); S.ui = S.ui.mgrPick ? {mgrPick:true} : {}; return render(); }
+  if(a==="agg-back"){ if(isSessionPin() && !(S.ui.mgrPick && S.ui.teamId)) return goHome(); S.ui = S.ui.mgrPick ? {mgrPick:true} : {}; return render(); }
   if(a==="agg-team-code-submit"){
     const code = document.getElementById("aggTeamCode").value;
     ui.teamCodeValue = code;
@@ -3606,7 +3639,7 @@ function onAppClick(e){
     return render();
   }
   if(a==="run-monthly") return runMonthlyReport();
-  if(a==="open-pin"){ ui.pinPromptFor = el.dataset.next; ui.pinPromptWorkerId = el.dataset.worker||null; ui.pinPromptPeriod = el.dataset.period||null; ui.pinError=null; if(typeof S.pin==="string" && S.pin.startsWith("mgr:")) return confirmPin(); return render(); }
+  if(a==="open-pin"){ ui.pinPromptFor = el.dataset.next; ui.pinPromptWorkerId = el.dataset.worker||null; ui.pinPromptPeriod = el.dataset.period||null; ui.pinError=null; if(isSessionPin()) return confirmPin(); return render(); }
   if(a==="overlay-bg" || a==="cancel-pin"){ ui.pinPromptFor=null; return render(); }
   if(a==="confirm-pin") return confirmPin();
 
@@ -3624,6 +3657,8 @@ function onAppClick(e){
     return render();
   }
   if(a==="agg-reload"){ ui.loaded = false; ui.loadError = null; return render(); }
+  if(a==="agg-publish-force"){ ui.pubConfirm = null; return setSchedulePublished(true, true); }
+  if(a==="agg-publish-cancel"){ ui.pubConfirm = null; return render(); }
   if(a==="agg-avail-toggle"){ ui.showAvailByDay = !ui.showAvailByDay; return render(); }
   if(a==="tmpl-other-sectors-toggle"){ ui.tmplShowOtherSectors = !ui.tmplShowOtherSectors; return render(); }
   if(a==="tmpl-add-worker-toggle"){ ui.tmplAddWorkerOpen = !ui.tmplAddWorkerOpen; ui.tmplAddWorkerMsg=null; return render(); }
@@ -3765,7 +3800,7 @@ function onAppClick(e){
     ui.recipientLabel = label; ui.teamIds = group.teamIds; ui.workers=null;
     return render();
   }
-  if(a==="admin-back"){ if(typeof S.pin==="string" && S.pin.startsWith("mgr:") && !(ui.mgrPick && ui.teamIds)) return goHome(); ui.recipientLabel=null; ui.teamIds=null; ui.workers=null; return render(); }
+  if(a==="admin-back"){ if(isSessionPin() && !(ui.mgrPick && ui.teamIds)) return goHome(); ui.recipientLabel=null; ui.teamIds=null; ui.workers=null; return render(); }
   if(a==="admin-set-team-code"){
     const code = document.getElementById("adminTeamCode").value;
     if(!code){ ui.teamCodeMsg = "יש להזין קוד"; return render(); }

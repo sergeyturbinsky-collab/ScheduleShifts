@@ -22,7 +22,8 @@ function saveMgr(App, s){ if(s) App.saveJSON(MGR_KEY, s); else localStorage.remo
 /* יציאה של מנהל: מחזירים את קוד העריכה והגישות לקב"ט למה שנשמר בדפדפן (בלי הסשן של המנהל) */
 function clearMgrMode(App){
   const S = App.S;
-  if(typeof S.pin==="string" && S.pin.startsWith("mgr:")) S.pin = localStorage.getItem("cst_pin") || null;
+  if(typeof S.pin==="string" && (S.pin.startsWith("mgr:") || S.pin.startsWith("wrk:"))) S.pin = localStorage.getItem("cst_pin") || null;
+  S.actorName = null;
   S.teamAccess = App.loadJSON("cst_team_access") || {};
 }
 
@@ -409,6 +410,7 @@ function renderWorkerHome(App, session){
     P.checkedSession = true;
     App.apiRpc("worker_session_info", {p_token: session.token}).then(info=>{
       if(!info){ saveSession(App, null); P.shifts=null; }
+      else if(!!info.schedule_editor !== !!session.schedule_editor){ const cur = loadSession(App); if(cur) saveSession(App, Object.assign({}, cur, {schedule_editor: !!info.schedule_editor})); }
       App.render();
     }).catch(()=>{});
   }
@@ -430,6 +432,15 @@ function renderWorkerHome(App, session){
       ${isMokedWorker(App, session) ? "" : tile("portal-go-damage", "⚠️ דיווח נזק / תאונה", "דיווח ראשוני, מעורבים ותמונות")}
     </div>
   </div>
+  ${session.schedule_editor ? (()=>{ const t = App.teamById(session.team_id); const lbl = t ? App.sectorGroupForTeam(t).label : "";
+    return `<div class="card">
+    <h3>✏️ סידור עבודה${lbl?` — ${esc(lbl)}`:""}</h3>
+    <p class="muted" style="margin-top:-6px;">עריכת הסידור לכל העובדים בגזרה — כמו אצל הקב"ט</p>
+    <div class="grid-teams">
+      ${tile("portal-wsched-agg", "טבלה מרוכזת ובניית סידור", "שיבוץ, פרסום, פלט ופתיחת הגשה")}
+      ${tile("portal-wsched-admin", "ניהול עובדים", "הוספה, קודים וסימונים")}
+    </div>
+  </div>`; })() : ""}
   <div class="portal-cols">
     <div class="portal-col-main">
       <div class="card">
@@ -3571,6 +3582,7 @@ function enterMgrSchedule(App, ms, which){
   const teams = mgrTeams(App, ms.schedule_team_ids);
   if(!teams.length) return App.render();
   S.pin = "mgr:" + ms.token; // הסשן של המנהל במקום קוד העריכה המשותף (לא נשמר בדפדפן)
+  S.actorName = ms.name;
   const access = {}; teams.forEach(t=>access[t.id] = true);
   S.teamAccess = Object.assign({}, S.teamAccess, access);
   const groups = new Set(teams.map(t=>App.sectorGroupForTeam(t).label));
@@ -3713,6 +3725,7 @@ function onClick(App, a, el){
   if(a==="portal-logout"){
     const s = loadSession(App);
     if(s) App.apiRpc("worker_logout", {p_token: s.token}).catch(()=>{});
+    clearMgrMode(App);
     saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null; T.data = null; F.data = null; N.state = null; SW.list = null; SW.open = false; SW.msg = null; ST.list = null; ST.at = 0;
     return App.render();
   }
@@ -3724,6 +3737,16 @@ function onClick(App, a, el){
   if(a==="portal-log-request") return sendRequest(App);
   if(a==="portal-mgr-open"){ S.view = "equipreq"; S.ui = {}; M.session=null; M.tile=null; M.code=null; M.list=null; M.error=null; M.msg=null; return App.render(); }
   if(a==="portal-mh-equip"){ const ms = loadMgr(App); if(!ms) return App.render(); S.view = "equipreq"; S.ui = {}; M.session = ms; M.list=null; M.error=null; M.msg=null; return App.render(); }
+  // עובד עם הרשאת עריכת סידור (roster_workers.schedule_editor, למשל אנדרי גרלאנו בחיפה - 2026-10-20):
+  // אותו מסך כמו לקב"ט, עם הסשן האישי שלו ("wrk:") במקום קוד העריכה
+  if(a==="portal-wsched-agg" || a==="portal-wsched-admin"){
+    const ss = loadSession(App); if(!ss || !ss.schedule_editor) return App.render();
+    S.pin = "wrk:" + ss.token; S.actorName = ss.name;
+    S.teamAccess = Object.assign({}, S.teamAccess, {[ss.team_id]: true});
+    if(a==="portal-wsched-agg"){ S.view = "aggregate"; S.ui = {teamId: ss.team_id}; }
+    else { S.view = "admin"; S.ui = {pinOk: true, teamIds: [ss.team_id], recipientLabel: ss.name}; }
+    return App.render();
+  }
   if(a==="portal-mh-agg" || a==="portal-mh-admin"){ const ms = loadMgr(App); if(!ms) return App.render(); return enterMgrSchedule(App, ms, a==="portal-mh-agg"?"agg":"admin"); }
   if(a==="portal-mgr-logout"){
     const ms = loadMgr(App);
