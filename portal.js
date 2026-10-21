@@ -2533,6 +2533,12 @@ function calItemChip(App, it){
   return `<div class="cal-chip" style="background:${bg};color:${col};${it.done?"text-decoration:line-through;":""}">${it.kind==="task"?(it.done?"✔ ":"📌 "):""}${it.start?esc(it.start)+" ":""}${esc(it.title)}</div>`;
 }
 const CAL_CSS = `<style>
+  .cal-ppl{border:1px solid var(--border);border-radius:8px;background:#fff;}
+  .cal-ppl summary{cursor:pointer;padding:9px 10px;list-style:none;}
+  .cal-ppl summary::-webkit-details-marker{display:none;}
+  .cal-ppl-list{border-top:1px solid var(--border);max-height:260px;overflow-y:auto;padding:4px 10px;}
+  .cal-ppl-list label{display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;}
+  .cal-ppl-all{border-bottom:1px dashed var(--border);}
   .cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;}
   .cal-h{text-align:center;font-weight:700;font-size:.85em;color:var(--muted);padding:4px 0;}
   .cal-cell{min-height:86px;border:1px solid var(--border);border-radius:8px;padding:3px;cursor:pointer;background:#fff;overflow:hidden;}
@@ -2653,6 +2659,32 @@ function calOpenItem(App, id, d){
   C.edit = null; C.openId = id;
   pvGo(App, "cal", {});
 }
+/* בחירת משתתפים (2026-10-21, סרגיי - במקום "שלח התראה לכולם"): רשימה נפתחת עם סימון מרובה; הסימון הראשון
+   "כולם" מסמן את כולם ושולח התראה לכולם. כל מי שמסומן מקבל התראה (cal_save_v3). */
+function calPplSummary(all, names){ return all ? "כולם" : (names.length ? names.join(", ") : "לא נבחרו — בלי התראה"); }
+function calPplPicker(App, e, members){
+  const esc = App.escapeHtml;
+  const sel = new Set(e.participant_ids||[]), all = !!e.notify_all;
+  const names = members.filter(m=>sel.has(m.id)).map(m=>m.name);
+  return `<div class="field"><label>משתתפים — יקבלו התראה</label>
+    <details class="cal-ppl"${e.pplOpen?" open":""}>
+      <summary><span class="cal-ppl-sum">${esc(calPplSummary(all, names))}</span> <span class="muted">▾</span></summary>
+      <div class="cal-ppl-list">
+        <label class="cal-ppl-all"><input type="checkbox" data-ppl="all" ${all?"checked":""}> <b>כולם</b> <span class="muted" style="font-size:.85em;">(רלוונטי לכולם — התראה לכולם)</span></label>
+        ${members.map(m=>`<label><input type="checkbox" data-ppl="${m.id}" data-name="${esc(m.name)}" ${all||sel.has(m.id)?"checked":""}> ${esc(m.name)}</label>`).join("")}
+      </div>
+    </details></div>`;
+}
+function calPplSync(t){
+  const box = t.closest(".cal-ppl"); if(!box) return;
+  const boxes = [...box.querySelectorAll('input[data-ppl]')], allBox = boxes.find(b=>b.dataset.ppl==="all"), mem = boxes.filter(b=>b!==allBox);
+  if(t===allBox) mem.forEach(b=>{ b.checked = allBox.checked; });
+  else if(!t.checked) allBox.checked = false;
+  else if(mem.every(b=>b.checked)) allBox.checked = true;
+  const sum = box.querySelector(".cal-ppl-sum");
+  if(sum) sum.textContent = calPplSummary(allBox.checked, mem.filter(b=>b.checked).map(b=>b.dataset.name));
+}
+document.addEventListener("change", e=>{ if(e.target && e.target.dataset && e.target.dataset.ppl) calPplSync(e.target); });
 function renderCalendar(App, ms, back){
   const esc = App.escapeHtml;
   if(!C.month) C.month = calToday().slice(0,7);
@@ -2686,7 +2718,7 @@ function renderCalendar(App, ms, back){
             : `${it.can_edit?`<button class="btn small secondary" data-action="portal-cal-edit" data-id="${it.id}">✏️ עריכה</button>`:""}${it.can_delete?`<button class="btn small secondary" data-action="portal-cal-del-ask" data-id="${it.id}">🗑</button>`:""}`}
         </div>
       </div>
-      <div class="muted" style="font-size:.85em;margin-top:3px;">${it.assignee?`אחראי: <b>${esc(it.assignee)}</b> · `:(it.visibility==="personal"?"אישי · ":"לכולם · ")}נוסף ע"י ${esc(it.created_by||"")}${it.done&&it.done_by?` · בוצע ע"י ${esc(it.done_by)}`:""}</div>
+      <div class="muted" style="font-size:.85em;margin-top:3px;">${it.assignee?`אחראי: <b>${esc(it.assignee)}</b> · `:(it.visibility==="personal"?"אישי · ":"לכולם · ")}נוסף ע"י ${esc(it.created_by||"")}${it.done&&it.done_by?` · בוצע ע"י ${esc(it.done_by)}`:""}${it.notify_all?" · 👥 משתתפים: כולם":(it.participants?` · 👥 משתתפים: ${esc(it.participants)}`:"")}</div>
       ${it.notes?`<div style="margin-top:4px;white-space:pre-wrap;">${esc(it.notes)}</div>`:""}
     </div>`;
   const e = C.edit;
@@ -2708,8 +2740,8 @@ function renderCalendar(App, ms, back){
         <label style="display:block;margin:4px 0;"><input type="radio" name="cal_vis" value="shared" ${e.visibility!=="personal"?"checked":""}> 📢 ביומן המשותף — כולם רואים${""}</label>
         <label style="display:block;margin:4px 0;"><input type="radio" name="cal_vis" value="personal" ${e.visibility==="personal"?"checked":""}> 🔒 אישי — לא נוגע לכלל: רק אצל האחראי (ואצלך), לא ביומן המשותף</label>
       </div>
-      <label style="display:block;margin:6px 0;"><input type="checkbox" id="cal_notify"> שלח התראה לכולם (רק לפריט ביומן המשותף)</label>
-      <p class="muted" style="font-size:.82em;margin:2px 0 8px;">פריט עם אחראי מופיע אצלו גם ב"המשימות שלי", והוא מקבל התראה. האחראי יכול גם לערוך אותו.</p>
+      ${calPplPicker(App, e, members.filter(m=>m.id!==C.data.me))}
+      <p class="muted" style="font-size:.82em;margin:2px 0 8px;">כל מי שמסומן במשתתפים מקבל התראה (ורואה את הפריט גם אם הוא אישי). "כולם" — התראה לכולם, רק לפריט ביומן המשותף. פריט עם אחראי מופיע אצלו גם ב"המשימות שלי", והוא מקבל התראה. האחראי יכול גם לערוך אותו.</p>
       <div class="flexbar" style="gap:6px;"><button class="btn" data-action="portal-cal-save">שמור</button><button class="btn secondary" data-action="portal-cal-cancel">ביטול</button></div>
     </div>` : "";
   const openTasks = items.filter(it=>it.kind==="task" && !it.done);
@@ -2772,10 +2804,14 @@ async function calClick(App, a, el){
     Object.assign(C.edit, {kind:v("cal_kind"), title, date, start:v("cal_start"), end:v("cal_end"), assignee_id:v("cal_assignee")||null, notes:v("cal_notes")});
     if(!title){ C.error = "צריך כותרת"; return App.render(); }
     if(!date){ C.error = "צריך תאריך"; return App.render(); }
-    const notify = !!(document.getElementById("cal_notify")||{}).checked;
     const visEl = document.querySelector('input[name="cal_vis"]:checked'); C.edit.visibility = visEl ? visEl.value : "shared";
+    const pplBoxes = [...document.querySelectorAll('.cal-ppl input[data-ppl]')];
+    const pplDetails = document.querySelector('.cal-ppl'); C.edit.pplOpen = !!(pplDetails && pplDetails.open);
+    C.edit.notify_all = pplBoxes.some(b=>b.dataset.ppl==="all" && b.checked);
+    C.edit.participant_ids = pplBoxes.filter(b=>b.dataset.ppl!=="all" && b.checked).map(b=>b.dataset.ppl);
+    if(C.edit.notify_all && C.edit.visibility==="personal"){ C.error = "\"כולם\" מתאים רק לפריט ביומן המשותף. לפריט אישי - סמנו משתתפים מסוימים."; return App.render(); }
     try{
-      await App.apiRpc("cal_save_v2", {p_token:ms.token, p_id:C.edit.id||null, p_kind:C.edit.kind, p_title:title, p_date:date, p_start:C.edit.start||null, p_end:C.edit.end||null, p_assignee:C.edit.assignee_id, p_notes:C.edit.notes||null, p_notify:notify, p_visibility:C.edit.visibility});
+      await App.apiRpc("cal_save_v3", {p_token:ms.token, p_id:C.edit.id||null, p_kind:C.edit.kind, p_title:title, p_date:date, p_start:C.edit.start||null, p_end:C.edit.end||null, p_assignee:C.edit.assignee_id, p_notes:C.edit.notes||null, p_visibility:C.edit.visibility, p_participants:C.edit.participant_ids, p_notify_all:C.edit.notify_all});
       CW.data = null; CW.my = null;
       C.msg = C.edit.id ? "עודכן." : "נוסף ליומן."; C.edit = null; C.error = null; C.sel = date;
       if(date.slice(0,7)!==C.month) C.month = date.slice(0,7);
