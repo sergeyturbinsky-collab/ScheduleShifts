@@ -39,7 +39,7 @@
   .btn.ok{background:var(--ok);}
   .btn:disabled{opacity:.45;cursor:not-allowed;}
   .btn.small{padding:5px 10px;font-size:12px;}
-  input[type=text],input[type=password],input[type=date],input[type=time],select,textarea{
+  input[type=text],input[type=password],input[type=date],input[type=time],input[type=datetime-local],select,textarea{
     padding:8px;border:1px solid var(--border);border-radius:6px;font-size:14px;font-family:inherit;background:#fff;color:var(--text);
   }
   label{font-size:13px;color:var(--muted);display:block;margin-bottom:4px;}
@@ -193,7 +193,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=89"></script>
+<script src="portal.js?v=90"></script>
 <script>
 (function(){
 "use strict";

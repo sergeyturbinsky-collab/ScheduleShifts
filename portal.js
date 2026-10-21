@@ -2799,6 +2799,140 @@ async function calClick(App, a, el){
   }
 }
 
+/* ================================================================
+   המשימות שלי (2026-10-21, סרגיי): במסך הבית של מנהלים וקב"טים - משימות אישיות לביצוע, שרק המשתמש עצמו רואה
+   (mgr_todos, לפי ה-token). אפשר להוסיף תזכורת בתאריך ושעה - בזמן הזה נשלחת התראה מהאפליקציה
+   (cron כל דקה: mgr_todo_reminders_due → push_outbox → push-send). השרת: mgr_todo_list/_save/_done/_remove.
+   ================================================================ */
+const TD = { data:null, loading:false, token:null, form:null, busy:false, error:null, showDone:false, delAsk:null };
+function tdLoad(App, ms, force){
+  if(TD.token !== ms.token){ TD.token = ms.token; TD.data = null; TD.form = null; TD.showDone = false; }
+  if(TD.loading || (TD.data && !force)) return;
+  TD.loading = true;
+  App.apiRpc("mgr_todo_list", {p_token:ms.token}).then(d=>{ TD.data = d || {open:[], done:[]}; TD.loading = false; App.render(); })
+    .catch(e=>{ TD.loading = false; TD.data = {open:[], done:[], error:e.message}; App.render(); });
+}
+function tdSync(){
+  if(!TD.form) return;
+  const v = id=>{ const x = document.getElementById(id); return x ? x.value : undefined; };
+  ["title","notes","due","remind"].forEach(k=>{ const x = v("td_"+k); if(x!==undefined) TD.form[k] = x; });
+}
+function tdDefaultRemind(due){
+  const p = n=>String(n).padStart(2,"0");
+  let d = due ? new Date(due+"T08:00") : new Date(Date.now()+86400000);
+  if(!due) d.setHours(8,0,0,0);
+  if(d.getTime() < Date.now()) d = new Date(Date.now()+3600000);
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function renderTodoCard(App, ms){
+  tdLoad(App, ms);
+  const esc = App.escapeHtml;
+  const today = App.fmtDate(new Date());
+  const d = TD.data, open = d ? d.open||[] : [], done = d ? d.done||[] : [];
+  const f = TD.form;
+  const form = f ? `<div class="todo-form">
+      <div class="field"><label>מה צריך לעשות</label><input type="text" id="td_title" maxlength="300" value="${esc(f.title||"")}" placeholder="למשל: לבדוק ציוד בעמדה, לחזור לאלירן"></div>
+      <div class="field"><label>פרטים <span class="muted">(לא חובה)</span></label><textarea id="td_notes" rows="2" maxlength="3000">${esc(f.notes||"")}</textarea></div>
+      <div class="row">
+        <div class="field"><label>עד תאריך <span class="muted">(לא חובה)</span></label><input type="date" id="td_due" value="${esc(f.due||"")}"></div>
+        <div class="field"><label>תזכורת</label>
+          ${f.remindOn ? `<input type="datetime-local" id="td_remind" value="${esc(f.remind||"")}">
+             <span class="backlink" style="margin:4px 0 0;" data-action="portal-todo-remind-toggle">✖ בלי תזכורת</span>`
+           : `<button class="btn small secondary" data-action="portal-todo-remind-toggle">⏰ הוספת תזכורת עם התראה</button>`}
+        </div>
+      </div>
+      ${f.remindOn ? `<p class="muted" style="font-size:.82em;margin:0 0 6px;">ההתראה תגיע בזמן שנבחר למכשירים שבהם הפעלת התראות מהאפליקציה.</p>` : ""}
+      ${TD.error ? `<p class="shortage">${esc(TD.error)}</p>` : ""}
+      <div class="flexbar" style="gap:6px;">
+        <button class="btn ok" data-action="portal-todo-save" ${TD.busy?"disabled":""}>${TD.busy?"שומר...":(f.id?"שמירה":"➕ הוספה")}</button>
+        <button class="btn secondary" data-action="portal-todo-cancel">ביטול</button>
+      </div></div>` : "";
+  const chips = t=>{
+    const out = [];
+    if(t.due) out.push(`<span class="todo-chip${String(t.due)<today?" late":""}">📅 עד ${esc(fmtD(App, t.due))}</span>`);
+    if(t.remind_at) out.push(`<span class="todo-chip${t.reminded_at?" rang":""}">${t.reminded_at?"🔔":"⏰"} ${esc(fmtDT(App, t.remind_at))}</span>`);
+    return out.join("");
+  };
+  const row = t=>`<div class="todo-row${t.reminded_at?" rang":""}">
+      <button class="todo-check" data-action="portal-todo-done" data-id="${t.id}" title="סימון כבוצע">✔</button>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:600;">${esc(t.title)}</div>
+        ${t.notes?`<div class="muted" style="font-size:.86em;white-space:pre-wrap;">${esc(t.notes)}</div>`:""}
+        <div>${chips(t)}</div>
+      </div>
+      ${TD.delAsk===t.id ? `<span style="white-space:nowrap;"><button class="btn small" style="background:#b42318;border-color:#b42318;" data-action="portal-todo-del" data-id="${t.id}">מחק</button>
+          <button class="btn small secondary" data-action="portal-todo-del-no">לא</button></span>`
+        : `<span style="white-space:nowrap;"><button class="btn small secondary" data-action="portal-todo-edit" data-id="${t.id}" title="עריכה">✏️</button>
+          <button class="btn small secondary" data-action="portal-todo-del-ask" data-id="${t.id}" title="מחיקה">🗑</button></span>`}
+    </div>`;
+  const doneRow = t=>`<div class="todo-row done">
+      <span style="flex:1;"><s>${esc(t.title)}</s> <span class="muted" style="font-size:.82em;">· בוצע ${esc(fmtDT(App, t.done_at))}</span></span>
+      <button class="btn small secondary" data-action="portal-todo-undo" data-id="${t.id}">↩ החזר</button>
+      <button class="btn small secondary" data-action="portal-todo-del" data-id="${t.id}" title="מחיקה">🗑</button></div>`;
+  return `<style>
+    .todo-row{display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);}
+    .todo-row.rang{background:#fff8e6;}
+    .todo-row.done{align-items:center;color:var(--muted);}
+    .todo-check{width:30px;height:30px;flex:0 0 30px;border-radius:50%;border:2px solid var(--primary);background:#fff;color:transparent;cursor:pointer;font-weight:800;}
+    .todo-check:hover{color:var(--primary);}
+    .todo-chip{display:inline-block;font-size:.8em;background:#eef3fa;border-radius:10px;padding:1px 8px;margin:3px 0 0 6px;}
+    .todo-chip.late{background:#fde8e6;color:#b42318;font-weight:600;}
+    .todo-chip.rang{background:#fff1c2;}
+    .todo-form{background:#f6fbff;border:1px solid var(--border);border-radius:10px;padding:10px;margin:8px 0;}
+  </style>
+  <div class="card">
+    <div class="flexbar" style="justify-content:space-between;">
+      <h3 style="margin:0;">📝 המשימות שלי${open.length?` <span class="muted" style="font-size:.8em;font-weight:400;">(${open.length})</span>`:""}</h3>
+      ${f ? "" : `<button class="btn small" data-action="portal-todo-new">➕ משימה חדשה</button>`}
+    </div>
+    <p class="muted" style="font-size:.82em;margin:4px 0 0;">רק את/ה רואה את המשימות האלה.</p>
+    ${form}
+    ${!d ? `<p class="muted">טוען...</p>` : d.error ? `<p class="shortage">${esc(d.error)}</p>`
+      : (open.length ? open.map(row).join("") : (f ? "" : `<p class="muted" style="margin:8px 0 0;">אין משימות פתוחות.</p>`))}
+    ${!f && TD.error ? `<p class="shortage">${esc(TD.error)}</p>` : ""}
+    ${done.length ? `<div style="margin-top:8px;"><span class="backlink" data-action="portal-todo-show-done">${TD.showDone?"▲ הסתר":"▼"} משימות שבוצעו (${done.length})</span>
+      ${TD.showDone ? done.map(doneRow).join("") : ""}</div>` : ""}
+  </div>`;
+}
+async function todoAction(App, a, el){
+  const ms = loadMgr(App); if(!ms) return;
+  const id = el && el.dataset ? el.dataset.id : null;
+  const all = TD.data ? (TD.data.open||[]).concat(TD.data.done||[]) : [];
+  if(a==="portal-todo-new"){ TD.form = {remindOn:false}; TD.error = null; return App.render(); }
+  if(a==="portal-todo-cancel"){ TD.form = null; TD.error = null; return App.render(); }
+  if(a==="portal-todo-edit"){
+    const t = all.find(x=>x.id===id); if(!t) return;
+    TD.form = {id:t.id, title:t.title, notes:t.notes||"", due:t.due||"", remindOn:!!t.remind_at, remind:t.remind_at?toLocalInput(t.remind_at):""};
+    TD.error = null; window.scrollTo(0,0); return App.render();
+  }
+  if(a==="portal-todo-remind-toggle"){ tdSync(); TD.form.remindOn = !TD.form.remindOn; if(TD.form.remindOn && !TD.form.remind) TD.form.remind = tdDefaultRemind(TD.form.due); return App.render(); }
+  if(a==="portal-todo-show-done"){ TD.showDone = !TD.showDone; return App.render(); }
+  if(a==="portal-todo-del-ask"){ TD.delAsk = id; return App.render(); }
+  if(a==="portal-todo-del-no"){ TD.delAsk = null; return App.render(); }
+  if(TD.busy) return;
+  try{
+    if(a==="portal-todo-save"){
+      tdSync(); const f = TD.form;
+      if(!(f.title||"").trim()){ TD.error = "צריך לכתוב מה המשימה"; return App.render(); }
+      let remindIso = null;
+      if(f.remindOn){
+        if(!f.remind){ TD.error = "בחרו תאריך ושעה לתזכורת"; return App.render(); }
+        const dt = new Date(f.remind);
+        if(isNaN(dt)){ TD.error = "זמן התזכורת לא תקין"; return App.render(); }
+        remindIso = dt.toISOString();
+      }
+      TD.busy = true; TD.error = null; App.render();
+      await App.apiRpc("mgr_todo_save", {p_token:ms.token, p_id:f.id||null, p_title:f.title, p_notes:f.notes||null, p_due:f.due||null, p_remind_at:remindIso});
+      TD.form = null;
+    }
+    else if(a==="portal-todo-done" || a==="portal-todo-undo"){ TD.busy = true; await App.apiRpc("mgr_todo_done", {p_token:ms.token, p_id:id, p_done: a==="portal-todo-done"}); }
+    else if(a==="portal-todo-del"){ TD.busy = true; TD.delAsk = null; await App.apiRpc("mgr_todo_remove", {p_token:ms.token, p_id:id}); }
+    TD.busy = false; TD.error = null;
+    tdLoad(App, ms, true);
+  }catch(e){ TD.busy = false; TD.error = /session expired/i.test(e.message) ? "פג תוקף ההתחברות — צריך להתחבר מחדש" : e.message; }
+  App.render();
+}
+
 /* ---------- עמודי משנה (view "pview") ---------- */
 const PV_TITLES = { "equip-workers":"ציוד אישי לעובדים", "equip-edit":"ציוד אישי", "areq-list":"בקשות מנהלתיות", "areq-view":"בקשה מנהלתית", "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
@@ -3835,6 +3969,7 @@ function renderManagerHome(App, ms){
     </div>
   </div>
   <div class="mgr-cols"><div class="mgr-main">
+  ${renderTodoCard(App, ms)}
   ${renderMsgCard(App, ms)}
   ${(logi.length || ms.is_admin) ? `<div class="card">
     <h3>🚨 דו"ח אירוע חריג</h3>
@@ -4140,6 +4275,7 @@ function onClick(App, a, el){
     return pvGo(App, d.page, {id:d.id, kind:d.kind, from:d.from, name:d.name, program:d.program, ver:d.ver});
   }
   if(a==="portal-pv-back") return pvBack(App);
+  if(a.indexOf("portal-todo-")===0) return todoAction(App, a, el);
   if(a.indexOf("portal-inc-")===0) return incClick(App, a, el);
   if(a.indexOf("portal-cal-")===0 || a.indexOf("portal-calw-")===0) return calClick(App, a, el);
   if(a==="portal-kmsg-send" || a==="portal-mmsg-send") return msgAction(App, a);
