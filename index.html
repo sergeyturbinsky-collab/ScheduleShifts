@@ -171,7 +171,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=80"></script>
+<script src="portal.js?v=81"></script>
 <script>
 (function(){
 "use strict";
@@ -2969,7 +2969,7 @@ async function runAutoAssign(){
         st.forEach(x=>{
           const room = x.need - x.chosen.length;
           if(room<=0) return;
-          const picks = x[phase].filter(w=>!taken.has(w.id) && cityRank(w, x.slot.sector)===r).slice().sort(byFairness).slice(0, room);
+          const picks = x[phase].filter(w=>!taken.has(w.id) && cityRank(w, x.slot.sector)===r).slice().sort((a,b)=>(groupHasAch ? (isGuardAchmash(a)?1:0)-(isGuardAchmash(b)?1:0) : 0) || byFairness(a,b)).slice(0, room);
           picks.forEach(w=>{ taken.add(w.id); x.chosen.push(w); });
           if(phase==="bad") restForced += picks.length;
         });
@@ -3121,9 +3121,11 @@ async function runAutoAssign(){
         const okA = restOk.filter(isGuardAchmash).sort(byFairness), badA = restBad.filter(isGuardAchmash).sort(byFairness);
         if(okA.length) achFirst = [okA[0]]; else if(badA.length){ achFirst = [badA[0]]; restForced++; } else noAch++;
       }
-      chosen = achFirst.concat(restOk.filter(w=>!achFirst.includes(w)).sort(byFairness)).slice(0, need);
+      // שאר הסיירים: אחמ"שים נוספים רק בסוף (כדי שיישארו פנויים למשמרות אחרות באותו יום שצריכות אחמ"ש)
+      const achLast = (a,b)=>(groupHasAch ? (isGuardAchmash(a)?1:0)-(isGuardAchmash(b)?1:0) : 0) || byFairness(a,b);
+      chosen = achFirst.concat(restOk.filter(w=>!achFirst.includes(w)).sort(achLast)).slice(0, need);
       if(chosen.length < need){
-        const more = restBad.filter(w=>!achFirst.includes(w)).sort(byFairness).slice(0, need - chosen.length);
+        const more = restBad.filter(w=>!achFirst.includes(w)).sort(achLast).slice(0, need - chosen.length);
         restForced += more.length;
         chosen = chosen.concat(more);
       }
