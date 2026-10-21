@@ -3272,8 +3272,48 @@ async function todoAction(App, a, el){
   App.render();
 }
 
+/* ================================================================
+   סטטוס התחברות משתמשים (2026-10-21, סרגיי): לסרגיי בלבד - לכל מאבטח/מוקדן ולכל מנהל: מחובר עכשיו (יש סשן
+   בתוקף), התראות פעילות, כניסה אחרונה ומספר כניסות. השרת: admin_login_status (רישום כניסות: user_logins).
+   ================================================================ */
+const LS = { data:null, loading:false, filter:"all" };
+function lsLoad(App, ms){
+  if(LS.loading) return; LS.loading = true;
+  App.apiRpc("admin_login_status", {p_token:ms.token}).then(d=>{ LS.data = d; LS.loading = false; App.render(); })
+    .catch(e=>{ LS.data = {error:e.message}; LS.loading = false; App.render(); });
+}
+function lsState(u){ return !u.active ? "off" : (u.push ? "ok" : "nopush"); }
+function renderLoginStatus(App, ms, wrap, loading){
+  const esc = App.escapeHtml;
+  if(!LS.data){ lsLoad(App, ms); return loading(); }
+  if(LS.data.error) return wrap(`<p class="shortage">${esc(LS.data.error)}</p>`);
+  const ws = LS.data.workers||[], mgs = LS.data.managers||[], all = ws.concat(mgs);
+  const cnt = st=>all.filter(u=>lsState(u)===st).length;
+  const ago = iso=>{ if(!iso) return ""; const d = (Date.now()-new Date(iso).getTime())/864e5; return d<1 ? "היום" : d<2 ? "אתמול" : `לפני ${Math.floor(d)} ימים`; };
+  const badge = {ok:`<span class="ls-b ok">🟢 מחובר + התראות</span>`, nopush:`<span class="ls-b warn">🟡 מחובר, בלי התראות</span>`, off:`<span class="ls-b off">⚪ לא מחובר</span>`};
+  const f = LS.filter;
+  const show = u=> f==="all" || lsState(u)===f;
+  const row = u=>`<div class="ls-row"><span class="ls-name">${esc(u.name)}${u.role?` <span class="muted" style="font-size:.8em;">${esc(u.role)}</span>`:""}</span>${badge[lsState(u)]}
+      <span class="muted ls-when">${u.last_at ? `כניסה אחרונה: ${esc(fmtDT(App, u.last_at))} (${ago(u.last_at)})${u.logins>1?` · ${u.logins} כניסות`:""}` : "לא נרשמה כניסה"}${u.push_ok_at?` · התראה אחרונה נמסרה ${ago(u.push_ok_at)}`:""}</span></div>`;
+  const groups = {}; ws.forEach(u=>{ (groups[u.team||"ללא צוות"] = groups[u.team||"ללא צוות"]||[]).push(u); });
+  const grpHtml = (title, list)=>{ const vis = list.filter(show); if(!vis.length) return "";
+    const on = list.filter(u=>u.active).length;
+    return `<h3 style="margin:14px 0 4px;">${esc(title)} <span class="muted" style="font-size:.75em;font-weight:400;">${on}/${list.length} מחוברים</span></h3>${vis.map(row).join("")}`; };
+  const chip = (k, label)=>`<span class="ar-chip${f===k?" on":""}" data-action="portal-ls-filter" data-k="${k}">${label}</span>`;
+  return wrap(`<style>.ls-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:7px 0;border-bottom:1px solid var(--border);}
+      .ls-name{font-weight:600;min-width:140px;} .ls-when{font-size:.82em;flex-basis:100%;} .ls-b{font-size:.8em;border-radius:999px;padding:1px 8px;font-weight:700;}
+      .ls-b.ok{background:#e3f4e8;color:#1b7f3b;} .ls-b.warn{background:#fff3cd;color:#7a5200;} .ls-b.off{background:#f1f3f5;color:#6b7280;}</style>
+    <div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;"><h2 style="margin:0;">👥 סטטוס התחברות</h2>
+      <button class="btn small secondary" data-action="portal-ls-refresh">🔄 רענון</button></div>
+    <p class="muted" style="font-size:.85em;margin:4px 0 8px;">"מחובר" = נכנס לאיזור האישי והכניסה עדיין בתוקף (30 יום). "התראות" = הפעיל התראות במכשיר. כניסות נרשמות מהיום והלאה (וגם מכניסות שעדיין בתוקף).</p>
+    <div class="ar-chips" style="margin-bottom:6px;">${chip("all", `הכל (${all.length})`)}${chip("ok", `🟢 מחוברים + התראות (${cnt("ok")})`)}${chip("nopush", `🟡 בלי התראות (${cnt("nopush")})`)}${chip("off", `⚪ לא מחוברים (${cnt("off")})`)}</div>
+    ${grpHtml("מנהלים וקב\"טים", mgs)}
+    ${Object.keys(groups).map(k=>grpHtml(k, groups[k])).join("")}
+    ${!all.filter(show).length ? `<p class="muted">אין משתמשים בסינון הזה.</p>` : ""}`);
+}
+
 /* ---------- עמודי משנה (view "pview") ---------- */
-const PV_TITLES = { "ar-list":"דוחות פעולה", "ar-view":"דוח פעולה", "equip-workers":"ציוד אישי לעובדים", "equip-edit":"ציוד אישי", "areq-list":"בקשות מנהלתיות", "areq-view":"בקשה מנהלתית", "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
+const PV_TITLES = { "login-status":"סטטוס התחברות", "ar-list":"דוחות פעולה", "ar-view":"דוח פעולה", "equip-workers":"ציוד אישי לעובדים", "equip-edit":"ציוד אישי", "areq-list":"בקשות מנהלתיות", "areq-view":"בקשה מנהלתית", "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
   "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה", "cal":"יומן משותף" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
@@ -3285,6 +3325,7 @@ function pvGo(App, page, args, push){
   if(page==="trn-quiz-new" || page==="trn-quiz-edit") PV.quiz = null;
   PV.delAsk = false;
   if(page==="swap-mgr") PV.swap = null;
+  if(page==="login-status"){ LS.data = null; LS.filter = "all"; }
   App.S.view = "pview"; App.S.ui = {};
   App.render();
 }
@@ -3439,6 +3480,7 @@ function renderPView(App){
   if(pg==="cal") return renderCalendar(App, ms, back);
   if(pg==="dmg-list" || pg==="dmg-view" || pg==="dmg-new"){ const h = renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
   if(pg==="equip-workers" || pg==="equip-edit"){ const h = renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
+  if(pg==="login-status") return renderLoginStatus(App, ms, wrap, loading);
   if(pg==="ar-list" || pg==="ar-view"){ const h = renderActionReportMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
   if(pg==="areq-list" || pg==="areq-view"){ const h = renderAdminReqMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
   if(pg==="k-msg-guards" || pg==="k-msg-mgmt" || pg==="mgmt-inbox"){ const h = renderMsgPages(App, ms, pg, wrap, loading, msgs); if(h) return h; }
@@ -4332,7 +4374,8 @@ function renderManagerHome(App, ms){
   ${ms.is_admin ? `<div class="card">
     <h3>🔑 ניהול מערכת</h3>
     <div class="grid-teams">${tile("portal-mh-codes", "🔑 עריכת קודים של מנהלים", "קביעה ושינוי קוד אישי לכל מנהל")}
-      <div class="team-tile" data-action="portal-pv" data-page="unit-dash"><div style="font-size:1.1em;font-weight:700;">📊 לוח מנהל יחידה</div><div class="muted" style="font-size:.85em;margin-top:4px;">תמונת מצב כמו שמנהל היחידה רואה</div></div></div>
+      <div class="team-tile" data-action="portal-pv" data-page="unit-dash"><div style="font-size:1.1em;font-weight:700;">📊 לוח מנהל יחידה</div><div class="muted" style="font-size:.85em;margin-top:4px;">תמונת מצב כמו שמנהל היחידה רואה</div></div>
+      <div class="team-tile" data-action="portal-pv" data-page="login-status"><div style="font-size:1.1em;font-weight:700;">👥 סטטוס התחברות</div><div class="muted" style="font-size:.85em;margin-top:4px;">מי מחובר, התראות וכניסה אחרונה</div></div></div>
   </div>` : ""}
   ${sched.length && !ms.edit_as_button? `<div class="card">
     <h3>סידור עבודה</h3>
@@ -4620,6 +4663,8 @@ function onClick(App, a, el){
     return pvGo(App, d.page, {id:d.id, kind:d.kind, from:d.from, name:d.name, program:d.program, ver:d.ver});
   }
   if(a==="portal-pv-back") return pvBack(App);
+  if(a==="portal-ls-filter"){ LS.filter = el.dataset.k; return App.render(); }
+  if(a==="portal-ls-refresh"){ LS.data = null; return App.render(); }
   if(a.indexOf("portal-todo-")===0) return todoAction(App, a, el);
   if(a.indexOf("portal-inc-")===0) return incClick(App, a, el);
   if(a.indexOf("portal-cal-")===0 || a.indexOf("portal-calw-")===0) return calClick(App, a, el);
