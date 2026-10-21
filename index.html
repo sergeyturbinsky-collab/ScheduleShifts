@@ -111,6 +111,26 @@
   #printArea .tmpl-table th:first-child, #printArea .tmpl-table td.tmpl-pos{width:96px;}
   #printArea .tmpl-table td{height:60px;vertical-align:middle;white-space:normal;overflow-wrap:anywhere;line-height:1.25;}
   .tmpl-restwarn-note{display:block;font-size:.8em;font-weight:700;color:var(--danger);}
+  /* פלט PDF מתומצת (2026-10-21) - טבלה צפופה בסגנון האקסל של סרגיי */
+  .cpt-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11px;margin:0 0 8px;break-inside:avoid;page-break-inside:avoid;}
+  .cpt-table th,.cpt-table td{background:#fff;color:#111;border:1px solid #7b8794;padding:2px 3px;text-align:center;vertical-align:middle;line-height:1.2;overflow-wrap:anywhere;}
+  .cpt-table thead th{background:#fff59d;font-weight:700;font-size:11.5px;}
+  .cpt-table th.cpt-sector{background:#1f4e8c;color:#fff;font-size:13px;}
+  .cpt-table .cpt-sub{font-size:9px;font-weight:400;color:#374151;}
+  .cpt-table td.cpt-shift{background:#e8eef7;font-weight:700;}
+  .cpt-table td.cpt-hcol{background:#f4f7fb;font-size:10px;padding:2px 1px;}
+  .cpt-table td.cpt-hcol .tmpl-pos-hrs{font-size:9.5px;color:#111;white-space:nowrap;}
+  .cpt-table tr.cpt-first td{border-top:2px solid #1f4e8c;}
+  .cpt-table td.cpt-na{background:#4b5563;}
+  .cpt-table td.cpt-missing{color:#b42318;font-style:italic;}
+  .cpt-table td.cpt-task{background:#fde7c8;}
+  .cpt-table td.cpt-task-cell{background:#fff7ec;font-size:10px;}
+  .cpt-hrs{font-size:10px;color:#1f2937;white-space:nowrap;}
+  .cpt-ach{display:inline-block;background:#0c3a6e;color:#fff;font-size:8.5px;font-weight:700;border-radius:6px;padding:0 4px;vertical-align:middle;}
+  .cpt-title{margin:0 0 6px;font-size:15px;}
+  #printArea.cpt-print{background:#fff;}
+  .cpt-print .logo-strip{padding-bottom:4px;margin-bottom:6px;}
+
   .slot-editor{background:#f6fbff;border-top:2px solid var(--primary);}
   .backlink{cursor:pointer;color:var(--primary);font-size:13px;margin-bottom:10px;display:inline-block;}
   footer{text-align:center;color:var(--muted);font-size:12px;padding:20px;}
@@ -171,7 +191,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=87"></script>
+<script src="portal.js?v=88"></script>
 <script>
 (function(){
 "use strict";
@@ -1002,9 +1022,11 @@ function renderPrintView(team){
   const isMoked = group.citySectors[0]==="מוקד";
   // מוקד (תקופה דו-שבועית) - כל שבוע מוצג בנפרד, וכל שבוע מתחיל בעמוד חדש בהדפסה. לבקשת סרגיי (2026-10-07)
   const weeks = (isMoked && dates.length>7) ? [dates.slice(0,7), dates.slice(7)] : [dates];
+  // מאבטחים: ברירת המחדל היא פלט מתומצת (טבלה אחת, עמוד אחד לרוחב). "תצוגה מפורטת" - הפלט הקודם (2026-10-21)
+  const compact = !isMoked && !ui.printDetailed;
   const grid = !group.citySectors.length ? `<p class="muted">אין נתוני התקנים להצגה.</p>`
     : weeks.map((wk,i)=>{
-        const g = isMoked ? renderMokedTemplateGrid(group, wk, ui, "view") : renderTemplateGrid(group, wk, ui, "view");
+        const g = isMoked ? renderMokedTemplateGrid(group, wk, ui, "view") : (compact ? renderCompactPrintGrid(group, wk, ui) : renderTemplateGrid(group, wk, ui, "view"));
         if(weeks.length===1) return g;
         return `<div class="print-week"${i>0?' style="break-before:page;page-break-before:always;margin-top:18px;"':''}>
           <h3 style="margin:0 0 8px;">שבוע ${i+1}: ${fmtDateHeb(wk[0])} — ${fmtDateHeb(wk[wk.length-1])}</h3>${g}</div>`;
@@ -1012,14 +1034,19 @@ function renderPrintView(team){
   return `
   <div class="row no-print" style="margin-bottom:10px;">
     <button class="btn ok" data-action="do-print">🖨️ הדפס / שמור כ-PDF</button>
+    ${isMoked ? "" : `<button class="btn secondary" data-action="print-toggle-detail">${compact ? "📋 תצוגה מפורטת" : "📄 תצוגה מתומצתת (עמוד אחד)"}</button>`}
     ${S.view==="mgrview" ? "" : `<button class="btn secondary" data-action="close-print">סגור</button>`}
   </div>
-  <div id="printArea">
-    <div class="print-header">
+  ${compact ? `<style>@page{size:A4 landscape;margin:7mm;} @media print{ html,body{background:#fff!important;} }</style>` : ""}
+  <div id="printArea"${compact?' class="cpt-print"':''}>
+    ${compact ? `<div class="print-header">
+      ${logoStripHtml(30)}
+      <h2 class="cpt-title">${escapeHtml(group.label)} — סידור עבודה · ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(dates[dates.length-1])}</h2>
+    </div>` : `<div class="print-header">
       ${logoStripHtml(48)}
       <h2 style="margin:0 0 4px;">${escapeHtml(group.label)} — סידור עבודה</h2>
       <p style="margin:0 0 10px;">תקופה: ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(dates[dates.length-1])}</p>
-    </div>
+    </div>`}
     ${grid}
   </div>`;
 }
@@ -1989,6 +2016,62 @@ function renderTemplateGrid(group, dates, ui, mode){
   }).join("");
 
   return blocksHtml || `<p class="muted">אין תקן מוגדר לגזרות אלו.</p>`;
+}
+
+/* פלט PDF מתומצת (2026-10-21, סרגיי: "שהפלט לא יתפרס על פני כל כך הרבה עמודים... כדוגמת טבלת האקסל"):
+   טבלה אחת לכל גזרה - עמודת משמרת + עמודת שעות + עמודה לכל יום, שורה לכל סייר, שורות צפופות. בתא רק שם העובד;
+   שעות מוצגות בסוגריים רק כשהן שונות מהשעות של המשמרת (שעות מותאמות, שישי בוקר, מוצ"ש). מתואמת מוצגת בשורות
+   משלה (בלי שורות ה"מראה" שבבוקר/ערב). משימות שאינן משמרת - רק שורות שיש בהן משימות. A4 לרוחב (@page cptland). */
+const CPT_BUCKET_ORDER = {morning:1, evening:2, coordinated:3, night:4};
+function renderCompactPrintGrid(group, dates, ui){
+  const workers = ui.workers || [], allWorkersById = ui.allWorkersById || {};
+  const nameOf = id=>{ const x = workers.find(y=>y.id===id) || allWorkersById[id]; return x ? x.name : "?"; };
+  const assignmentsByDate = {};
+  (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
+  const hh = (a,b)=>`${tmplHourNum(a)}-${tmplHourNum(b)}`;
+  const tables = buildTemplateData(group, dates, S.quotas).map(secData=>{
+    if(!secData.buckets.length) return "";
+    const buckets = secData.buckets.slice().sort((a,b)=>(CPT_BUCKET_ORDER[a.key]||9)-(CPT_BUCKET_ORDER[b.key]||9) || a.minStart.localeCompare(b.minStart));
+    const head = `<tr><th colspan="2" class="cpt-sector">${escapeHtml(secData.sector)}</th>${dates.map(d=>{
+        const dt = dayTypeForDate(d); let extra = "";
+        if(dt==="friday" && SHABBAT_CITIES[secData.sector]){ const m = candleLightingMinutes(d, secData.sector); if(m!=null) extra = `🕯️ כניסת שבת ${fmtMinutes(m)}`; }
+        if(dt==="saturday" && SHABBAT_CITIES[secData.sector] && secData.sector!=="מוקד"){ extra = `מוצ"ש מ-${motzashStart(d, secData.sector)}`; }
+        return `<th>${fmtDateHeb(d)}${extra?`<div class="cpt-sub">${extra}</div>`:""}</th>`; }).join("")}</tr>`;
+    const body = buckets.map(bucket=>{
+      // שעות "רגילות" של המשמרת = הצירוף הנפוץ ביותר בתקופה; תא ששעותיו שונות - השעות בסוגריים
+      const cnt = {}; Object.values(bucket.perDate).forEach(q=>{ if(q){ const k = hh(q.start_time,q.end_time); cnt[k] = (cnt[k]||0)+1; } });
+      const std = Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0];
+      const n = bucket.maxReq; if(!n) return "";
+      const label = escapeHtml(bucket.label.replace(/^משמרת\s+/,""));
+      return Array.from({length:n}, (_,i)=>i+1).map(pos=>{
+        const cells = dates.map(d=>{
+          const q = bucket.perDate[d];
+          if(!q || pos>q.required_count) return `<td class="cpt-na"></td>`;
+          const a = tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type)[pos-1];
+          const shadows = tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, a?[a.worker_id]:[], pos===1)
+            .map(sh=>` + ${escapeHtml(nameOf(sh.worker_id))} (ח)`).join("");
+          if(!a) return `<td class="cpt-missing">חוסר${shadows}</td>`;
+          const w = workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id];
+          const hrs = tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate);
+          return `<td>${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="cpt-ach">אחמ"ש</span>`:""}${hrs!==std?` <span class="cpt-hrs" dir="ltr">(${hrs})</span>`:""}${shadows}</td>`;
+        }).join("");
+        const lead = pos===1 ? `<td class="cpt-shift" rowspan="${n}">${label}</td><td class="cpt-hcol" rowspan="${n}">${tmplBucketHoursHtml(bucket) || `<span dir="ltr">${std||""}</span>`}</td>` : "";
+        return `<tr class="${pos===1?"cpt-first":""}">${lead}${cells}</tr>`;
+      }).join("");
+    }).join("");
+    // משימות שאינן משמרת - רק השורות שיש בהן משימות בפועל
+    const tasks = (ui.schedTasks||[]).filter(t=>t.sector===secData.sector && dates.includes(t.date));
+    const slots = Array.from(new Set(tasks.map(t=>t.slot))).sort((a,b)=>a-b);
+    const taskRows = slots.map((slot,i)=>`<tr class="${i===0?"cpt-first":""}">${i===0?`<td class="cpt-shift cpt-task" colspan="2" rowspan="${slots.length}">משימות<br><span class="cpt-sub">(לא משמרת)</span></td>`:""}${dates.map(d=>{
+        const t = tasks.find(x=>x.date===d && x.slot===slot);
+        if(!t) return `<td class="cpt-task-empty"></td>`;
+        const th = t.start||t.end ? ` <span class="cpt-hrs" dir="ltr">(${escapeHtml(t.start?tmplHourNum(t.start):"")}${t.end?"-"+escapeHtml(tmplHourNum(t.end)):""})</span>` : "";
+        return `<td class="cpt-task-cell"><b>${escapeHtml(t.worker_name||"?")}</b> — ${escapeHtml(t.title)}${th}</td>`;
+      }).join("")}</tr>`).join("");
+    return `<table class="cpt-table"><colgroup><col style="width:54px"><col style="width:104px">${dates.map(()=>"<col>").join("")}</colgroup>
+      <thead>${head}</thead><tbody>${body}${taskRows}</tbody></table>`;
+  }).join("");
+  return tables || `<p class="muted">אין תקן מוגדר לגזרות אלו.</p>`;
 }
 
 /* ================================================================
@@ -3841,6 +3924,7 @@ function onAppClick(e){
   if(a==="open-print"){ ui.printOpen = true; return render(); }
   if(a==="close-print"){ ui.printOpen = false; return render(); }
   if(a==="do-print"){ window.print(); return; }
+  if(a==="print-toggle-detail"){ ui.printDetailed = !ui.printDetailed; return render(); }
   if(a==="toggle-monthly"){
     ui.monthlyOpen = !ui.monthlyOpen;
     if(ui.monthlyOpen && !ui.monthlyValue){
