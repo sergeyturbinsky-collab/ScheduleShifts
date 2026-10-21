@@ -423,12 +423,14 @@ function renderWorkerHome(App, session){
       <h2 style="margin:0;">שלום, ${esc(session.name)}</h2>
       <button class="btn small secondary" data-action="portal-logout">יציאה</button>
     </div>
-    <div class="grid-teams" style="margin-top:12px;">
-      ${tile("portal-go-submit", "הגשת משמרות", "הגשת אילוצים לתקופה הבאה")}
-      ${tile("portal-go-training", "הדרכה", "לומדות, בקרות ותכנים")}
-      ${isMokedWorker(App, session) ? "" : tile("portal-go-logistics", "לוגיסטי", "הציוד שלי ובקשת ציוד")}
+    <!-- סדר הרובריקות (2026-10-21, סרגיי): שתיים בכל שורה - ימין/שמאל: דוח פעולה | דיווח נזק, משמרות | הדרכה, מנהלתיות | לוגיסטי -->
+    <div class="grid-teams" style="margin-top:12px;grid-template-columns:repeat(2,minmax(0,1fr));">
+      ${isMokedWorker(App, session) ? "" : tile("portal-go-ar", "📝 דוח פעולה", "דוח על אירוע — בעיקר בלחיצות")}
       ${isMokedWorker(App, session) ? "" : tile("portal-go-damage", "⚠️ דיווח נזק / תאונה", "דיווח ראשוני, מעורבים ותמונות")}
-      ${tile("portal-go-areq", "📝 בקשה מנהלתית", "חופשה / מילואים / מחלה")}
+      ${tile("portal-go-submit", "🗓️ משמרות", "הגשת אילוצים לתקופה הבאה")}
+      ${tile("portal-go-training", "🎓 הדרכה", "לומדות, בקרות ותכנים")}
+      ${tile("portal-go-areq", "📋 מנהלתיות", "חופשה / מילואים / מחלה")}
+      ${isMokedWorker(App, session) ? "" : tile("portal-go-logistics", "🎒 לוגיסטי", "הציוד שלי ובקשת ציוד")}
     </div>
   </div>
   ${session.schedule_editor ? (()=>{ const t = App.teamById(session.team_id); const lbl = t ? ((t.sectors&&t.sectors.length) ? t.sectors.join(" / ") : t.name) : "";
@@ -946,6 +948,296 @@ function renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs){
   }
   return null;
 }
+/* ================================================================
+   דוח פעולה מאבטח (2026-10-21, סרגיי): המאבטח ממלא דוח פעולה באיזור האישי - כמעט הכל בחירות (צ'יפים), מעט מלל
+   (כתובת, מספרי אירוע, השלמה לא חובה). מהבחירות נבנה דו"ח מנוסח בפורמט "דוח פעולה מאבטח" (לפי הדוגמה של סרגיי),
+   נשמר כמוצר מוגמר ומגיע לקב"ט של הצוות ולסרגיי (פוש + "📝 דוחות פעולה"), עם הפקת PDF, העתקה והדפסה.
+   השרת: worker_action_report_create / _add_image / _list, worker_team_mates, mgr_action_report_list / _seen,
+   action_report_images_get.
+   ================================================================ */
+const AR = { open:false, f:null, mates:null, busy:false, error:null, okMsg:null, mine:null, view:null, images:null, photos:[],
+  list:null, listAt:0, mview:null, mimages:null };
+const AR_OPT = {
+  type: ["אלימות / קטטה","תקיפת נהג","תקיפת פקח/ית","גניבה / שוד","איומים / הטרדה","ונדליזם / נזק לרכוש","חפץ חשוד","אדם במצוקה / אירוע רפואי","שכרות / הפרת סדר","נוסע ללא תשלום / סירוב להזדהות","תאונת דרכים","אחר"],
+  involved: ["נהג אוטובוס","פקח/ית","נוסע/ת","עובר/ת אורח","מאבטח","קטין","אחר"],
+  source: ["קריאה מהמוקד","זיהוי עצמי בסיור","פנייה של נהג","פנייה של פקח/ית","פנייה של אזרח","בקשת משטרה"],
+  role: ["הגעתי ראשון לזירה","הגעתי כתגבור","תיאמתי מול הכוחות והכוונתי סייר לזירה"],
+  arrive: ["פחות מ-3 דק׳","3–5 דק׳","5–10 דק׳","10–20 דק׳","מעל 20 דק׳"],
+  findings: ["המעורבים נמצאו בזירה","החשוד נמצא בזירה","החשוד נמלט מהמקום","החשוד תחת השפעת אלכוהול / סמים","החשוד החזיק נשק / חפץ חד","נגנב רכוש","יש פצועים","יש עדים לאירוע","יש תיעוד מצלמות"],
+  suspects: ["אין","1","2","3 ומעלה","לא ידוע"],
+  sgender: ["גבר","אישה","לא ידוע"],
+  sage: ["קטין","18–30","30–50","50+","לא ידוע"],
+  actions: ["תיאום מול המוקד","הכוונת כוחות","תחקור ראשוני של המעורבים","איסוף פרטי עדים","הפרדה בין הצדדים","הרגעת הצדדים","מתן עזרה ראשונה","סריקות באזור","איתור החשוד","עיכוב החשוד עד הגעת משטרה","ליווי השוטר לכתובת החשוד","זיהוי החשוד ע״י המתלונן","השבת הרכוש לבעליו","צילום ותיעוד הזירה","הרחקת קהל ואבטחת הזירה"],
+  yn: ["כן","לא"],
+  punit: ["ניידת","אופנוע","סיור רגלי","בילוש"],
+  end: ["החשוד עוכב ע״י המשטרה להמשך חקירה","החשוד נעצר","החשוד נמלט ולא אותר","הרכוש הוחזר לבעליו","הוגשה תלונה במשטרה","פינוי לבית חולים","הנהג המשיך במסלול","האוטובוס הושבת","הצדדים פוזרו","האירוע הסתיים ללא צורך בהמשך טיפול","נדרש המשך טיפול של הקב״ט"],
+  body: ["ללא נזק גוף","פציעה קלה","פציעה בינונית","פציעה קשה"],
+  prop: ["ללא נזק רכוש","נגרם נזק לרכוש"]
+};
+const AR_MULTI = {involved:1, findings:1, actions:1, end:1, mates:1};
+function arPad(n){ return String(n).padStart(2,"0"); }
+function arNewForm(){ const d = new Date(); return {date:`${d.getFullYear()}-${arPad(d.getMonth()+1)}-${arPad(d.getDate())}`, time:`${arPad(d.getHours())}:${arPad(d.getMinutes())}`,
+  involved:[], findings:[], actions:[], end:[], mates:[], mda:"לא", police:"לא", body:"ללא נזק גוף", prop:"ללא נזק רכוש"}; }
+function arDraftKey(App){ const s = loadSession(App); return s ? "cst_ar_draft_" + (s.worker_id || s.name || "") : null; }
+function arSaveDraft(App){ try{ const k = arDraftKey(App); if(k && AR.f) localStorage.setItem(k, JSON.stringify(AR.f)); }catch(e){} }
+function arLoadDraft(App){ try{ const k = arDraftKey(App); return k ? JSON.parse(localStorage.getItem(k)||"null") : null; }catch(e){ return null; } }
+function arClearDraft(App){ try{ const k = arDraftKey(App); if(k) localStorage.removeItem(k); }catch(e){} }
+function arSync(App){
+  if(!AR.f) return;
+  document.querySelectorAll("[data-arf]").forEach(x=>{ AR.f[x.dataset.arf] = x.value; });
+  arSaveDraft(App);
+}
+function arFmtDate(s){ return s ? `${s.slice(8,10)}/${s.slice(5,7)}/${s.slice(0,4)}` : ""; }
+/* בניית הדו"ח המנוסח מהבחירות - בפורמט "דוח פעולה מאבטח" */
+function arBuildText(f, name){
+  const L = [], has = v=>v && String(v).trim();
+  L.push("דוח פעולה מאבטח");
+  L.push(`דיווח אירוע - ${arFmtDate(f.date)}`);
+  if(has(f.sayvu)) L.push(`מס׳ אירוע בסביו: ${f.sayvu.trim()}`);
+  L.push("");
+  L.push("פרטי האירוע:");
+  const src = {"קריאה מהמוקד":"התקבלה קריאה במוקד","זיהוי עצמי בסיור":"זוהה בסיור","פנייה של נהג":"התקבלה פנייה מנהג","פנייה של פקח/ית":"התקבלה פנייה מפקח/ית",
+    "פנייה של אזרח":"התקבלה פנייה מאזרח","בקשת משטרה":"התקבלה בקשה מהמשטרה"}[f.source] || "התקבל דיווח";
+  const type = f.type==="אחר" && has(f.typeOther) ? f.typeOther.trim() : (f.type||"");
+  L.push(`בשעה ${f.time||""} ${src} על אירוע ${type}${has(f.location)?` ב${f.location.trim()}`:""}.`);
+  const inv = (f.involved||[]).map(x=>x==="אחר" && has(f.involvedOther) ? f.involvedOther.trim() : x);
+  if(inv.length) L.push(`מעורבים: ${inv.join(", ")}.`);
+  if(f.role==="תיאמתי מול הכוחות והכוונתי סייר לזירה") L.push(`אני (${name}) ביצעתי תיאום מול הכוחות בשטח והכוונתי את הסייר הקרוב ביותר לאירוע${has(f.directed)?` – ${f.directed}`:""}.`);
+  else if(f.role==="הגעתי ראשון לזירה") L.push(`אני (${name}) הגעתי ראשון לזירה.`);
+  else if(f.role==="הגעתי כתגבור") L.push(`אני (${name}) הגעתי לזירה כתגבור.`);
+  else L.push(`מדווח: ${name}.`);
+  if(f.arrive) L.push(`זמן הגעה לזירה: ${f.arrive}.`);
+  const fnd = (f.findings||[]).slice();
+  if(fnd.length || (f.suspects && f.suspects!=="אין")){
+    let s = `זיהוי האירוע: בהגעה למקום${fnd.length?` — ${fnd.join("; ")}`:""}.`;
+    if(f.suspects && f.suspects!=="אין"){ const sd = [f.sgender, f.sage].filter(x=>x && x!=="לא ידוע"); s += ` חשודים: ${f.suspects}${sd.length?` (${sd.join(", ")})`:""}.`; }
+    L.push(s);
+  }
+  L.push("");
+  L.push(`מד״א מספר אירוע: ${f.mda==="כן" && has(f.mdaNo) ? f.mdaNo.trim() : "—"}`);
+  L.push(`הוזמנה לזירה: ${f.mda==="כן"?"כן":"לא"}.`);
+  if(f.mda==="כן") L.push(`הערה: ${[f.mdaArrived?`הגיעה לזירה: ${f.mdaArrived}`:"", f.mdaEvac?`פינוי לבית חולים: ${f.mdaEvac}`:""].filter(Boolean).join(" · ") || "—"}`);
+  L.push(`משטרה מספר אירוע: ${f.police==="כן" && has(f.policeNo) ? f.policeNo.trim() : "—"}`);
+  L.push(`הוזמנה לזירה: ${f.police==="כן"?"כן":"לא"}.`);
+  if(f.police==="כן") L.push(`הערה: ${[f.policeArrived?`הגיעה לזירה: ${f.policeArrived}`:"", f.policeUnit?`כוח: ${f.policeUnit}`:"", f.policeTime?`זמן הגעה: ${f.policeTime}`:""].filter(Boolean).join(" · ") || "—"}`);
+  if((f.actions||[]).length){ L.push(""); L.push("פעולות שבוצעו:"); f.actions.forEach(x=>L.push(`• ${x}`)); }
+  L.push(""); L.push("ממצאים וסיום אירוע:");
+  (f.end||[]).forEach(x=>L.push(`• ${x}`));
+  L.push(`• ${f.body||"ללא נזק גוף"}`); L.push(`• ${f.prop||"ללא נזק רכוש"}`);
+  if(has(f.notes)){ L.push(""); L.push("פרטים נוספים:"); L.push(f.notes.trim()); }
+  L.push("");
+  const ops = [name].concat(f.mates||[]).concat(has(f.matesOther) ? f.matesOther.split(/[,،]/).map(x=>x.trim()).filter(Boolean) : []);
+  L.push(`מבצעים: ${Array.from(new Set(ops)).join(", ")}.`);
+  return L.join("\n");
+}
+/* תצוגת הדו"ח המוגמר (מהמלל השמור) */
+const AR_HEADS = ["דוח פעולה מאבטח","פרטי האירוע:","פעולות שבוצעו:","ממצאים וסיום אירוע:","פרטים נוספים:"];
+function arReportHtml(App, r, images){
+  const esc = App.escapeHtml;
+  const lines = String(r.report_text||"").split("\n");
+  let html = "", inList = false;
+  lines.forEach((ln, i)=>{
+    const isLi = ln.startsWith("• ");
+    if(!isLi && inList){ html += "</ul>"; inList = false; }
+    if(isLi){ if(!inList){ html += `<ul class="ar-ul">`; inList = true; } html += `<li>${esc(ln.slice(2))}</li>`; return; }
+    if(i===0) html += `<h3 class="ar-h1">${esc(ln)}</h3>`;
+    else if(AR_HEADS.includes(ln)) html += `<div class="ar-h">${esc(ln)}</div>`;
+    else if(!ln.trim()) html += `<div class="ar-gap"></div>`;
+    else { const m = ln.match(/^([^:]{2,30}:)(.*)$/); html += `<div class="ar-ln">${m && i>0 && !/^בשעה/.test(ln) ? `<b>${esc(m[1])}</b>${esc(m[2])}` : esc(ln)}</div>`; }
+  });
+  if(inList) html += "</ul>";
+  return `<div class="ar-doc">${html}
+    <div class="ar-meta">${esc(r.worker_name||"")}${r.branch?` · ${esc(r.branch)}`:""} · נשלח ${esc(dmgFmtDate(r.created_at))}</div>
+    ${images && images.length ? `<div class="ar-h">תמונות מהזירה</div><div class="dmg-imgs ar-imgs">${images.map(s=>`<img src="${s}" alt="">`).join("")}</div>` : ""}</div>`;
+}
+function arChips(App, k, opts){
+  const f = AR.f, esc = App.escapeHtml, multi = !!AR_MULTI[k];
+  return `<div class="ar-chips">${opts.map(o=>{ const on = multi ? (f[k]||[]).includes(o) : f[k]===o;
+    return `<span class="ar-chip${on?" on":""}" data-action="portal-ar-chip" data-k="${k}" data-v="${esc(o)}">${on&&multi?"✓ ":""}${esc(o)}</span>`; }).join("")}</div>`;
+}
+function arFormHtml(App, session){
+  const esc = App.escapeHtml, f = AR.f;
+  if(AR.mates===null && !AR.matesLoading){ AR.matesLoading = true; App.apiRpc("worker_team_mates", {p_token:session.token}).then(x=>{ AR.mates = (x||[]).map(m=>m.name); AR.matesLoading = false; App.render(); }).catch(()=>{ AR.mates = []; AR.matesLoading = false; }); }
+  const mates = AR.mates || [];
+  const sec = (title, inner, req)=>`<div class="ar-sec"><div class="ar-sec-h">${title}${req?' <span class="ar-req">*</span>':""}</div>${inner}</div>`;
+  const inp = (k, ph, type, extra)=>`<input type="${type||"text"}" data-arf="${k}" value="${esc(f[k]||"")}" placeholder="${esc(ph||"")}" ${extra||""}>`;
+  return `<span class="backlink" data-action="portal-ar-close">◀ יציאה (נשמר כטיוטה)</span>
+    <h3 style="margin:6px 0 2px;">📝 דוח פעולה</h3>
+    <p class="muted" style="margin:0 0 8px;font-size:.88em;">רוב הדו"ח בלחיצות. הדו"ח המנוסח נבנה אוטומטית ונשלח לקב"ט ולסרגיי. <span class="ar-req">*</span> חובה</p>
+    ${sec("מתי ואיפה", `<div class="row">
+        <div class="field"><label>תאריך</label>${inp("date","","date")}</div>
+        <div class="field"><label>שעה</label>${inp("time","","time")}</div>
+        <div class="field"><label>מס׳ אירוע בסביו</label>${inp("sayvu","לא חובה","text",'inputmode="numeric" maxlength="20"')}</div></div>
+      <div class="field"><label>כתובת / מיקום <span class="ar-req">*</span></label>${inp("location","למשל: אינטרנציונל 24","text",'maxlength="200"')}</div>`, true)}
+    ${sec("סוג האירוע", arChips(App, "type", AR_OPT.type) + (f.type==="אחר" ? `<div class="field" style="margin-top:6px;">${inp("typeOther","מה סוג האירוע","text",'maxlength="80"')}</div>` : ""), true)}
+    ${sec("מי היו מעורבים", arChips(App, "involved", AR_OPT.involved) + ((f.involved||[]).includes("אחר") ? `<div class="field" style="margin-top:6px;">${inp("involvedOther","מי עוד","text",'maxlength="80"')}</div>` : ""))}
+    ${sec("איך התקבל האירוע", arChips(App, "source", AR_OPT.source), true)}
+    ${sec("התפקיד שלי באירוע", arChips(App, "role", AR_OPT.role)
+      + (f.role==="תיאמתי מול הכוחות והכוונתי סייר לזירה" && mates.length ? `<div class="ar-sub">איזה סייר הוכוון לזירה:</div><div class="ar-chips">${mates.map(n=>`<span class="ar-chip${f.directed===n?" on":""}" data-action="portal-ar-chip" data-k="directed" data-v="${esc(n)}">${esc(n)}</span>`).join("")}</div>` : "")
+      + `<div class="ar-sub">זמן הגעה לזירה:</div>${arChips(App, "arrive", AR_OPT.arrive)}`)}
+    ${sec("מה נמצא בזירה", arChips(App, "findings", AR_OPT.findings)
+      + `<div class="ar-sub">חשודים:</div>${arChips(App, "suspects", AR_OPT.suspects)}`
+      + (f.suspects && f.suspects!=="אין" ? `<div class="ar-sub">מין:</div>${arChips(App, "sgender", AR_OPT.sgender)}<div class="ar-sub">גיל משוער:</div>${arChips(App, "sage", AR_OPT.sage)}` : ""))}
+    ${sec("🚑 מד״א", `<div class="ar-sub" style="margin-top:0;">הוזמנה לזירה:</div>${arChips(App, "mda", AR_OPT.yn)}
+      ${f.mda==="כן" ? `<div class="field" style="margin-top:6px;"><label>מס׳ אירוע מד״א</label>${inp("mdaNo","לא חובה","text",'maxlength="30"')}</div>
+        <div class="ar-sub">הגיעה לזירה:</div>${arChips(App, "mdaArrived", AR_OPT.yn)}<div class="ar-sub">פינוי לבית חולים:</div>${arChips(App, "mdaEvac", AR_OPT.yn)}` : ""}`)}
+    ${sec("🚓 משטרה", `<div class="ar-sub" style="margin-top:0;">הוזמנה לזירה:</div>${arChips(App, "police", AR_OPT.yn)}
+      ${f.police==="כן" ? `<div class="field" style="margin-top:6px;"><label>מס׳ אירוע משטרה</label>${inp("policeNo","לא חובה","text",'maxlength="30"')}</div>
+        <div class="ar-sub">הגיעה לזירה:</div>${arChips(App, "policeArrived", AR_OPT.yn)}<div class="ar-sub">איזה כוח:</div>${arChips(App, "policeUnit", AR_OPT.punit)}
+        <div class="ar-sub">זמן הגעה:</div>${arChips(App, "policeTime", AR_OPT.arrive)}` : ""}`)}
+    ${sec("פעולות שביצענו", arChips(App, "actions", AR_OPT.actions))}
+    ${sec("איך הסתיים האירוע", arChips(App, "end", AR_OPT.end)
+      + `<div class="ar-sub">נזק גוף:</div>${arChips(App, "body", AR_OPT.body)}<div class="ar-sub">נזק רכוש:</div>${arChips(App, "prop", AR_OPT.prop)}`)}
+    ${sec("מבצעים — מי היה איתי", (mates.length ? `<div class="ar-chips">${mates.map(n=>{ const on = (f.mates||[]).includes(n); return `<span class="ar-chip${on?" on":""}" data-action="portal-ar-chip" data-k="mates" data-v="${esc(n)}">${on?"✓ ":""}${esc(n)}</span>`; }).join("")}</div>` : `<p class="muted" style="margin:0;">טוען...</p>`)
+      + `<div class="field" style="margin-top:6px;">${inp("matesOther","מישהו שלא ברשימה (לא חובה)","text",'maxlength="120"')}</div>`)}
+    ${sec("פרטים נוספים (לא חובה)", `<textarea data-arf="notes" rows="3" maxlength="3000" placeholder="רק אם יש משהו שלא מופיע בבחירות">${esc(f.notes||"")}</textarea>
+      <div class="ar-sub">📷 תמונות מהזירה (לא חובה, עד 8):</div>
+      <span><label class="btn secondary small" style="cursor:pointer;">📷 צילום<input type="file" accept="image/*" capture="environment" data-action="portal-ar-files" style="display:none;"></label>
+      <label class="btn secondary small" style="cursor:pointer;">🖼️ מהגלריה<input type="file" accept="image/*" multiple data-action="portal-ar-files" style="display:none;"></label></span>
+      ${AR.photos.length ? `<div class="dmg-imgs">${AR.photos.map((s,j)=>`<span style="position:relative;display:inline-block;"><img src="${s}" alt=""><span data-action="portal-ar-rmimg" data-j="${j}" style="position:absolute;top:2px;left:2px;background:#fff;border-radius:50%;padding:0 6px;cursor:pointer;">✕</span></span>`).join("")}</div>` : ""}`)}
+    ${AR.error ? `<p class="shortage">${esc(AR.error)}</p>` : ""}
+    <div class="flexbar" style="gap:6px;flex-wrap:wrap;margin-top:8px;">
+      <button class="btn secondary" data-action="portal-ar-preview">👁 תצוגה מקדימה</button>
+      <button class="btn ok" data-action="portal-ar-send" ${AR.busy?"disabled":""}>${AR.busy?"שולח...":"📤 שליחת הדו\"ח"}</button>
+    </div>
+    ${AR.preview ? `<div style="margin-top:12px;">${arReportHtml(App, {report_text: arBuildText(f, session.name), worker_name: session.name, created_at: new Date().toISOString()}, AR.photos)}</div>` : ""}`;
+}
+function renderActionReportWorker(App, session){
+  const esc = App.escapeHtml;
+  if(AR.mine===null && !AR.loadingMine){ AR.loadingMine = true; App.apiRpc("worker_action_report_list", {p_token:session.token}).then(d=>{ AR.mine = d||[]; AR.loadingMine = false; App.render(); }).catch(()=>{ AR.mine = []; AR.loadingMine = false; }); }
+  if(AR.view){
+    if(AR.images===null && !AR.loadingImgs && AR.view.images){ AR.loadingImgs = true; App.apiRpc("action_report_images_get", {p_token:session.token, p_report_id:AR.view.id}).then(x=>{ AR.images = x||[]; AR.loadingImgs = false; App.render(); }).catch(()=>{ AR.images = []; AR.loadingImgs = false; }); }
+    return `<span class="backlink" data-action="portal-ar-close">◀ חזרה</span>${arReportHtml(App, AR.view, AR.images||[])}
+      <div style="margin-top:10px;"><button class="btn" data-action="portal-ar-pdf" data-who="w">📄 הפקת PDF</button></div>`;
+  }
+  if(AR.open && AR.f) return arFormHtml(App, session);
+  const mine = AR.mine || [], draft = arLoadDraft(App);
+  return `${AR.okMsg?`<p style="color:#1b7f3b;font-weight:700;">${esc(AR.okMsg)}</p>`:""}
+    <p style="margin-top:0;">דוח פעולה על אירוע שטיפלת בו. רוב הדו"ח בלחיצות — הדו"ח המנוסח נבנה אוטומטית ונשלח לקב"ט ולסרגיי.</p>
+    ${draft ? `<button class="btn" data-action="portal-ar-new" data-draft="1" style="margin-inline-end:6px;">📝 המשך הטיוטה שלא נשלחה</button>` : ""}
+    <button class="btn" data-action="portal-ar-new">➕ דוח פעולה חדש</button>
+    ${mine.length ? `<div style="margin-top:12px;"><b style="font-size:.9em;">הדוחות שלי</b>${mine.slice(0,10).map(r=>`<div class="portal-task" data-action="portal-ar-open" data-id="${r.id}"><span class="portal-task-icon">📝</span><span>${esc(dmgFmtDate(r.event_at))} · ${esc(r.event_type||"")}${r.location?` · ${esc(r.location)}`:""}</span></div>`).join("")}</div>` : ""}`;
+}
+function arMgrLoad(App, ms, force){
+  if(AR.mgrTok !== ms.token){ AR.mgrTok = ms.token; AR.list = null; AR.listAt = 0; }
+  if(AR.listLoading || (!force && AR.list && Date.now()-AR.listAt < 60000)) return;
+  AR.listLoading = true;
+  App.apiRpc("mgr_action_report_list", {p_token:ms.token}).then(d=>{ AR.list = d||[]; AR.listAt = Date.now(); AR.listLoading = false; App.render(); })
+    .catch(()=>{ AR.listLoading = false; AR.listAt = Date.now(); });
+}
+function arMgrTile(App, ms){
+  arMgrLoad(App, ms);
+  const n = (AR.list||[]).filter(x=>!x.seen).length;
+  return `<div class="team-tile" data-action="portal-pv" data-page="ar-list"${n?' style="border-color:#b42318;"':""}><div style="font-size:1.1em;font-weight:700;${n?"color:#b42318;":""}">📝 ${n?`${n} דוחות פעולה חדשים`:"דוחות פעולה"}</div><div class="muted" style="font-size:.85em;margin-top:4px;">דוחות פעולה של המאבטחים</div></div>`;
+}
+function renderActionReportMgrPages(App, ms, pg, a, wrap, loading, msgs){
+  const esc = App.escapeHtml;
+  if(pg==="ar-list"){
+    arMgrLoad(App, ms);
+    if(!AR.list) return loading();
+    return wrap(`<h2 style="margin-top:4px;">📝 דוחות פעולה</h2>${msgs}
+      ${AR.list.length ? AR.list.map(r=>`<div class="portal-task${r.seen?"":" portal-unread"}" data-action="portal-pv" data-page="ar-view" data-id="${r.id}">
+        <span class="portal-task-icon">${r.seen?"📄":"🔔"}</span>
+        <span><b>${esc(r.worker_name)}</b> · ${esc(r.event_type||"")} <span class="muted" style="font-size:.85em;">· ${esc(dmgFmtDate(r.event_at))}${r.branch?` · ${esc(r.branch)}`:""}</span>
+        ${r.location?`<span class="muted" style="display:block;font-size:.85em;">${esc(r.location)}${r.sayvu_no?` · בסביו ${esc(r.sayvu_no)}`:""}</span>`:""}</span></div>`).join("") : `<p class="muted">אין עדיין דוחות פעולה.</p>`}`);
+  }
+  if(pg==="ar-view"){
+    arMgrLoad(App, ms);
+    if(!AR.list) return loading();
+    const r = AR.list.find(x=>x.id===a.id);
+    if(!r) return wrap(`<p class="muted">הדו"ח לא נמצא.</p>`);
+    if(!AR.mview || AR.mview.id!==r.id){ AR.mview = r; AR.mimages = r.images ? null : []; }
+    if(!r.seen){ r.seen = true; App.apiRpc("mgr_action_report_seen", {p_token:ms.token, p_id:r.id}).catch(()=>{}); }
+    if(AR.mimages===null && !AR.mloadingImgs){ AR.mloadingImgs = true; App.apiRpc("action_report_images_get", {p_token:ms.token, p_report_id:r.id}).then(x=>{ AR.mimages = x||[]; AR.mloadingImgs = false; App.render(); }).catch(()=>{ AR.mimages = []; AR.mloadingImgs = false; }); }
+    return wrap(`${arReportHtml(App, r, AR.mimages||[])}
+      <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:6px;"><button class="btn" data-action="portal-ar-pdf" data-who="m">📄 הפקת PDF</button>
+        <button class="btn secondary" data-action="portal-ar-copy">📋 העתקת הדו"ח</button></div>${msgs}`);
+  }
+  return null;
+}
+async function arMakePdf(App, r, images){
+  await loadHtml2Pdf();
+  const box = document.createElement("div");
+  box.dir = "rtl"; box.style.cssText = "position:fixed;left:-10000px;top:0;width:760px;background:#fff;color:#111;font-family:Arial,sans-serif;padding:18px;";
+  box.innerHTML = `<style>${AR_CSS} .ar-doc{border:none;padding:0;font-size:14px;} .dmg-imgs{display:flex;flex-wrap:wrap;gap:6px;} .dmg-imgs img{width:230px;height:auto;max-height:230px;object-fit:contain;border:1px solid #ccc;page-break-inside:avoid;}</style>
+    ${App.logoStripHtml ? App.logoStripHtml(50) : ""}${arReportHtml(App, r, images)}`;
+  document.body.appendChild(box);
+  const nm = String(r.worker_name||"").replace(/\s+/g,"-"), dt = String(r.event_at||"").slice(0,10);
+  try{
+    await window.html2pdf().set({margin:[10,8,10,8], filename:`דוח-פעולה-${nm}-${dt}.pdf`, image:{type:"jpeg", quality:0.92},
+      html2canvas:{scale:2, useCORS:true}, jsPDF:{unit:"mm", format:"a4", orientation:"portrait"}, pagebreak:{mode:["css","legacy"]}}).from(box).save();
+  } finally { box.remove(); }
+}
+async function arAction(App, a, el){
+  const S = App.S;
+  if(a==="portal-ar-pdf"){
+    const r = el.dataset.who==="w" ? AR.view : AR.mview; if(!r) return;
+    const imgs = el.dataset.who==="w" ? (AR.images||[]) : (AR.mimages||[]);
+    const old = el.textContent; el.textContent = "מכין PDF..."; el.disabled = true;
+    try{ await arMakePdf(App, r, imgs); el.textContent = old; }
+    catch(e){ el.textContent = "⚠️ הפקת ה-PDF נכשלה — נסו שוב"; setTimeout(()=>{ el.textContent = old; }, 4000); }
+    el.disabled = false; return;
+  }
+  if(a==="portal-ar-copy"){ const r = AR.mview; if(r && navigator.clipboard) navigator.clipboard.writeText(r.report_text).then(()=>{ PV.msg = "הדו\"ח הועתק."; App.render(); }).catch(()=>{}); return; }
+  const session = loadSession(App); if(!session) return;
+  if(a==="portal-ar-new"){ AR.f = el.dataset.draft ? (arLoadDraft(App) || arNewForm()) : arNewForm(); if(!el.dataset.draft) arClearDraft(App); AR.photos = []; AR.open = true; AR.error = null; AR.okMsg = null; AR.preview = false; window.scrollTo(0,0); return App.render(); }
+  if(a==="portal-ar-close"){ if(AR.open) arSync(App); AR.open = false; AR.view = null; AR.images = null; AR.error = null; return App.render(); }
+  if(a==="portal-ar-open"){ AR.view = (AR.mine||[]).find(x=>x.id===el.dataset.id) || null; AR.images = null; return App.render(); }
+  if(a==="portal-ar-chip"){
+    arSync(App); const k = el.dataset.k, v = el.dataset.v, f = AR.f;
+    if(AR_MULTI[k]){ const l = f[k] = f[k] || []; const i = l.indexOf(v); if(i>=0) l.splice(i,1); else l.push(v); }
+    else f[k] = f[k]===v && !["mda","police","body","prop"].includes(k) ? null : v;
+    AR.error = null; arSaveDraft(App); return App.render();
+  }
+  if(a==="portal-ar-rmimg"){ arSync(App); AR.photos.splice(Number(el.dataset.j), 1); return App.render(); }
+  if(a==="portal-ar-preview"){ arSync(App); AR.preview = !AR.preview; return App.render(); }
+  if(a==="portal-ar-send"){
+    if(AR.busy) return;
+    arSync(App); const f = AR.f;
+    const miss = [];
+    if(!f.date || !f.time) miss.push("תאריך ושעה");
+    if(!(f.location||"").trim()) miss.push("כתובת / מיקום");
+    if(!f.type || (f.type==="אחר" && !(f.typeOther||"").trim())) miss.push("סוג האירוע");
+    if(!f.source) miss.push("איך התקבל האירוע");
+    if(miss.length){ AR.error = "חסר: " + miss.join(", "); return App.render(); }
+    const text = arBuildText(f, session.name);
+    AR.busy = true; AR.error = null; App.render();
+    try{
+      const evAt = new Date(`${f.date}T${f.time}`).toISOString();
+      const id = await App.apiRpc("worker_action_report_create", {p_token:session.token, p:{event_at:evAt, sayvu_no:f.sayvu||null, location:f.location,
+        event_type: f.type==="אחר" ? (f.typeOther||"אחר").trim() : f.type, data:f, report_text:text}});
+      let failed = 0;
+      for(const ph of AR.photos){ try{ await App.apiRpc("worker_action_report_add_image", {p_token:session.token, p_report_id:id, p_data:ph}); }catch(e){ failed++; } }
+      arClearDraft(App);
+      AR.busy = false; AR.open = false; AR.f = null; AR.photos = []; AR.mine = null; AR.preview = false;
+      AR.okMsg = "✔ הדו\"ח נשלח לקב\"ט ולסרגיי." + (failed ? ` (${failed} תמונות לא עלו)` : "");
+      window.scrollTo(0,0); return App.render();
+    }catch(e){ AR.busy = false; AR.error = e.message; return App.render(); }
+  }
+}
+async function arFiles(App, t){
+  arSync(App);
+  const files = [...(t.files||[])]; t.value = "";
+  for(const f of files){
+    if(AR.photos.length >= 8){ AR.error = "אפשר עד 8 תמונות"; break; }
+    try{ AR.photos.push(await compressImage(f)); AR.error = null; }catch(err){ AR.error = err.message; }
+  }
+  App.render();
+}
+const AR_CSS = `
+  .ar-sec{border:1px solid var(--border,#d6dde6);border-radius:10px;padding:10px;margin:8px 0;background:#fafbfc;}
+  .ar-sec-h{font-weight:700;margin-bottom:6px;} .ar-req{color:#b42318;font-weight:700;}
+  .ar-sub{font-size:.88em;color:#4b5563;margin:8px 0 4px;}
+  .ar-chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .ar-chip{border:1.5px solid #c9d4e2;background:#fff;border-radius:999px;padding:6px 12px;cursor:pointer;font-size:.92em;user-select:none;line-height:1.25;}
+  .ar-chip.on{background:#1f4e8c;border-color:#1f4e8c;color:#fff;font-weight:600;}
+  .ar-doc{border:1px solid var(--border,#d6dde6);border-radius:10px;padding:14px 16px;background:#fff;line-height:1.65;}
+  .ar-h1{margin:0 0 4px;text-align:center;text-decoration:underline;font-size:1.25em;}
+  .ar-h{font-weight:800;margin-top:6px;text-decoration:underline;}
+  .ar-gap{height:6px;} .ar-ul{margin:2px 0;padding-inline-start:22px;}
+  .ar-meta{margin-top:10px;font-size:.82em;color:#6b7280;border-top:1px solid #eee;padding-top:6px;}
+`;
+
 /* ================================================================
    בקשה מנהלתית (2026-10-20, סרגיי): מאבטחים ומוקדנים מגישים בקשה לחופשה / יציאה למילואים / מחלה,
    עם טווח תאריכים ומסמכים לפי הייעוד (מילואים: צו מילואים וטופס 3010 בנפרד; מחלה: אישור מחלה; חופשה: מסמך
@@ -2970,7 +3262,7 @@ async function todoAction(App, a, el){
 }
 
 /* ---------- עמודי משנה (view "pview") ---------- */
-const PV_TITLES = { "equip-workers":"ציוד אישי לעובדים", "equip-edit":"ציוד אישי", "areq-list":"בקשות מנהלתיות", "areq-view":"בקשה מנהלתית", "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
+const PV_TITLES = { "ar-list":"דוחות פעולה", "ar-view":"דוח פעולה", "equip-workers":"ציוד אישי לעובדים", "equip-edit":"ציוד אישי", "areq-list":"בקשות מנהלתיות", "areq-view":"בקשה מנהלתית", "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
   "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה", "cal":"יומן משותף" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
@@ -3136,6 +3428,7 @@ function renderPView(App){
   if(pg==="cal") return renderCalendar(App, ms, back);
   if(pg==="dmg-list" || pg==="dmg-view" || pg==="dmg-new"){ const h = renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
   if(pg==="equip-workers" || pg==="equip-edit"){ const h = renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
+  if(pg==="ar-list" || pg==="ar-view"){ const h = renderActionReportMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
   if(pg==="areq-list" || pg==="areq-view"){ const h = renderAdminReqMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
   if(pg==="k-msg-guards" || pg==="k-msg-mgmt" || pg==="mgmt-inbox"){ const h = renderMsgPages(App, ms, pg, wrap, loading, msgs); if(h) return h; }
   if(pg==="unit-dash") return `<div class="card">${back}<h2 style="margin-bottom:0;">📊 לוח מנהל יחידה</h2><p class="muted">כך רואה את המערכת מנהל היחידה.</p></div>` + renderUnitDashboard(App, ms);
@@ -3839,6 +4132,7 @@ async function onChangeTraining(App, e){
     return App.render();
   }
   if(a==="portal-areq-files" || a==="portal-areq-addfile") return areqOnChange(App, t);
+  if(a==="portal-ar-files") return arFiles(App, t);
   if(a==="portal-dmg-files"){
     dmgCollect();
     const files = [...(t.files||[])]; const sec = t.dataset.sec, i = Number(t.dataset.i), kind = t.dataset.kind; t.value = "";
@@ -3880,7 +4174,7 @@ function renderSection(App, view){
   const session = loadSession(App);
   if(!session){ App.S.view = "home"; return renderHome(App); }
   if(!DEMO && N.state!=="on"){ App.S.view = "home"; return renderHome(App); } // בדמו אין חובת התראות - בלי זה לוגיסטי/הדרכה/עדכונים לא נפתחו בדמו
-  const title = view==="training" ? "הדרכה" : view==="damage" ? "⚠️ דיווח נזק / תאונה" : view==="adminreq" ? "📝 בקשה מנהלתית" : "לוגיסטי";
+  const title = view==="training" ? "הדרכה" : view==="damage" ? "⚠️ דיווח נזק / תאונה" : view==="adminreq" ? "📝 בקשה מנהלתית" : view==="actreport" ? "📝 דוח פעולה" : "לוגיסטי";
   if(view==="training" && T.quiz) return `<div class="card">${renderQuiz(App, session)}</div>`;
   if(view==="training" && T.controlOpen) return `<div class="card">${renderControlDoc(App, session)}</div>`;
   if((view==="training" || view==="updates") && T.postOpen) return `<div class="card">${renderPostDoc(App)}</div>`;
@@ -3890,7 +4184,7 @@ function renderSection(App, view){
     ${renderAllUpdates(App, session)}
   </div>`;
   if(view==="damage" && !DMG.items && !DMG.itemsLoading){ DMG.itemsLoading = true; App.apiGet("logistics_items", "select=id,name,has_size,sort_order&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; }); }
-  const body = view==="logistics" ? renderLogistics(App, session) : view==="damage" ? renderDamageWorker(App, session) : view==="adminreq" ? renderAdminReqWorker(App, session) : renderTraining(App, session);
+  const body = view==="logistics" ? renderLogistics(App, session) : view==="damage" ? renderDamageWorker(App, session) : view==="adminreq" ? renderAdminReqWorker(App, session) : view==="actreport" ? renderActionReportWorker(App, session) : renderTraining(App, session);
   return `<div class="card">
     <span class="backlink" data-action="go-home">◀ חזרה לאיזור האישי</span>
     <h2>${title}</h2>
@@ -4015,6 +4309,8 @@ function renderManagerHome(App, ms){
       <div class="team-tile" data-action="portal-pv" data-page="inc-list"><div style="font-size:1.1em;font-weight:700;">📋 ${ms.is_admin?"כל דו\"חות SAYVU":"דו\"חות SAYVU שלי"}</div><div class="muted" style="font-size:.85em;margin-top:4px;">תחקירי אירועי SAYVU — טיוטות ונשלחו</div></div>
       ${INC.pendCount ? `<div class="team-tile" data-action="portal-pv" data-page="inc-list" style="border-color:#b42318;"><div style="font-size:1.1em;font-weight:700;color:#b42318;">🔔 ${INC.pendCount} ${INC.pendCount===1?"אירוע SAYVU חדש":"אירועי SAYVU"} מהמוקד</div><div class="muted" style="font-size:.85em;margin-top:4px;">ממתינים לתחקיר</div></div>` : ""}
     </div>
+    <div class="inc-sec-h" style="margin-top:14px;">📝 דוחות פעולה של המאבטחים</div>
+    <div class="grid-teams">${arMgrTile(App, ms)}</div>
     <div class="inc-sec-h" style="margin-top:14px;">⚠️ נזק / תאונה — דיווח ראשוני (לא אירוע SAYVU)</div>
     <div class="grid-teams">
       ${(()=>{ dmgMgrLoad(App, ms); const n = (DMG.list||[]).filter(x=>!x.seen).length;
@@ -4219,6 +4515,8 @@ function onClick(App, a, el){
   if(a.indexOf("portal-areq-")===0 && a!=="portal-areq-resolve") return areqAction(App, a, el);
   if(a==="portal-areq-resolve") return areqResolve(App, el);
   if(a==="portal-eqm-save") return eqmSave(App, el);
+  if(a==="portal-go-ar"){ S.view = "actreport"; S.ui = {}; AR.open = false; AR.view = null; AR.mine = null; AR.okMsg = null; AR.error = null; return App.render(); }
+  if(a.indexOf("portal-ar-")===0) return arAction(App, a, el);
   if(a==="portal-go-damage"){ S.view = "damage"; S.ui = {}; DMG.open = false; DMG.view = null; DMG.images = null; DMG.mgrMode = false; DMG.okMsg = null; return App.render(); }
   if(a==="portal-go-logistics"){ S.view = "logistics"; S.ui = {}; T.data = null; L.data = null; L.msg = null; L.error = null; return App.render(); }
   if(a==="portal-log-save") return saveLogistics(App);
@@ -4354,7 +4652,7 @@ function onClick(App, a, el){
 (function addStyles(){
   if(document.getElementById("portalStyles")) return;
   const st = document.createElement("style"); st.id = "portalStyles";
-  st.textContent = `
+  st.textContent = `${AR_CSS}
   .dmg-table{width:100%;border-collapse:collapse;} .dmg-table th,.dmg-table td{border:1px solid var(--border);padding:6px 8px;text-align:right;vertical-align:top;} .dmg-table th{background:#f4f7fb;width:34%;font-weight:600;}
   .dmg-imgs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;} .dmg-imgs img{width:96px;height:96px;object-fit:cover;border-radius:6px;border:1px solid var(--border);}
   .areq-file{position:relative;display:inline-block;} .areq-pdf{display:inline-flex;align-items:center;justify-content:center;width:96px;height:96px;border:1px solid var(--border);border-radius:6px;background:#f7f9fc;font-weight:700;text-decoration:none;}
