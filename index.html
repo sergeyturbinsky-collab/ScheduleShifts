@@ -193,7 +193,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=97"></script>
+<script src="portal.js?v=98"></script>
 <script>
 (function(){
 "use strict";
@@ -614,6 +614,7 @@ function render(){
     catch(err){ console.error(err); html = `<div class="card"><span class="backlink" data-action="go-home">◀ חזרה</span><h3>שגיאה בהצגת המסך</h3><p class="shortage" dir="ltr" style="text-align:left;white-space:pre-wrap;font-size:.8em;">${escapeHtml(String(err && (err.stack||err.message) || err).slice(0,600))}</p></div>`; }
   }
   else if(S.view==="admin") html = renderAdmin();
+  if(S.ui && S.ui.shareOpen && S.ui.teamId){ const st = teamById(S.ui.teamId); if(st) html += renderShareOverlay(sectorGroupForTeam(st), periodDates(S.ui.periodStart, st)); }
   app.innerHTML = html;
   attachHandlers();
   if(S.ui.afterRender){ const f=S.ui.afterRender; S.ui.afterRender=null; f(); }
@@ -999,7 +1000,7 @@ function renderAggregate(){
           ? `<button class="btn ok" data-action="open-pin" data-next="publish">📢 פרסם שוב (עם השינויים)</button>
              <button class="btn secondary" data-action="open-pin" data-next="unpublish">בטל פרסום</button>`
           : `<button class="btn ok" data-action="open-pin" data-next="publish">📢 פרסם סידור לעובדים</button>`) : ""}
-        <button class="btn secondary" data-action="open-print">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
+        <button class="btn ok" data-action="share-open">📤 שליחה בוואטסאפ / מייל</button>
       </div>
       ${group.citySectors.length ? `<p class="muted" style="margin-top:8px;">${isSchedulePublished(group, ui) ? "✅ הסידור לתקופה הזו פורסם — העובדים רואים אותו ב\"המשמרות שלי\"." : "📝 טיוטה — העובדים עדיין לא רואים את הסידור לתקופה הזו."}</p>` : ""}
       ${publishInfoHtml(group, ui)}
@@ -1034,7 +1035,7 @@ function renderPrintView(team){
         return `<div class="print-week"${i>0?' style="break-before:page;page-break-before:always;margin-top:18px;"':''}>
           <h3 style="margin:0 0 8px;">שבוע ${i+1}: ${fmtDateHeb(wk[0])} — ${fmtDateHeb(wk[wk.length-1])}</h3>${g}</div>`;
       }).join("");
-  return `${renderShareOverlay(group, dates)}
+  return `
   <div class="row no-print" style="margin-bottom:10px;">
     <button class="btn ok" data-action="share-open">📤 שליחה בוואטסאפ / מייל</button>
     <button class="btn secondary" data-action="do-print">🖨️ הדפסה / PDF</button>
@@ -1042,7 +1043,23 @@ function renderPrintView(team){
     ${S.view==="mgrview" ? "" : `<button class="btn secondary" data-action="close-print">סגור</button>`}
   </div>
   ${compact ? `<style>@page{size:A4 landscape;margin:7mm;} @media print{ html,body{background:#fff!important;} }</style>` : ""}
-  <div id="printArea"${compact?' class="cpt-print"':''}>
+  ${printAreaHtml(team, compact, "printArea")}`;
+}
+/* תוכן הפלט (כותרת + טבלאות) - משמש גם לתצוגת הפלט וגם לתמונה שנשלחת בוואטסאפ/מייל (2026-10-21) */
+function printAreaHtml(team, compact, id){
+  const ui = S.ui;
+  const group = sectorGroupForTeam(team);
+  const dates = periodDates(ui.periodStart, team);
+  const isMoked = group.citySectors[0]==="מוקד";
+  const weeks = (isMoked && dates.length>7) ? [dates.slice(0,7), dates.slice(7)] : [dates];
+  const grid = !group.citySectors.length ? `<p class="muted">אין נתוני התקנים להצגה.</p>`
+    : weeks.map((wk,i)=>{
+        const g = isMoked ? renderMokedTemplateGrid(group, wk, ui, "view") : (compact ? renderCompactPrintGrid(group, wk, ui) : renderTemplateGrid(group, wk, ui, "view"));
+        if(weeks.length===1) return g;
+        return `<div class="print-week"${i>0?' style="break-before:page;page-break-before:always;margin-top:18px;"':''}>
+          <h3 style="margin:0 0 8px;">שבוע ${i+1}: ${fmtDateHeb(wk[0])} — ${fmtDateHeb(wk[wk.length-1])}</h3>${g}</div>`;
+      }).join("");
+  return `<div id="${id}"${compact?' class="cpt-print"':''}>
     ${compact ? `<div class="print-header">
       ${logoStripHtml(30)}
       <h2 class="cpt-title">${escapeHtml(group.label)} — סידור עבודה · ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(dates[dates.length-1])}</h2>
@@ -1066,13 +1083,14 @@ function loadHtml2Canvas(){
     sc.onload = ()=>res(); sc.onerror = ()=>rej(new Error("טעינת רכיב התמונה נכשלה")); document.head.appendChild(sc); });
 }
 async function makeScheduleImage(){
-  const src = document.getElementById("printArea"); if(!src) throw new Error("אין פלט להצגה");
+  const team = teamById(S.ui.teamId); if(!team) throw new Error("אין סידור להצגה");
+  const isMoked = sectorGroupForTeam(team).citySectors[0]==="מוקד";
+  const inner = printAreaHtml(team, !isMoked, "printAreaShot"); // נבנה מחדש (לא תלוי במסך הפלט), תמיד בפורמט המתומצת
   await loadHtml2Canvas();
   const box = document.createElement("div");
   box.dir = "rtl";
   box.style.cssText = "position:fixed;left:-20000px;top:0;width:1400px;background:#fff;padding:16px;box-sizing:border-box;";
-  const clone = src.cloneNode(true); clone.removeAttribute("id"); clone.id = "printAreaShot";
-  box.appendChild(clone); document.body.appendChild(box);
+  box.innerHTML = inner; document.body.appendChild(box);
   try{
     const canvas = await window.html2canvas(box, {scale:1.5, backgroundColor:"#ffffff", useCORS:true, logging:false, windowWidth:1440});
     return await new Promise((res, rej)=>canvas.toBlob(b=>b ? res(b) : rej(new Error("יצירת התמונה נכשלה")), "image/png"));
@@ -3563,7 +3581,7 @@ function renderManualBuild(team){
       ${renderTemplateGrid(group, dates, ui, "manual")}
       <button class="btn ok" data-action="manual-done" style="margin-top:8px;">✔ סיימתי</button>
       <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
-      <button class="btn secondary small" data-action="open-print" style="margin-top:8px;">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
+      <button class="btn ok small" data-action="share-open" style="margin-top:8px;">📤 שליחה בוואטסאפ / מייל</button>
     </div>
     ${bottomTables}
     ${renderTmplCellOverlay()}
@@ -3579,7 +3597,7 @@ function renderManualBuild(team){
     ${renderMokedTemplateGrid(group, dates, ui, "manual")}
     <button class="btn ok" data-action="manual-done" style="margin-top:8px;">✔ סיימתי</button>
     <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
-    <button class="btn secondary small" data-action="open-print" style="margin-top:8px;">🖨️ הפקת פלט סידור (הדפסה/PDF)</button>
+    <button class="btn ok small" data-action="share-open" style="margin-top:8px;">📤 שליחה בוואטסאפ / מייל</button>
   </div>
   ${bottomTables}
   ${renderMokedCellOverlay()}`;
