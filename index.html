@@ -171,7 +171,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=84"></script>
+<script src="portal.js?v=85"></script>
 <script>
 (function(){
 "use strict";
@@ -1279,6 +1279,7 @@ async function loadAggregateData(team){
     try{
       const tdates = periodDates(ui.periodStart, team);
       ui.schedTasks = group.citySectors.length ? await apiRpc("sched_tasks_list", {p_sectors: group.citySectors, p_from: tdates[0], p_to: tdates[tdates.length-1]}) : [];
+      try{ ui.schedTaskRows = group.citySectors.length ? await apiRpc("sched_task_rows_list", {p_sectors: group.citySectors, p_from: tdates[0], p_to: tdates[tdates.length-1]}) : []; }catch(e){ ui.schedTaskRows = []; }
     }catch(e){ ui.schedTasks = []; }
 
     ui.loaded = true;
@@ -1995,12 +1996,22 @@ function renderTemplateGrid(group, dates, ui, mode){
    כותב מה המשימה (מלל חופשי) ושעות. המשימה מופיעה אצל המאבטח באיזור האישי (worker_sched_tasks) והוא מקבל
    התראה. נשמר מיד (rpc_sched_task_save / rpc_sched_task_remove). בתצוגה/פלט - מוצג רק אם יש משימות.
    ================================================================ */
-const STASK_ROWS = 5; // (2026-10-20) הורחב מ-3 ל-5 שורות לבקשת סרגיי
+/* משימות שאינן משמרת (2026-10-21, סרגיי): מספר השורות נקבע לכל יום בנפרד - לחצני "➕ שורה" / "➖ שורה" מתחת לכל יום
+   בשיבוץ ידני (schedule_task_days, rpc_sched_task_rows). ברירת מחדל: שורה אחת. אי אפשר להסיר שורה שיש בה משימה. */
+const STASK_DEFAULT_ROWS = 1;
+function stRowsFor(ui, sector, date){
+  const rec = (ui.schedTaskRows||[]).find(r=>r.sector===sector && r.date===date);
+  const used = Math.max(0, ...(ui.schedTasks||[]).filter(t=>t.sector===sector && t.date===date).map(t=>t.slot));
+  return Math.max(rec ? rec.rows : STASK_DEFAULT_ROWS, used);
+}
 function schedTasksBlock(sector, dates, ui, mode){
   const tasks = (ui.schedTasks||[]).filter(t=>t.sector===sector);
   if(mode!=="manual" && mode!=="agg" && !tasks.some(t=>dates.includes(t.date))) return "";
-  const rows = Array.from({length:STASK_ROWS}, (_,i)=>i+1).map(slot=>{
-    const cells = dates.map(d=>{
+  const perDay = dates.map(d=>stRowsFor(ui, sector, d));
+  const maxRows = Math.max(1, ...perDay);
+  const rows = Array.from({length:maxRows}, (_,i)=>i+1).map(slot=>{
+    const cells = dates.map((d,di)=>{
+      if(slot > perDay[di]) return `<td class="tmpl-na"></td>`;
       const t = tasks.find(x=>x.date===d && x.slot===slot);
       const hrs = t && (t.start||t.end) ? `<br><span class="muted" style="font-size:.85em;" dir="ltr">${escapeHtml(t.start||"")}${t.end?"-"+escapeHtml(t.end):""}</span>` : "";
       const body = t ? `<b>${escapeHtml(t.worker_name||"?")}</b><br><span style="font-size:.85em;">${escapeHtml(t.title)}</span>${hrs}` : (mode==="manual" ? `<span class="muted">➕</span>` : "");
@@ -2010,14 +2021,28 @@ function schedTasksBlock(sector, dates, ui, mode){
     }).join("");
     return `<tr><td class="tmpl-pos">משימה ${slot}</td>${cells}</tr>`;
   }).join("");
+  const ctrl = mode==="manual" ? `<tr class="no-print"><td class="tmpl-pos" style="font-size:.85em;">שורות</td>${dates.map((d,di)=>`<td style="white-space:nowrap;">
+      <button class="btn small secondary" data-action="stask-rows" data-sector="${escapeHtml(sector)}" data-date="${d}" data-rows="${perDay[di]+1}" title="הוספת שורת משימה ליום הזה" ${perDay[di]>=20?"disabled":""}>➕ שורה</button>
+      <button class="btn small secondary" data-action="stask-rows" data-sector="${escapeHtml(sector)}" data-date="${d}" data-rows="${perDay[di]-1}" title="הסרת השורה האחרונה ביום הזה" ${perDay[di]<=0?"disabled":""}>➖ שורה</button></td>`).join("")}</tr>` : "";
   return `
       <div class="tmpl-bucket-head">משימות (לא משמרת)${mode==="agg"?` <span class="muted" style="font-weight:400;font-size:.85em;">— להוספה או עריכה: "שיבוץ ידני"</span>`:""}</div>
+      ${ui.staskRowsMsg ? `<p class="shortage" style="margin:4px 0;">${escapeHtml(ui.staskRowsMsg)}</p>` : ""}
       <div style="overflow-x:auto;">
       <table class="tmpl-table">
         <thead><tr><th></th>${dates.map(d=>`<th>${fmtDateHeb(d)}</th>`).join("")}</tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody>${rows}${ctrl}</tbody>
       </table>
       </div>`;
+}
+async function schedTaskRowsAction(el){
+  const ui = S.ui; if(ui.staskRowsBusy) return;
+  const sector = el.dataset.sector, date = el.dataset.date, n = Number(el.dataset.rows);
+  ui.staskRowsBusy = true; ui.staskRowsMsg = null;
+  try{
+    await apiRpc("rpc_sched_task_rows", {p_pin:S.pin, p_sector:sector, p_date:date, p_rows:n});
+    const recs = (ui.schedTaskRows||[]).filter(r=>!(r.sector===sector && r.date===date)); recs.push({sector, date, rows:n}); ui.schedTaskRows = recs;
+  }catch(err){ ui.staskRowsMsg = /invalid pin/i.test(err.message) ? "אין הרשאה — צריך להתחבר מחדש" : err.message; }
+  ui.staskRowsBusy = false; render();
 }
 async function schedTaskAction(a){
     const ui = S.ui;
@@ -3885,6 +3910,7 @@ function onAppClick(e){
   if(a==="stask-cell"){ ui.staskCell = {sector:el.dataset.sector, date:el.dataset.date, slot:Number(el.dataset.slot)}; ui.staskMsg = null; ui.staskBusy = false; return render(); }
   if(a==="stask-close" || a==="stask-close-bg"){ ui.staskCell = null; ui.staskMsg = null; return render(); }
   if(a==="stask-save" || a==="stask-remove") return schedTaskAction(a);
+  if(a==="stask-rows") return schedTaskRowsAction(el);
   /* "סיימתי" בסוף שיבוץ ידני (2026-10-20, סרגיי): כל שיבוץ נשמר כבר בלחיצה; הכפתור מחזיר לטבלה המרוכזת
      ומזכיר לפרסם אם הסידור עוד לא פורסם */
   if(a==="manual-done"){
