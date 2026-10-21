@@ -193,7 +193,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=99"></script>
+<script src="portal.js?v=100"></script>
 <script>
 (function(){
 "use strict";
@@ -1704,6 +1704,15 @@ function buildWorkerIntervals(assignments){
   });
   return byWorker;
 }
+/* בדיוק 8 שעות מנוחה (הצהוב) - מותר, אבל בשיבוץ האוטומטי מועדף מי שיש לו יותר מנוחה (2026-10-21, סרגיי) */
+function wouldBeTightRest(workerId, newInterval, workerIntervals){
+  const list = workerIntervals[workerId];
+  if(!list || !list.length || !newInterval) return false;
+  return list.some(iv=>{
+    const gap = iv.end <= newInterval.start ? (newInterval.start - iv.end)/3600000 : (newInterval.end <= iv.start ? (iv.start - newInterval.end)/3600000 : -1);
+    return Math.abs(gap - REST_HOURS_REQUIRED) < 0.01;
+  });
+}
 function wouldViolateRest(workerId, newInterval, workerIntervals){
   const list = workerIntervals[workerId];
   if(!list || !list.length) return false;
@@ -3147,6 +3156,10 @@ async function grantOrRevokeException(workerId, period, grant){
 async function runAutoAssign(){
   const ui = S.ui;
   const team = teamById(ui.teamId);
+  // (2026-10-21, סרגיי: "יש אנשים זמינים ולא שובצו") - לפני שיבוץ אוטומטי טוענים מחדש את ההגשות והשיבוצים מהשרת,
+  // כדי לא לשבץ לפי נתונים ישנים של מסך שנפתח לפני שעובדים עדכנו את ההגשה שלהם
+  ui.buildMsg = "טוען את ההגשות העדכניות..."; render();
+  ui.loaded = false; await loadAggregateData(team);
   const group = sectorGroupForTeam(team);
   const dates = periodDates(ui.periodStart, team);
   const slots = buildSlots(dates, group, S.quotas);
@@ -3203,7 +3216,8 @@ async function runAutoAssign(){
   const wById = id=>workers.find(x=>x.id===id) || (ui.allWorkersById||{})[id];
   // משמרת "מתואמת" (11:00-23:00) חופפת לבוקר ולערב שכבר יש בהם אחמ"ש - לא נדרש בה אחמ"ש נפרד
   const slotHasAch = slot=>slot.shiftType==="coordinated" || (assignmentsByDate[slot.date]||[]).some(a=>a.sector===slot.sector && a.shift_type===slot.shiftType && !a.shadow_of && isGuardAchmash(wById(a.worker_id)));
-  const fullFirst = slot => (a,b)=> ((gapCoverableNow(a, slot)?0:1) - (gapCoverableNow(b, slot)?0:1)) || byFairness(a,b);
+  const isTightFor = (slot, w)=>{ const t = tightBySlot.get(slot); return t && t.has(w.id) ? 1 : 0; };
+  const fullFirst = slot => (a,b)=> ((gapCoverableNow(a, slot)?0:1) - (gapCoverableNow(b, slot)?0:1)) || (isTightFor(slot, a) - isTightFor(slot, b)) || byFairness(a,b);
 
   // מניעת ברירת-מחדל של שיבוץ עם פחות מ-8 שעות מנוחה (לבקשת סרגיי, 2026-09-28) - ראו הערה מפורטת
   // ליד wouldViolateRest/buildWorkerIntervals למעלה. נבנה מ-ui.allAssignments (כל הגזרות) כדי לתפוס
@@ -3211,14 +3225,19 @@ async function runAutoAssign(){
   const workerIntervals = buildWorkerIntervals(ui.allAssignments || ui.assignments || []);
   // מפצלת רשימת מועמדים ל"נקיים" (≥8 שעות מנוחה) ו"פוגעים במנוחה" (<8 שעות) - האחרונים משמשים
   // רק כעדיפות אחרונה, כשאין ברירה אחרת למלא את המשבצת.
+  const tightBySlot = new Map(); // slot -> Set(workerId) של מי שיגיע לבדיוק 8 שעות מנוחה
   function splitByRest(candidates, slot){
     const newInterval = shiftInterval({sector:slot.sector, shift_type:slot.shiftType, entry_date:slot.date, custom_start:null, custom_end:null});
-    const ok = [], bad = [];
+    const ok = [], bad = [], tight = new Set();
     candidates.forEach(w=>{
-      if(newInterval && wouldViolateRest(w.id, newInterval, workerIntervals)) bad.push(w); else ok.push(w);
+      if(newInterval && wouldViolateRest(w.id, newInterval, workerIntervals)) bad.push(w);
+      else { ok.push(w); if(wouldBeTightRest(w.id, newInterval, workerIntervals)) tight.add(w.id); }
     });
+    tightBySlot.set(slot, tight);
     return {ok, bad, newInterval};
   }
+  // מיון עם העדפה למי שלא יגיע לבדיוק 8 שעות מנוחה (צהוב) - ואז לפי המיון הרגיל
+  const tl = (slot, cmp)=>(a,b)=>{ const t = tightBySlot.get(slot); return (t ? (t.has(a.id)?1:0)-(t.has(b.id)?1:0) : 0) || cmp(a,b); };
   function recordChosenInterval(workerId, newInterval){
     if(!newInterval) return;
     (workerIntervals[workerId] = workerIntervals[workerId]||[]).push(newInterval);
@@ -3266,7 +3285,7 @@ async function runAutoAssign(){
     if(groupHasAch) st.forEach(x=>{
       if(x.need<=0 || slotHasAch(x.slot)) return;
       for(const phase of ["ok","bad"]){
-        const c = x[phase].filter(w=>isGuardAchmash(w) && !taken.has(w.id)).sort((a,b)=>(cityRank(a, x.slot.sector)-cityRank(b, x.slot.sector)) || byFairness(a,b));
+        const c = x[phase].filter(w=>isGuardAchmash(w) && !taken.has(w.id)).sort(tl(x.slot, (a,b)=>(cityRank(a, x.slot.sector)-cityRank(b, x.slot.sector)) || byFairness(a,b)));
         if(c.length){ taken.add(c[0].id); x.chosen.push(c[0]); if(phase==="bad") restForced++; return; }
       }
       noAch++;
@@ -3277,7 +3296,7 @@ async function runAutoAssign(){
         st.forEach(x=>{
           const room = x.need - x.chosen.length;
           if(room<=0) return;
-          const picks = x[phase].filter(w=>!taken.has(w.id) && cityRank(w, x.slot.sector)===r).slice().sort((a,b)=>(groupHasAch ? (isGuardAchmash(a)?1:0)-(isGuardAchmash(b)?1:0) : 0) || byFairness(a,b)).slice(0, room);
+          const picks = x[phase].filter(w=>!taken.has(w.id) && cityRank(w, x.slot.sector)===r).slice().sort(tl(x.slot, (a,b)=>(groupHasAch ? (isGuardAchmash(a)?1:0)-(isGuardAchmash(b)?1:0) : 0) || byFairness(a,b))).slice(0, room);
           picks.forEach(w=>{ taken.add(w.id); x.chosen.push(w); });
           if(phase==="bad") restForced += picks.length;
         });
@@ -3298,7 +3317,7 @@ async function runAutoAssign(){
   const sergeyW = workers.find(w=>w.name==="סרגיי");
   const mokedSat = new Map();
   let satSergey = 0, satLateAch = 0, satEveShort = 0;
-  const restSorted = (list, slot)=>{ const r = splitByRest(list, slot); return r.ok.slice().sort(byFairness).concat(r.bad.slice().sort(byFairness)); };
+  const restSorted = (list, slot)=>{ const r = splitByRest(list, slot); return r.ok.slice().sort(tl(slot, byFairness)).concat(r.bad.slice().sort(byFairness)); };
   dates.filter(d=>dayTypeForDate(d)==="saturday").forEach(d=>{
     const eve = slots.find(x=>x.sector==="מוקד" && x.date===d && x.shiftType==="evening");
     const mot = slots.find(x=>x.sector==="מוקד" && x.date===d && x.shiftType==="motzash");
@@ -3426,12 +3445,12 @@ async function runAutoAssign(){
       // אחמ"ש בכל משמרת: אם עוד אין במשבצת אחמ"ש - קודם בוחרים אחמ"ש זמין (עם מנוחה תקינה; אם אין - גם בלי), ואז את השאר
       let achFirst = [];
       if(groupHasAch && !slotHasAch(slot)){
-        const okA = restOk.filter(isGuardAchmash).sort(byFairness), badA = restBad.filter(isGuardAchmash).sort(byFairness);
+        const okA = restOk.filter(isGuardAchmash).sort(tl(slot, byFairness)), badA = restBad.filter(isGuardAchmash).sort(byFairness);
         if(okA.length) achFirst = [okA[0]]; else if(badA.length){ achFirst = [badA[0]]; restForced++; } else noAch++;
       }
       // שאר הסיירים: אחמ"שים נוספים רק בסוף (כדי שיישארו פנויים למשמרות אחרות באותו יום שצריכות אחמ"ש)
       const achLast = (a,b)=>(groupHasAch ? (isGuardAchmash(a)?1:0)-(isGuardAchmash(b)?1:0) : 0) || byFairness(a,b);
-      chosen = achFirst.concat(restOk.filter(w=>!achFirst.includes(w)).sort(achLast)).slice(0, need);
+      chosen = achFirst.concat(restOk.filter(w=>!achFirst.includes(w)).sort(tl(slot, achLast))).slice(0, need);
       if(chosen.length < need){
         const more = restBad.filter(w=>!achFirst.includes(w)).sort(achLast).slice(0, need - chosen.length);
         restForced += more.length;
@@ -3480,6 +3499,11 @@ async function runAutoAssign(){
   ui.buildMsg = `השיבוץ האוטומטי הושלם: עודכנו ${filled} משבצות.${short?` שימו לב — ב-${short} משבצות אין מספיק עובדים זמינים כדי למלא את כל התקן (יופיעו כ"חוסר").`:""}${restForced?` שימו לב — ב-${restForced} שיבוצים לא נמצא עובד עם 8 שעות מנוחה, ושובץ עובד עם פחות (כעדיפות אחרונה, מסומן באדום בטבלה).`:""}${streakShort?` ב-${streakShort} משבצות נשאר חוסר כי העובדים הזמינים היו מגיעים ל-7 ימי עבודה ברצף או לשבת רביעית ברצף — אפשר לשבץ ידנית (תוצג אזהרה).`:""}${satLateAch?` מוצ"ש במוקד: ב-${satLateAch} שבתות לא היה אחמ"ש זמין מ-20:00 — שובץ אחמ"ש שומר שבת מ-23:00${satSergey?`, וסרגיי ל-20:00-23:00 (${satSergey})`:""}.`:""}${satEveShort?` ב-${satEveShort} שבתות לא נמצא מי שיכסה אחמ"ש 20:00-23:00.`:""}${noAch?` ⚠️ ב-${noAch} משמרות לא היה אחמ"ש זמין — כדאי לשבץ אחמ"ש ידנית.`:""}`;
   ui.loaded = false; // רענון מלא של נתוני השיבוצים
   await loadAggregateData(team);
+  // סבב תיקון (2026-10-21, סרגיי): חוסר שאפשר לסגור בהחלפה באותו יום (למשל קארינה עוברת מערב לבוקר ודוד לוקח את הערב)
+  try{
+    const fixed = await repairShortages(team);
+    if(fixed){ ui.buildMsg = (ui.buildMsg||"") + ` 🔁 סבב תיקון: ${fixed} חוסרים נסגרו בהחלפה בין משמרות באותו יום.`; }
+  }catch(e){ console.error(e); }
   if(partialRecs.length){
     const g = await fillPartialGaps(partialRecs, slots, workers);
     const msg = ` שעות מותאמות במוקד: ${partialRecs.length} עובדים שובצו רק לשעות שהם יכולים${g.extended?`, ו-${g.extended} עובדים במשמרות הסמוכות הוארכו כדי לכסות את השעות החסרות`:""}.${g.uncovered.length?` לא נמצא מי שיכסה: ${g.uncovered.join(" · ")} — אפשר להשלים ידנית.`:""}`;
@@ -3487,6 +3511,76 @@ async function runAutoAssign(){
     ui.buildMsg = (ui.buildMsg||"") + msg;
     render();
   }
+}
+
+/* סבב תיקון אחרי שיבוץ אוטומטי (2026-10-21, סרגיי: "יכולת לשבץ את קארינה בבוקר" / "יש אנשים זמינים ולא שובצו"):
+   השיבוץ עובר משמרת-משמרת לפי הסדר ולא מסתכל קדימה, אז לפעמים נשאר חוסר במשמרת שעובד זמין לה כבר שובץ באותו
+   יום למשמרת אחרת. כאן, לכל חוסר: מחפשים עובד X שזמין למשמרת החסרה ושובץ באותו יום למשמרת T, ועובד Y פנוי
+   שיכול לקחת את T (אותו תפקיד, זמין, 8 שעות מנוחה, בלי 7 ימים ברצף). אם יש - X עובר למשמרת החסרה ו-Y לוקח את T.
+   לא נוגע בשבת/מוצ"ש, בשעות מותאמות, בחפיפות ובמילוי תפקיד. */
+async function repairShortages(team){
+  const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
+  const slots = buildSlots(dates, group, S.quotas);
+  let fixed = 0;
+  const slotOf = (sector, date, type)=>slots.find(x=>x.sector===sector && x.date===date && x.shiftType===type);
+  for(const sl of slots){
+    if(dayTypeForDate(sl.date)==="saturday") continue;
+    for(let guard=0; guard<6; guard++){
+      const workers = ui.workers || [];
+      const wOf = id=>workers.find(x=>x.id===id);
+      const roleOf = a=>a.filled_role || (wOf(a.worker_id)||{}).role;
+      const abd = {}; (ui.assignments||[]).forEach(a=>{ (abd[a.entry_date]=abd[a.entry_date]||[]).push(a); });
+      const inS = (abd[sl.date]||[]).filter(a=>a.sector===sl.sector && a.shift_type===sl.shiftType && !a.shadow_of);
+      let needRole;
+      if(sl.roleCounts){ needRole = Object.keys(sl.roleCounts).find(r=>inS.filter(a=>roleOf(a)===r).length < (sl.roleCounts[r]||0)); if(!needRole) break; }
+      else { if(inS.length >= sl.required) break; needRole = null; }
+      const cnt = {}; (ui.assignments||[]).forEach(a=>{ if(!a.shadow_of) cnt[a.worker_id]=(cnt[a.worker_id]||0)+1; });
+      const streakIdx = buildStreakIndex(ui.streakAssignments || ui.allAssignments || ui.assignments || []);
+      const allA = ui.allAssignments || ui.assignments || [];
+      const ivS = shiftInterval({sector:sl.sector, shift_type:sl.shiftType, entry_date:sl.date});
+      const noWin = w=>!(workerIsMoked(w, sl.sector) && mokedWindows(w, sl.date, ui.entriesByWorker));
+      let move = null;
+      const xs = workers.filter(w=>!w.auto_assign_exempt && (!needRole || w.role===needRole) && noWin(w)
+        && availableForSlot(sl, [w], ui.entriesByWorker, abd, null, false, true).length);
+      for(const X of xs){
+        const mine = (abd[sl.date]||[]).filter(a=>a.worker_id===X.id);
+        if(mine.length!==1) continue;
+        const T = mine[0];
+        if(T.shadow_of || T.custom_start || T.custom_end || T.filled_role || T.sector!==sl.sector || T.shift_type===sl.shiftType) continue;
+        const tSlot = slotOf(T.sector, T.entry_date, T.shift_type); if(!tSlot) continue;
+        if(!ivS || wouldViolateRest(X.id, ivS, buildWorkerIntervals(allA.filter(a=>!(a.worker_id===T.worker_id && a.entry_date===T.entry_date && a.sector===T.sector && a.shift_type===T.shift_type))))) continue;
+        const ivT = shiftInterval(T); if(!ivT) continue;
+        const ivAll = buildWorkerIntervals(allA);
+        const tRows = (abd[T.entry_date]||[]).filter(a=>a.sector===T.sector && a.shift_type===T.shift_type && !a.shadow_of);
+        const xIsOnlyAch = !tSlot.roleCounts && isGuardAchmash(X) && !tRows.some(a=>a.worker_id!==X.id && isGuardAchmash(wOf(a.worker_id)));
+        const ys = availableForSlot(tSlot, workers, ui.entriesByWorker, abd, null)
+          .filter(Y=>Y.id!==X.id && !Y.auto_assign_exempt && noWin(Y) && (!tSlot.roleCounts || Y.role===X.role) && (!xIsOnlyAch || isGuardAchmash(Y))
+            && !wouldViolateRest(Y.id, ivT, ivAll) && !streakIssues(streakIdx, Y.id, T.entry_date, T.shift_type).length)
+          .sort((a,b)=>(wouldBeTightRest(a.id, ivT, ivAll)?1:0)-(wouldBeTightRest(b.id, ivT, ivAll)?1:0) || (cnt[a.id]||0)-(cnt[b.id]||0));
+        if(ys.length){ move = {X, T, tRows, Y:ys[0]}; break; }
+      }
+      if(!move) break;
+      // כתיבה: T - מחליפים את X ב-Y; המשמרת החסרה - מוסיפים את X. שומרים שעות/חפיפות/תפקידים של שאר העובדים.
+      const saveSlot = async (sector, date, type, ids)=>{
+        const prev = (ui.assignments||[]).filter(a=>a.sector===sector && a.entry_date===date && a.shift_type===type);
+        await apiRpc("rpc_assignment_set", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:type, p_worker_ids:ids, p_method:"auto"});
+        for(const a of prev){
+          if(!ids.includes(a.worker_id) && !a.shadow_of) continue;
+          if(a.shadow_of) await apiRpc("rpc_assignment_set_shadow", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:type, p_worker_id:a.worker_id, p_shadow_of:a.shadow_of});
+          if(a.custom_start || a.custom_end) await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:type, p_worker_id:a.worker_id, p_custom_start:a.custom_start, p_custom_end:a.custom_end});
+          if(a.filled_role) await apiRpc("rpc_assignment_set_role", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:type, p_worker_id:a.worker_id, p_role:a.filled_role});
+        }
+      };
+      const {X, T, tRows, Y} = move;
+      const tAll = (ui.assignments||[]).filter(a=>a.sector===T.sector && a.entry_date===T.entry_date && a.shift_type===T.shift_type);
+      await saveSlot(T.sector, T.entry_date, T.shift_type, tAll.map(a=>a.worker_id===X.id ? Y.id : a.worker_id));
+      const sAll = (ui.assignments||[]).filter(a=>a.sector===sl.sector && a.entry_date===sl.date && a.shift_type===sl.shiftType);
+      await saveSlot(sl.sector, sl.date, sl.shiftType, sAll.map(a=>a.worker_id).concat([X.id]));
+      fixed++;
+      ui.loaded = false; await loadAggregateData(team);
+    }
+  }
+  return fixed;
 }
 
 /* מוקד (2026-10-20): אחרי שיבוץ אוטומטי - לכל עובד ששובץ רק לחלק מהמשמרת (שעות מותאמות = "כן יכול"),
