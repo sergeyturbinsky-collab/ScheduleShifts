@@ -193,7 +193,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=100"></script>
+<script src="portal.js?v=101"></script>
 <script>
 (function(){
 "use strict";
@@ -996,6 +996,7 @@ function renderAggregate(){
         <button class="btn ok" data-action="open-pin" data-next="auto">שיבוץ אוטומטי</button>
         <button class="btn" data-action="open-pin" data-next="manual">שיבוץ ידני</button>
         <button class="btn secondary" data-action="toggle-monthly">פילוח חודשי (הגישו מול שובצו)</button>
+        ${group.citySectors.length ? `<button class="btn secondary" data-action="clear-ask" style="color:#b42318;border-color:#f3c4c0;">🗑 נקה סידור</button>` : ""}
         ${group.citySectors.length ? (isSchedulePublished(group, ui)
           ? `<button class="btn ok" data-action="open-pin" data-next="publish">📢 פרסם שוב (עם השינויים)</button>
              <button class="btn secondary" data-action="open-pin" data-next="unpublish">בטל פרסום</button>`
@@ -1004,6 +1005,11 @@ function renderAggregate(){
       </div>
       ${group.citySectors.length ? `<p class="muted" style="margin-top:8px;">${isSchedulePublished(group, ui) ? "✅ הסידור לתקופה הזו פורסם — העובדים רואים אותו ב\"המשמרות שלי\"." : "📝 טיוטה — העובדים עדיין לא רואים את הסידור לתקופה הזו."}</p>` : ""}
       ${publishInfoHtml(group, ui)}
+      ${ui.clearAsk ? `<div class="note-box" style="margin-top:10px;border-color:#b42318;background:#fff7f6;">
+        <b>🗑 למחוק את כל השיבוצים בסידור הזה?</b><br>
+        <span class="muted">${escapeHtml(group.label)} · ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(dates[dates.length-1])} — כל השיבוצים, ידניים ואוטומטיים, יימחקו. אי אפשר לבטל.</span>
+        <div class="row" style="margin-top:8px;"><button class="btn" style="background:#b42318;border-color:#b42318;" data-action="open-pin" data-next="clear">כן, נקה את הסידור</button>
+        <button class="btn secondary" data-action="clear-no">ביטול</button></div></div>` : ""}
       ${ui.pubConfirm ? `<div class="note-box" style="margin-top:10px;border-color:#e0a800;">
         <b>${escapeHtml(ui.pubConfirm)} פרסם כבר סידור. האם אתה בטוח שאתה רוצה לפרסם?</b>
         <p class="muted" style="margin:6px 0;">הפרסום שלך יחליף את הפרסום הקודם — העובדים יראו את הסידור כפי שהוא עכשיו.</p>
@@ -3032,6 +3038,7 @@ async function confirmPin(){
     if(next==="auto") await runAutoAssign();
     else if(next==="manual"){ ui.mode="manual"; ui.manualOpenSlot=null; render(); }
     else if(next==="publish" || next==="unpublish") await setSchedulePublished(next==="publish");
+    else if(next==="clear") await clearSchedule();
     else if(next==="grant-exception") await grantOrRevokeException(workerId, period, true);
     else if(next==="revoke-exception") await grantOrRevokeException(workerId, period, false);
     else render();
@@ -3118,6 +3125,16 @@ function publishInfoHtml(group, ui){
   const pi = publishInfo(group, ui); if(!pi || !pi.by) return "";
   const d = new Date(pi.at); const when = isNaN(d) ? "" : ` · ${String(d.getDate()).padStart(2,"0")}/${String(d.getMonth()+1).padStart(2,"0")} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
   return `<p class="muted" style="margin-top:4px;">פורסם ע"י ${escapeHtml(pi.by)}${when}. שינויים שנשמרים מעכשיו מופיעים אצל העובדים מיד.</p>`;
+}
+/* "נקה סידור" (2026-10-21, סרגיי): מוחק את כל השיבוצים (ידני ואוטומטי) של הגזרות בתקופה המוצגת, אחרי אישור */
+async function clearSchedule(){
+  const ui = S.ui, team = teamById(ui.teamId), group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
+  ui.clearAsk = false; ui.buildMsg = "מנקה את הסידור..."; render();
+  try{
+    const n = await apiRpc("rpc_schedule_clear", {p_pin:S.pin, p_sectors:group.citySectors, p_from:dates[0], p_to:dates[dates.length-1]});
+    ui.buildMsg = `🗑 הסידור נוקה — נמחקו ${n||0} שיבוצים. אפשר להריץ שיבוץ אוטומטי מחדש.`;
+  }catch(e){ ui.buildMsg = "שגיאה בניקוי הסידור: " + e.message; }
+  ui.loaded = false; await loadAggregateData(team); render();
 }
 async function setSchedulePublished(publish, force){
   const ui = S.ui;
@@ -4132,6 +4149,8 @@ function onAppClick(e){
   }
   if(a==="share-close"){ ui.shareOpen = false; return render(); }
   if(a==="print-toggle-detail"){ ui.printDetailed = !ui.printDetailed; return render(); }
+  if(a==="clear-ask"){ ui.clearAsk = true; return render(); }
+  if(a==="clear-no"){ ui.clearAsk = false; return render(); }
   if(a==="toggle-monthly"){
     ui.monthlyOpen = !ui.monthlyOpen;
     if(ui.monthlyOpen && !ui.monthlyValue){
