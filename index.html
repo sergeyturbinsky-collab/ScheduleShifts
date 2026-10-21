@@ -171,7 +171,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=85"></script>
+<script src="portal.js?v=86"></script>
 <script>
 (function(){
 "use strict";
@@ -1997,8 +1997,9 @@ function renderTemplateGrid(group, dates, ui, mode){
    התראה. נשמר מיד (rpc_sched_task_save / rpc_sched_task_remove). בתצוגה/פלט - מוצג רק אם יש משימות.
    ================================================================ */
 /* משימות שאינן משמרת (2026-10-21, סרגיי): מספר השורות נקבע לכל יום בנפרד - לחצני "➕ שורה" / "➖ שורה" מתחת לכל יום
-   בשיבוץ ידני (schedule_task_days, rpc_sched_task_rows). ברירת מחדל: שורה אחת. אי אפשר להסיר שורה שיש בה משימה. */
-const STASK_DEFAULT_ROWS = 1;
+   בשיבוץ ידני (schedule_task_days, rpc_sched_task_rows). אין כמות קבועה - רק השורות שיש בהן משימות, ומה שהקב"ט
+   הוסיף בלחצן (סרגיי, 2026-10-21). אי אפשר להסיר שורה שיש בה משימה. */
+const STASK_DEFAULT_ROWS = 0;
 function stRowsFor(ui, sector, date){
   const rec = (ui.schedTaskRows||[]).find(r=>r.sector===sector && r.date===date);
   const used = Math.max(0, ...(ui.schedTasks||[]).filter(t=>t.sector===sector && t.date===date).map(t=>t.slot));
@@ -2008,7 +2009,8 @@ function schedTasksBlock(sector, dates, ui, mode){
   const tasks = (ui.schedTasks||[]).filter(t=>t.sector===sector);
   if(mode!=="manual" && mode!=="agg" && !tasks.some(t=>dates.includes(t.date))) return "";
   const perDay = dates.map(d=>stRowsFor(ui, sector, d));
-  const maxRows = Math.max(1, ...perDay);
+  const maxRows = Math.max(0, ...perDay);
+  if(!maxRows && mode!=="manual") return ""; // אין משימות בתקופה - לא מציגים את הבלוק
   const rows = Array.from({length:maxRows}, (_,i)=>i+1).map(slot=>{
     const cells = dates.map((d,di)=>{
       if(slot > perDay[di]) return `<td class="tmpl-na"></td>`;
