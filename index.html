@@ -171,7 +171,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=79"></script>
+<script src="portal.js?v=80"></script>
 <script>
 (function(){
 "use strict";
@@ -2890,6 +2890,11 @@ async function runAutoAssign(){
       return true;
     }));
   }
+  // אחמ"ש בכל משמרת (2026-10-21, סרגיי) - בגזרות המאבטחים, כשיש בצוות עובדים שמסומנים אחמ"ש
+  const groupHasAch = workers.some(isGuardAchmash);
+  const wById = id=>workers.find(x=>x.id===id) || (ui.allWorkersById||{})[id];
+  // משמרת "מתואמת" (11:00-23:00) חופפת לבוקר ולערב שכבר יש בהם אחמ"ש - לא נדרש בה אחמ"ש נפרד
+  const slotHasAch = slot=>slot.shiftType==="coordinated" || (assignmentsByDate[slot.date]||[]).some(a=>a.sector===slot.sector && a.shift_type===slot.shiftType && !a.shadow_of && isGuardAchmash(wById(a.worker_id)));
   const fullFirst = slot => (a,b)=> ((gapCoverableNow(a, slot)?0:1) - (gapCoverableNow(b, slot)?0:1)) || byFairness(a,b);
 
   // מניעת ברירת-מחדל של שיבוץ עם פחות מ-8 שעות מנוחה (לבקשת סרגיי, 2026-09-28) - ראו הערה מפורטת
@@ -2949,6 +2954,15 @@ async function runAutoAssign(){
       return {slot, need, ok, bad, newInterval, chosen:[]};
     });
     const taken = new Set();
+    // קודם אחמ"ש אחד לכל משבצת שאין בה (בגזרות עם אחמ"שים), ורק אז שאר הסיירים לפי עדיפות הערים וההוגנות
+    if(groupHasAch) st.forEach(x=>{
+      if(x.need<=0 || slotHasAch(x.slot)) return;
+      for(const phase of ["ok","bad"]){
+        const c = x[phase].filter(w=>isGuardAchmash(w) && !taken.has(w.id)).sort((a,b)=>(cityRank(a, x.slot.sector)-cityRank(b, x.slot.sector)) || byFairness(a,b));
+        if(c.length){ taken.add(c[0].id); x.chosen.push(c[0]); if(phase==="bad") restForced++; return; }
+      }
+      noAch++;
+    });
     const ranks = Array.from(new Set(st.flatMap(x=>x.ok.concat(x.bad).map(w=>cityRank(w, x.slot.sector))))).sort((a,b)=>a-b);
     ["ok","bad"].forEach(phase=>{
       ranks.forEach(r=>{
@@ -3011,7 +3025,7 @@ async function runAutoAssign(){
   });
 
   ui.buildMsg = "מבצע שיבוץ אוטומטי...";
-  let filled=0, short=0, restForced=0;
+  let filled=0, short=0, restForced=0, noAch=0;
   for(const unit of units){
   if(unit.length>1 || (POOLED_CITY_SECTORS.includes(unit[0].sector) && !unit[0].roleCounts)) planPooledUnit(unit);
   for(const slot of unit){
@@ -3101,9 +3115,15 @@ async function runAutoAssign(){
         chosen = chosen.concat(pickedRole);
       });
     } else {
-      chosen = restOk.slice().sort(byFairness).slice(0, need);
+      // אחמ"ש בכל משמרת: אם עוד אין במשבצת אחמ"ש - קודם בוחרים אחמ"ש זמין (עם מנוחה תקינה; אם אין - גם בלי), ואז את השאר
+      let achFirst = [];
+      if(groupHasAch && !slotHasAch(slot)){
+        const okA = restOk.filter(isGuardAchmash).sort(byFairness), badA = restBad.filter(isGuardAchmash).sort(byFairness);
+        if(okA.length) achFirst = [okA[0]]; else if(badA.length){ achFirst = [badA[0]]; restForced++; } else noAch++;
+      }
+      chosen = achFirst.concat(restOk.filter(w=>!achFirst.includes(w)).sort(byFairness)).slice(0, need);
       if(chosen.length < need){
-        const more = restBad.slice().sort(byFairness).slice(0, need - chosen.length);
+        const more = restBad.filter(w=>!achFirst.includes(w)).sort(byFairness).slice(0, need - chosen.length);
         restForced += more.length;
         chosen = chosen.concat(more);
       }
@@ -3147,7 +3167,7 @@ async function runAutoAssign(){
     }catch(e){ ui.buildMsg = "שגיאה בשמירת שיבוץ: " + e.message; render(); return; }
   }
   }
-  ui.buildMsg = `השיבוץ האוטומטי הושלם: עודכנו ${filled} משבצות.${short?` שימו לב — ב-${short} משבצות אין מספיק עובדים זמינים כדי למלא את כל התקן (יופיעו כ"חוסר").`:""}${restForced?` שימו לב — ב-${restForced} שיבוצים לא נמצא עובד עם 8 שעות מנוחה, ושובץ עובד עם פחות (כעדיפות אחרונה, מסומן באדום בטבלה).`:""}${streakShort?` ב-${streakShort} משבצות נשאר חוסר כי העובדים הזמינים היו מגיעים ל-7 ימי עבודה ברצף או לשבת רביעית ברצף — אפשר לשבץ ידנית (תוצג אזהרה).`:""}${satLateAch?` מוצ"ש במוקד: ב-${satLateAch} שבתות לא היה אחמ"ש זמין מ-20:00 — שובץ אחמ"ש שומר שבת מ-23:00${satSergey?`, וסרגיי ל-20:00-23:00 (${satSergey})`:""}.`:""}${satEveShort?` ב-${satEveShort} שבתות לא נמצא מי שיכסה אחמ"ש 20:00-23:00.`:""}`;
+  ui.buildMsg = `השיבוץ האוטומטי הושלם: עודכנו ${filled} משבצות.${short?` שימו לב — ב-${short} משבצות אין מספיק עובדים זמינים כדי למלא את כל התקן (יופיעו כ"חוסר").`:""}${restForced?` שימו לב — ב-${restForced} שיבוצים לא נמצא עובד עם 8 שעות מנוחה, ושובץ עובד עם פחות (כעדיפות אחרונה, מסומן באדום בטבלה).`:""}${streakShort?` ב-${streakShort} משבצות נשאר חוסר כי העובדים הזמינים היו מגיעים ל-7 ימי עבודה ברצף או לשבת רביעית ברצף — אפשר לשבץ ידנית (תוצג אזהרה).`:""}${satLateAch?` מוצ"ש במוקד: ב-${satLateAch} שבתות לא היה אחמ"ש זמין מ-20:00 — שובץ אחמ"ש שומר שבת מ-23:00${satSergey?`, וסרגיי ל-20:00-23:00 (${satSergey})`:""}.`:""}${satEveShort?` ב-${satEveShort} שבתות לא נמצא מי שיכסה אחמ"ש 20:00-23:00.`:""}${noAch?` ⚠️ ב-${noAch} משמרות לא היה אחמ"ש זמין — כדאי לשבץ אחמ"ש ידנית.`:""}`;
   ui.loaded = false; // רענון מלא של נתוני השיבוצים
   await loadAggregateData(team);
   if(partialRecs.length){
