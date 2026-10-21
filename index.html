@@ -196,7 +196,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=102"></script>
+<script src="portal.js?v=103"></script>
 <script>
 (function(){
 "use strict";
@@ -922,7 +922,7 @@ function renderAggregate(){
       <span class="backlink" data-action="go-home">◀ חזרה</span>
       <h2>בחר/י גזרה</h2>
       <div class="grid-teams">
-        ${pickerTiles().map(t=>`<div class="team-tile" data-action="agg-pick-team" data-id="${t.repId}">${escapeHtml(t.label)}</div>`).join("")}
+        ${pickerTiles().filter(t=>ui.pickScope!=="units" || !isMokedTeam(teamById(t.repId)||{})).map(t=>`<div class="team-tile" data-action="agg-pick-team" data-id="${t.repId}">${escapeHtml(t.label)}</div>`).join("")}
       </div>
     </div>`;
   }
@@ -3855,7 +3855,7 @@ function renderAdmin(){
       <span class="backlink" data-action="go-home">◀ חזרה</span>
       <h2>בחר/י למי לנהל עובדים</h2>
       <div class="grid-teams">
-        ${getAdminRecipients().map(r=>`<div class="team-tile" data-action="admin-pick-recipient" data-label="${escapeHtml(r.label)}">${escapeHtml(r.label)}</div>`).join("")}
+        ${getAdminRecipients().filter(r=>ui.pickScope!=="units" || !r.teamIds.every(id=>isMokedTeam(teamById(id)||{}))).map(r=>`<div class="team-tile" data-action="admin-pick-recipient" data-label="${escapeHtml(r.label)}">${escapeHtml(r.label)}</div>`).join("")}
       </div>
     </div>`;
   }
@@ -4120,7 +4120,7 @@ function onAppClick(e){
 
   // ---- aggregate ----
   if(a==="agg-pick-team"){ ui.teamId = el.dataset.id; ui.loaded=false; return render(); }
-  if(a==="agg-back"){ if(isSessionPin() && !(S.ui.mgrPick && S.ui.teamId)) return goHome(); S.ui = S.ui.mgrPick ? {mgrPick:true} : {}; return render(); }
+  if(a==="agg-back"){ if(isSessionPin() && !(S.ui.mgrPick && S.ui.teamId)) return goHome(); S.ui = S.ui.mgrPick ? {mgrPick:true, pickScope:S.ui.pickScope} : {}; return render(); }
   if(a==="agg-team-code-submit"){
     const code = document.getElementById("aggTeamCode").value;
     ui.teamCodeValue = code;

@@ -3143,6 +3143,7 @@ async function calClick(App, a, el){
    (mgr_todos, לפי ה-token). אפשר להוסיף תזכורת בתאריך ושעה - בזמן הזה נשלחת התראה מהאפליקציה
    (cron כל דקה: mgr_todo_reminders_due → push_outbox → push-send). השרת: mgr_todo_list/_save/_done/_remove.
    ================================================================ */
+const MHS = { section: (()=>{ try{ return sessionStorage.getItem("cst_mh_section")||""; }catch(e){ return ""; } })() };
 const TD = { data:null, loading:false, token:null, form:null, busy:false, error:null, showDone:false, delAsk:null };
 function tdLoad(App, ms, force){
   if(TD.token !== ms.token){ TD.token = ms.token; TD.data = null; TD.form = null; TD.showDone = false; }
@@ -4344,16 +4345,8 @@ function renderManagerHome(App, ms){
     App.apiRpc("inc_debrief_list", {p_token:ms.token}).then(d=>{ const n = (d||[]).filter(x=>!x.report_id || x.report_mine).length; if(n !== INC.pendCount){ INC.pendCount = n; App.render(); } }).catch(()=>{});
   }
   const names = ts=>esc(ts.map(t=>(t.sectors&&t.sectors.length)?t.sectors.join(" / "):t.name).join(" · "));
-  return `${CALW_CSS}
-  <div class="card">
-    <div class="flexbar" style="justify-content:space-between;">
-      <h2 style="margin:0;">שלום, ${esc(ms.name)}</h2>
-      <button class="btn small secondary" data-action="portal-mgr-logout">יציאה</button>
-    </div>
-  </div>
-  <div class="mgr-cols"><div class="mgr-main">
-  ${renderTodoCard(App, ms)}
-  ${renderMsgCard(App, ms)}
+  const schedU = ms.is_admin ? sched.filter(t=>!App.isMokedTeam(t)) : sched;
+  const mainHtml = `  ${renderMsgCard(App, ms)}
   ${(logi.length || ms.is_admin) ? `<div class="card">
     <h3>🚨 דו"ח אירוע חריג</h3>
     <div class="inc-sec-h"><span class="sayvu-badge">SAYVU</span> אירועי SAYVU מהמוקד — תחקיר אירוע חריג</div>
@@ -4377,12 +4370,12 @@ function renderManagerHome(App, ms){
       <div class="team-tile" data-action="portal-pv" data-page="unit-dash"><div style="font-size:1.1em;font-weight:700;">📊 לוח מנהל יחידה</div><div class="muted" style="font-size:.85em;margin-top:4px;">תמונת מצב כמו שמנהל היחידה רואה</div></div>
       <div class="team-tile" data-action="portal-pv" data-page="login-status"><div style="font-size:1.1em;font-weight:700;">👥 סטטוס התחברות</div><div class="muted" style="font-size:.85em;margin-top:4px;">מי מחובר, התראות וכניסה אחרונה</div></div></div>
   </div>` : ""}
-  ${sched.length && !ms.edit_as_button? `<div class="card">
-    <h3>סידור עבודה</h3>
-    <p class="muted" style="margin-top:-6px;">${names(sched)}</p>
+  ${schedU.length && !ms.edit_as_button? `<div class="card">
+    <h3>סידור עבודה${ms.is_admin?" — גזרות":""}</h3>
+    <p class="muted" style="margin-top:-6px;">${names(schedU)}</p>
     <div class="grid-teams">
-      ${tile("portal-mh-agg", "טבלה מרוכזת ובניית סידור", "שיבוץ, פרסום, פלט ופתיחת הגשה")}
-      ${tile("portal-mh-admin", "ניהול עובדים", "הוספה, קודים וסימונים")}
+      <div class="team-tile" data-action="portal-mh-agg"${ms.is_admin?' data-scope="units"':""}><div style="font-size:1.1em;font-weight:700;">טבלה מרוכזת ובניית סידור</div><div class="muted" style="font-size:.85em;margin-top:4px;">שיבוץ, פרסום, פלט ופתיחת הגשה</div></div>
+      <div class="team-tile" data-action="portal-mh-admin"${ms.is_admin?' data-scope="units"':""}><div style="font-size:1.1em;font-weight:700;">ניהול עובדים</div><div class="muted" style="font-size:.85em;margin-top:4px;">הוספה, קודים וסימונים</div></div>
       <div class="team-tile" data-action="portal-pv" data-page="swap-mgr"><div style="font-size:1.1em;font-weight:700;">🔁 מבקש חילוף</div><div class="muted" style="font-size:.85em;margin-top:4px;">בקשות חילוף ופתיחת בקשה</div></div>
     </div>
   </div>`:""}
@@ -4409,9 +4402,48 @@ function renderManagerHome(App, ms){
     <p class="muted" style="margin:8px 0 0;font-size:.85em;">שיבוץ ידני ואוטומטי, פרסום ופלט — ${names(sched)}</p>
   </div>`:""}
   ${!sched.length && !logi.length && !ms.can_training && !ms.is_admin ? (U.error && /אין הרשאה/.test(U.error) ? `<div class="card"><p class="muted">אין עדיין הרשאות לממשק הזה.</p></div>` : renderUnitDashboard(App, ms)) : ""}
+`;
+  const head = `${CALW_CSS}
+  <div class="card">
+    <div class="flexbar" style="justify-content:space-between;">
+      <h2 style="margin:0;">שלום, ${esc(ms.name)}</h2>
+      <button class="btn small secondary" data-action="portal-mgr-logout">יציאה</button>
+    </div>
+  </div>
+`;
+  if(!ms.is_admin) return `${head}
+  <div class="mgr-cols"><div class="mgr-main">
+  ${renderTodoCard(App, ms)}
+  ${mainHtml}
   </div><div class="mgr-side">${renderCalWeekSide(App, ms)}</div></div>`;
+  /* (2026-10-21, סרגיי) האיזור האישי של סרגיי מחולק ל-2: "מוקד" ו"ניהול היחידה" - נכנסים לכל אחד בנפרד.
+     מתחת לשתי הרובריקות: "המשימות שלי" והיומן. אין שינוי בהרשאות - רק בסידור המסך. */
+  const back = `<span class="backlink" data-action="portal-mh-section" data-s="">◀ חזרה לאיזור האישי</span>`;
+  if(MHS.section==="unit") return `${head}<div class="card">${back}<h2 style="margin:4px 0 0;">🏢 ניהול היחידה</h2></div>${mainHtml}`;
+  if(MHS.section==="moked"){
+    const mokedT = (App.S.teams||[]).find(t=>App.isMokedTeam(t));
+    return `${head}<div class="card">${back}<h2 style="margin:4px 0 0;">📡 מוקד</h2></div>
+    <div class="card">
+      <h3>סידור עבודה — מוקד</h3>
+      <div class="grid-teams">
+        ${mokedT ? `<div class="team-tile" data-action="portal-mh-agg" data-scope="moked"><div style="font-size:1.1em;font-weight:700;">טבלה מרוכזת ובניית סידור</div><div class="muted" style="font-size:.85em;margin-top:4px;">שיבוץ, פרסום, שליחה ופתיחת הגשה</div></div>
+        <div class="team-tile" data-action="portal-mh-admin" data-scope="moked"><div style="font-size:1.1em;font-weight:700;">ניהול עובדי המוקד</div><div class="muted" style="font-size:.85em;margin-top:4px;">הוספה, קודים וסימונים</div></div>` : ""}
+        <div class="team-tile" data-action="portal-pv" data-page="swap-mgr"><div style="font-size:1.1em;font-weight:700;">🔁 מבקש חילוף</div><div class="muted" style="font-size:.85em;margin-top:4px;">בקשות חילוף ופתיחת בקשה</div></div>
+        ${areqMgrTile(App, ms)}
+      </div>
+    </div>`;
+  }
+  const big = (s, icon, title, sub)=>`<div class="team-tile mh-big" data-action="portal-mh-section" data-s="${s}"><div style="font-size:2em;">${icon}</div><div style="font-size:1.25em;font-weight:800;margin-top:4px;">${title}</div><div class="muted" style="font-size:.88em;margin-top:4px;">${sub}</div></div>`;
+  return `${head}
+  <style>.mh-big{text-align:center;padding:22px 12px;} @media (max-width:520px){ .mh-big{padding:16px 8px;} }</style>
+  <div class="grid-teams" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:12px;">
+    ${big("moked", "📡", "מוקד", "סידור המוקד, עובדי המוקד, חילופים ובקשות")}
+    ${big("unit", "🏢", "ניהול היחידה", "גזרות, אירועים, דוחות, לוגיסטי, הודעות וניהול")}
+  </div>
+  ${renderTodoCard(App, ms)}
+  ${renderCalWeekSide(App, ms)}`;
 }
-function enterMgrSchedule(App, ms, which){
+function enterMgrSchedule(App, ms, which, scope){
   const S = App.S;
   const teams = mgrTeams(App, ms.schedule_team_ids);
   if(!teams.length) return App.render();
@@ -4426,6 +4458,11 @@ function enterMgrSchedule(App, ms, which){
   } else {
     S.view = "admin"; S.ui = many ? {pinOk: true, mgrPick: true} : {pinOk: true, teamIds: teams.map(t=>t.id), recipientLabel: ms.name};
   }
+  // (2026-10-21) כניסה מתוך "מוקד" / "ניהול היחידה" - רק מה שמוצג ברשימת הבחירה משתנה, ההרשאות נשארות כמו שהן
+  const mokedT = teams.find(t=>App.isMokedTeam(t));
+  if(scope==="moked" && mokedT){
+    S.ui = which==="agg" ? {teamId: mokedT.id} : {pinOk: true, teamIds: [mokedT.id], recipientLabel: "מוקד"};
+  } else if(scope==="units" && many){ S.ui.pickScope = "units"; }
   App.render();
 }
 
@@ -4587,7 +4624,8 @@ function onClick(App, a, el){
     else { S.view = "admin"; S.ui = {pinOk: true, teamIds: [ss.team_id], recipientLabel: ss.name}; }
     return App.render();
   }
-  if(a==="portal-mh-agg" || a==="portal-mh-admin"){ const ms = loadMgr(App); if(!ms) return App.render(); return enterMgrSchedule(App, ms, a==="portal-mh-agg"?"agg":"admin"); }
+  if(a==="portal-mh-section"){ MHS.section = el.dataset.s||""; try{ sessionStorage.setItem("cst_mh_section", MHS.section); }catch(e){} window.scrollTo(0,0); return App.render(); }
+  if(a==="portal-mh-agg" || a==="portal-mh-admin"){ const ms = loadMgr(App); if(!ms) return App.render(); return enterMgrSchedule(App, ms, a==="portal-mh-agg"?"agg":"admin", el.dataset.scope||null); }
   if(a==="portal-mgr-logout"){
     const ms = loadMgr(App);
     if(ms) App.apiRpc("manager_logout", {p_token: ms.token}).catch(()=>{});
