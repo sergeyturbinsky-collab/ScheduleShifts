@@ -171,7 +171,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=83"></script>
+<script src="portal.js?v=84"></script>
 <script>
 (function(){
 "use strict";
@@ -2644,7 +2644,15 @@ async function confirmTmplCustomHours(){
       const list = tmplAssignedList(assignmentsByDate, c.date, c.sector, shiftType).map(a=>a.worker_id).filter(id=>id!==workerId);
       const pos = (shiftType===c.type) ? c.pos : (list.length+1);
       if(pos-1 < list.length) list.splice(pos-1,1,workerId); else list.push(workerId);
-      await setAssignmentListPreservingHours(c.sector, c.date, shiftType, list, "manual", workerId, cs, ce);
+      // (2026-10-21, סרגיי - אופציה 2) טווח שחוצה שתי משמרות נשמר מפוצל: כל משמרת מקבלת רק את החלק שלה,
+      // עם נקודת החלוקה בתחילת המשמרת המאוחרת (למשל ערב 16:30-22:30 + לילה 22:30-4:30). חלק ששווה לשעות התקן נשמר בלי שעות מותאמות.
+      let hcs = cs, hce = ce;
+      if(hits.length===2){
+        const split = hits[1].quota.start_time.slice(0,5);
+        if(hit===hits[0]) hce = split; else hcs = split;
+        if(hcs===hit.quota.start_time.slice(0,5) && hce===hit.quota.end_time.slice(0,5)){ hcs = null; hce = null; }
+      }
+      await setAssignmentListPreservingHours(c.sector, c.date, shiftType, list, "manual", workerId, hcs, hce);
       // מרעננים את ui.assignments אחרי כל בלוק כדי שהחישוב הבא (אם יש בלוק נוסף) יראה את המצב העדכני
       ui.assignments = await apiGet("shift_assignments", `select=*&sector=eq.${c.sector}&entry_date=eq.${c.date}&order=created_at.asc`).catch(()=>ui.assignments);
     }
