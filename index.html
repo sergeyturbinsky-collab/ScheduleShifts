@@ -193,7 +193,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=92"></script>
+<script src="portal.js?v=93"></script>
 <script>
 (function(){
 "use strict";
@@ -1034,9 +1034,10 @@ function renderPrintView(team){
         return `<div class="print-week"${i>0?' style="break-before:page;page-break-before:always;margin-top:18px;"':''}>
           <h3 style="margin:0 0 8px;">שבוע ${i+1}: ${fmtDateHeb(wk[0])} — ${fmtDateHeb(wk[wk.length-1])}</h3>${g}</div>`;
       }).join("");
-  return `
+  return `${renderShareOverlay(group, dates)}
   <div class="row no-print" style="margin-bottom:10px;">
-    <button class="btn ok" data-action="do-print">🖨️ הדפס / שמור כ-PDF</button>
+    <button class="btn ok" data-action="share-open">📤 שליחה בוואטסאפ / מייל</button>
+    <button class="btn secondary" data-action="do-print">🖨️ הדפסה / PDF</button>
     ${isMoked ? "" : `<button class="btn secondary" data-action="print-toggle-detail">${compact ? "📋 תצוגה מפורטת" : "📄 תצוגה מתומצתת (עמוד אחד)"}</button>`}
     ${S.view==="mgrview" ? "" : `<button class="btn secondary" data-action="close-print">סגור</button>`}
   </div>
@@ -1052,6 +1053,84 @@ function renderPrintView(team){
     </div>`}
     ${grid}
   </div>`;
+}
+
+/* --------- שליחת הסידור כתמונה (2026-10-21, סרגיי: "אין צורך בכל התהליך הארוך" של הדפסה ל-PDF) ---------
+   לחיצה על "📤 שליחה בוואטסאפ / מייל" מכינה מיד תמונה (PNG) של הפלט (#printArea, ברוחב קבוע של עמוד לרוחב)
+   ושואלת: וואטסאפ או מייל. בטלפון (ובמחשב שתומך) נפתח חלון השיתוף של המכשיר עם התמונה מצורפת - בוחרים
+   וואטסאפ/ג'ימייל והתמונה כבר בהודעה. במחשב שלא תומך בשיתוף קבצים: התמונה מועתקת ללוח ונשמרת בהורדות,
+   ונפתחת הודעת וואטסאפ / מייל חדשה - מדביקים (Ctrl+V). */
+function loadHtml2Canvas(){
+  if(window.html2canvas) return Promise.resolve();
+  return new Promise((res, rej)=>{ const sc = document.createElement("script"); sc.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+    sc.onload = ()=>res(); sc.onerror = ()=>rej(new Error("טעינת רכיב התמונה נכשלה")); document.head.appendChild(sc); });
+}
+async function makeScheduleImage(){
+  const src = document.getElementById("printArea"); if(!src) throw new Error("אין פלט להצגה");
+  await loadHtml2Canvas();
+  const box = document.createElement("div");
+  box.dir = "rtl";
+  box.style.cssText = "position:fixed;left:-20000px;top:0;width:1400px;background:#fff;padding:16px;box-sizing:border-box;";
+  const clone = src.cloneNode(true); clone.removeAttribute("id"); clone.id = "printAreaShot";
+  box.appendChild(clone); document.body.appendChild(box);
+  try{
+    const canvas = await window.html2canvas(box, {scale:1.5, backgroundColor:"#ffffff", useCORS:true, logging:false, windowWidth:1440});
+    return await new Promise((res, rej)=>canvas.toBlob(b=>b ? res(b) : rej(new Error("יצירת התמונה נכשלה")), "image/png"));
+  } finally { box.remove(); }
+}
+function shareFileName(group, dates){
+  return `סידור-${String(group.label||"").replace(/[\\/:*?"<>|\s]+/g,"-")}-${dates[0]}.png`;
+}
+function renderShareOverlay(group, dates){
+  const ui = S.ui; if(!ui.shareOpen) return "";
+  const ready = !!ui.shareBlob;
+  return `<div class="overlay no-print" data-action="share-close">
+    <div class="card" data-action="noop" style="max-width:420px;">
+      <h3 style="margin-top:0;">📤 שליחת הסידור</h3>
+      <p class="muted" style="margin-top:-4px;">${escapeHtml(group.label)} · ${fmtDateHeb(dates[0])} — ${fmtDateHeb(dates[dates.length-1])}</p>
+      ${ui.shareErr ? `<p class="shortage">${escapeHtml(ui.shareErr)}</p>` : ""}
+      ${!ready && !ui.shareErr ? `<p class="muted">⏳ מכין תמונה של הסידור...</p>` : ""}
+      ${ui.shareMsg ? `<p style="color:#1b7f3b;font-weight:600;">${escapeHtml(ui.shareMsg)}</p>` : ""}
+      <div class="grid-teams" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-top:8px;">
+        <div class="team-tile" data-action="share-go" data-via="wa" style="${ready?"":"opacity:.5;pointer-events:none;"}border-color:#25d366;"><div style="font-size:1.15em;font-weight:700;">🟢 וואטסאפ</div></div>
+        <div class="team-tile" data-action="share-go" data-via="mail" style="${ready?"":"opacity:.5;pointer-events:none;"}"><div style="font-size:1.15em;font-weight:700;">✉️ מייל</div></div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn secondary small" data-action="share-go" data-via="dl" ${ready?"":"disabled"}>⬇️ הורדת התמונה</button>
+        <button class="btn secondary small" data-action="share-close">סגירה</button>
+      </div>
+    </div></div>`;
+}
+async function shareOpen(group, dates){
+  const ui = S.ui;
+  ui.shareOpen = true; ui.shareErr = null; ui.shareMsg = null;
+  if(ui.shareBlob && ui.shareKey === group.label+dates[0]) return render();
+  ui.shareBlob = null; ui.shareKey = group.label+dates[0]; render();
+  try{ ui.shareBlob = await makeScheduleImage(); }
+  catch(err){ ui.shareErr = err.message || "יצירת התמונה נכשלה"; }
+  render();
+}
+async function shareGo(via, group, dates){
+  const ui = S.ui, blob = ui.shareBlob; if(!blob) return;
+  const name = shareFileName(group, dates);
+  const text = `סידור עבודה — ${group.label} · ${fmtDateHeb(dates[0])} — ${fmtDateHeb(dates[dates.length-1])}`;
+  const file = new File([blob], name, {type:"image/png"});
+  const download = ()=>{ const u = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u), 4000); };
+  if(via==="dl"){ download(); ui.shareMsg = "התמונה נשמרה בהורדות."; return render(); }
+  // טלפון / מחשב שתומך: חלון השיתוף של המכשיר עם התמונה מצורפת
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file], title:text, text}); ui.shareOpen = false; return render(); }
+    catch(err){ if(err && err.name==="AbortError") return; /* אחרת - ממשיכים לדרך החלופית */ }
+  }
+  // מחשב: מעתיקים את התמונה ללוח + שומרים בהורדות, ופותחים הודעה חדשה - מדביקים בה
+  let copied = false;
+  try{ if(navigator.clipboard && window.ClipboardItem){ await navigator.clipboard.write([new ClipboardItem({"image/png": blob})]); copied = true; } }catch(e){}
+  download();
+  if(via==="wa") window.open("https://wa.me/?text=" + encodeURIComponent(text), "_blank");
+  else window.location.href = "mailto:?subject=" + encodeURIComponent(text) + "&body=" + encodeURIComponent(text + "\n\n(התמונה מצורפת)");
+  ui.shareMsg = copied ? "התמונה הועתקה ונשמרה בהורדות — בהודעה שנפתחה לחצו Ctrl+V כדי להדביק אותה (או צרפו את הקובץ מההורדות)."
+                       : "התמונה נשמרה בהורדות — צרפו אותה להודעה שנפתחה.";
+  render();
 }
 
 /* --------- "מי זמין לכל יום" (בנפרד מ"שיבוץ") - רשימה מאוחדת ליום, כולל מי שכבר שובץ ---------
@@ -3934,6 +4013,12 @@ function onAppClick(e){
   if(a==="open-print"){ ui.printOpen = true; return render(); }
   if(a==="close-print"){ ui.printOpen = false; return render(); }
   if(a==="do-print"){ window.print(); return; }
+  if(a==="share-open" || a==="share-go"){
+    const team = teamById(ui.teamId) || (S.teams||[]).find(t=>t.id===ui.teamId); if(!team) return;
+    const group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
+    return a==="share-open" ? shareOpen(group, dates) : shareGo(el.dataset.via, group, dates);
+  }
+  if(a==="share-close"){ ui.shareOpen = false; return render(); }
   if(a==="print-toggle-detail"){ ui.printDetailed = !ui.printDetailed; return render(); }
   if(a==="toggle-monthly"){
     ui.monthlyOpen = !ui.monthlyOpen;
