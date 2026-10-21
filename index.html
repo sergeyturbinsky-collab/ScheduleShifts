@@ -171,7 +171,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=82"></script>
+<script src="portal.js?v=83"></script>
 <script>
 (function(){
 "use strict";
@@ -1548,11 +1548,14 @@ function computeRestViolations(assignments){
     // לא "מנוחה קצרה": לא מסמנים באדום, והמנוחה נמדדת מסוף הרצף (2026-10-21, סרגיי)
     let curEnd = uniq.length ? uniq[0].iv.end : null;
     for(let i=1;i<uniq.length;i++){
-      if(uniq[i].iv.start <= curEnd){ if(uniq[i].iv.end > curEnd) curEnd = uniq[i].iv.end; continue; }
+      // רק משמרת עוקבת נחשבת המשך רציף: מתחילה כשהקודמת נגמרת (או לפני כן) ונגמרת אחריה, ואף אחת מהן לא "מתואמת"
+      // (המקבילה לבוקר/ערב). למשל ערב שממשיך ללילה. חפיפה אחרת או פער קצר - נבדקים כרגיל (אדום)
+      const prevType = uniq[i-1].a.shift_type, curType = uniq[i].a.shift_type;
+      if(+uniq[i].iv.start <= +curEnd && +uniq[i].iv.end > +curEnd && prevType!=="coordinated" && curType!=="coordinated" && prevType!==curType){ curEnd = uniq[i].iv.end; continue; }
       const gapHours = (uniq[i].iv.start - curEnd) / 3600000;
       const target = gapHours < REST_HOURS_REQUIRED ? bad : (Math.abs(gapHours-REST_HOURS_REQUIRED) < 0.01 ? bad.tight : null);
       if(target){ target.add(restKey(uniq[i].a)); (uniq[i].dups||[]).forEach(d=>target.add(restKey(d))); }
-      curEnd = uniq[i].iv.end;
+      if(+uniq[i].iv.end > +curEnd) curEnd = uniq[i].iv.end;
     }
   });
   return bad;
@@ -1815,20 +1818,12 @@ function tmplCustomHits(group, date, sector, clickedType, customStart, customEnd
    בבלוק ה"עוגן" - מוצג הטווח המלא (כמו tmplHoursTxt הרגיל) ישירות בבלוק ה"מוביל", במקום ההערה
    הקצרה. כשקיימות שתי השורות בפועל (המקרה התקין) - אין שינוי בהתנהגות. */
 function tmplHoursTxt2(group, date, sector, q, assignment, assignmentsByDate){
+  // (2026-10-21, סרגיי: "צריך שיהיה רשום פשוט השעות שנבחרו") - שעות מותאמות מוצגות תמיד כפי שנבחרו (התחלה-סיום),
+  // גם כשהן חוצות שתי משמרות (למשל ערב שממשיך ללילה 16:30-4:30 מוצג כך בשתיהן)
   const cs = assignment && assignment.custom_start ? assignment.custom_start.slice(0,5) : null;
   const ce = assignment && assignment.custom_end ? assignment.custom_end.slice(0,5) : null;
   if(!cs || !ce) return tmplHoursTxt(q, assignment);
-  const touched = tmplCustomHits(group, date, sector, q.shift_type, cs, ce);
-  if(touched.length < 2) return tmplHoursTxt(q, assignment);
-  const leading = touched[0].quota, anchor = touched[1].quota;
-  if(q.shift_type === leading.shift_type){
-    const anchorRows = (assignmentsByDate && assignmentsByDate[date]) || [];
-    const anchorHasRow = anchorRows.some(a=>a.sector===sector && a.shift_type===anchor.shift_type && a.worker_id===assignment.worker_id);
-    if(!anchorHasRow) return tmplHoursTxt(q, assignment); // אין שורת "עוגן" בפועל - מציגים את הטווח המלא כאן
-    return `(מ-${tmplHourNum(cs)})`;
-  }
-  if(q.shift_type === anchor.shift_type) return `${tmplHourNum(q.start_time)}-${tmplHourNum(ce)}`;
-  return tmplHoursTxt(q, assignment);
+  return `${tmplHourNum(cs)}-${tmplHourNum(ce)}`;
 }
 
 /* עובדים משובצים למשבצת נתונה, ממוינים לפי סדר השיבוץ (created_at, כי כך ui.assignments נטען) -
