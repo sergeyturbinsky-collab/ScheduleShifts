@@ -1101,7 +1101,7 @@ function arFormHtml(App, session){
     ${sec("📷 תמונות מהזירה (לא חובה, עד 8)", `<span><label class="btn secondary small" style="cursor:pointer;">📷 צילום<input type="file" accept="image/*" capture="environment" data-action="portal-ar-files" style="display:none;"></label>
       <label class="btn secondary small" style="cursor:pointer;">🖼️ מהגלריה<input type="file" accept="image/*" multiple data-action="portal-ar-files" style="display:none;"></label></span>
       ${AR.photos.length ? `<div class="dmg-imgs">${AR.photos.map((s,j)=>`<span style="position:relative;display:inline-block;"><img src="${s}" alt=""><span data-action="portal-ar-rmimg" data-j="${j}" style="position:absolute;top:2px;left:2px;background:#fff;border-radius:50%;padding:0 6px;cursor:pointer;">✕</span></span>`).join("")}</div>` : ""}`)}
-    ${sec("תיאור האירוע במלל חופשי", `<textarea data-arf="notes" rows="5" maxlength="4000" placeholder="תארו את השתלשלות האירוע במילים שלכם">${esc(f.notes||"")}</textarea>`)}
+    ${sec("תיאור האירוע במלל חופשי", `<textarea data-arf="notes" rows="5" maxlength="4000" placeholder="תארו את השתלשלות האירוע במילים שלכם">${esc(f.notes||"")}</textarea>`, true)}
     ${AR.error ? `<p class="shortage">${esc(AR.error)}</p>` : ""}
     <div class="flexbar" style="gap:6px;flex-wrap:wrap;margin-top:8px;">
       <button class="btn secondary" data-action="portal-ar-preview">👁 תצוגה מקדימה</button>
@@ -1208,6 +1208,7 @@ async function arAction(App, a, el){
     if(!f.type || (f.type==="אחר" && !(f.typeOther||"").trim())) miss.push("סוג האירוע");
     if(!f.source) miss.push("איך התקבל האירוע");
     if(f.prop==="נגרם נזק לרכוש" && !(f.propDesc||"").trim()) miss.push("תיאור הנזק לרכוש");
+    if(!(f.notes||"").trim()) miss.push("תיאור האירוע במלל חופשי");
     if(miss.length){ AR.error = "חסר: " + miss.join(", "); return App.render(); }
     const text = arBuildText(f, session.name);
     AR.busy = true; AR.error = null; App.render();
