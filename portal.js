@@ -1074,7 +1074,7 @@ function arFormHtml(App, session){
     ${sec("מתי ואיפה", `<div class="row">
         <div class="field"><label>תאריך</label>${inp("date","","date")}</div>
         <div class="field"><label>שעה</label>${inp("time","","time")}</div>
-        <div class="field"><label>מס׳ אירוע בסביו</label>${inp("sayvu","לא חובה","text",'inputmode="numeric" maxlength="20"')}</div></div>
+        <div class="field"><label>מס׳ אירוע בסביו <span class="ar-req">*</span></label>${inp("sayvu","למשל: 9338","text",'inputmode="numeric" maxlength="20"')}</div></div>
       <div class="field"><label>כתובת / מיקום <span class="ar-req">*</span></label>${inp("location","למשל: אינטרנציונל 24","text",'maxlength="200"')}</div>`, true)}
     ${sec("סוג האירוע", arChips(App, "type", AR_OPT.type) + (f.type==="אחר" ? `<div class="field" style="margin-top:6px;">${inp("typeOther","מה סוג האירוע","text",'maxlength="80"')}</div>` : ""), true)}
     ${sec("מי היו מעורבים", arChips(App, "involved", AR_OPT.involved) + ((f.involved||[]).includes("אחר") ? `<div class="field" style="margin-top:6px;">${inp("involvedOther","מי עוד","text",'maxlength="80"')}</div>` : ""))}
@@ -1204,6 +1204,7 @@ async function arAction(App, a, el){
     arSync(App); const f = AR.f;
     const miss = [];
     if(!f.date || !f.time) miss.push("תאריך ושעה");
+    if(!(f.sayvu||"").trim()) miss.push("מס׳ אירוע בסביו");
     if(!(f.location||"").trim()) miss.push("כתובת / מיקום");
     if(!f.type || (f.type==="אחר" && !(f.typeOther||"").trim())) miss.push("סוג האירוע");
     if(!f.source) miss.push("איך התקבל האירוע");
