@@ -124,7 +124,9 @@
   .cpt-table td.cpt-na{background:#4b5563;}
   .cpt-table td.cpt-missing{color:#b42318;font-style:italic;}
   .cpt-table td.cpt-task{background:#fde7c8;}
-  .cpt-table td.cpt-task-cell{background:#fff7ec;font-size:10px;}
+  .cpt-table td.cpt-task-cell{background:#fff7ec;font-size:10px;vertical-align:top;padding:0;}
+  .cpt-task-item{padding:2px 3px;}
+  .cpt-task-item + .cpt-task-item{border-top:1px solid #d6c3a5;}
   .cpt-hrs{font-size:10px;color:#1f2937;white-space:nowrap;}
   .cpt-ach{display:inline-block;background:#0c3a6e;color:#fff;font-size:8.5px;font-weight:700;border-radius:6px;padding:0 4px;vertical-align:middle;}
   .cpt-title{margin:0 0 6px;font-size:15px;}
@@ -191,7 +193,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=88"></script>
+<script src="portal.js?v=89"></script>
 <script>
 (function(){
 "use strict";
@@ -2059,15 +2061,22 @@ function renderCompactPrintGrid(group, dates, ui){
         return `<tr class="${pos===1?"cpt-first":""}">${lead}${cells}</tr>`;
       }).join("");
     }).join("");
-    // משימות שאינן משמרת - רק השורות שיש בהן משימות בפועל
+    // משימות שאינן משמרת (2026-10-21, סרגיי: "בימים שאין משימות עדיין מופיעות משבצות") - שורה אחת: בכל יום רשימת
+    // המשימות שלו, ומשימה זהה (אותו מלל ושעות) של כמה מאבטחים באותו יום מוצגת פעם אחת עם כל השמות
     const tasks = (ui.schedTasks||[]).filter(t=>t.sector===secData.sector && dates.includes(t.date));
-    const slots = Array.from(new Set(tasks.map(t=>t.slot))).sort((a,b)=>a-b);
-    const taskRows = slots.map((slot,i)=>`<tr class="${i===0?"cpt-first":""}">${i===0?`<td class="cpt-shift cpt-task" colspan="2" rowspan="${slots.length}">משימות<br><span class="cpt-sub">(לא משמרת)</span></td>`:""}${dates.map(d=>{
-        const t = tasks.find(x=>x.date===d && x.slot===slot);
-        if(!t) return `<td class="cpt-task-empty"></td>`;
-        const th = t.start||t.end ? ` <span class="cpt-hrs" dir="ltr">(${escapeHtml(t.start?tmplHourNum(t.start):"")}${t.end?"-"+escapeHtml(tmplHourNum(t.end)):""})</span>` : "";
-        return `<td class="cpt-task-cell"><b>${escapeHtml(t.worker_name||"?")}</b> — ${escapeHtml(t.title)}${th}</td>`;
-      }).join("")}</tr>`).join("");
+    const taskRows = !tasks.length ? "" : `<tr class="cpt-first"><td class="cpt-shift cpt-task" colspan="2">משימות<br><span class="cpt-sub">(לא משמרת)</span></td>${dates.map(d=>{
+        const groups = [];
+        tasks.filter(t=>t.date===d).sort((x,y)=>x.slot-y.slot).forEach(t=>{
+          const key = `${t.title}|${t.start||""}|${t.end||""}`;
+          const g = groups.find(x=>x.key===key);
+          if(g) g.names.push(t.worker_name||"?"); else groups.push({key, t, names:[t.worker_name||"?"]});
+        });
+        if(!groups.length) return `<td class="cpt-task-empty"></td>`;
+        return `<td class="cpt-task-cell">${groups.map(({t,names})=>{
+          const th = t.start||t.end ? ` <span class="cpt-hrs" dir="ltr">(${escapeHtml(t.start?tmplHourNum(t.start):"")}${t.end?"-"+escapeHtml(tmplHourNum(t.end)):""})</span>` : "";
+          return `<div class="cpt-task-item"><b>${names.map(escapeHtml).join(", ")}</b> — ${escapeHtml(t.title)}${th}</div>`;
+        }).join("")}</td>`;
+      }).join("")}</tr>`;
     return `<table class="cpt-table"><colgroup><col style="width:54px"><col style="width:104px">${dates.map(()=>"<col>").join("")}</colgroup>
       <thead>${head}</thead><tbody>${body}${taskRows}</tbody></table>`;
   }).join("");
