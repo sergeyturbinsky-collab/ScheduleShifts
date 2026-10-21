@@ -171,7 +171,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=77"></script>
+<script src="portal.js?v=78"></script>
 <script>
 (function(){
 "use strict";
@@ -604,6 +604,24 @@ function logoStripHtml(h){ const imgs = [...document.querySelectorAll(".header-b
    בשיבוץ האוטומטי האחמ"ש תמיד "סייר 1" במשמרת שלו; בטבלאות מוצגת לידו תגית אחמ"ש. */
 function isGuardAchmash(w){ return !!(w && w.role==='אחמ"ש' && !isMokedTeam(teamById(w.team_id)||{})); }
 function achTagHtml(w){ return isGuardAchmash(w) ? ` <span class="ach-tag">אחמ"ש</span>` : ""; }
+/* מודל ההגשה של הצוות (2026-10-21, סרגיי): במוקד תמיד מסמנים מה *לא* יכולים. בצוות עם constraint_teams.blocking_from
+   (חיפה, מ-01/11/2026) - גם המאבטחים מסמנים רק מה לא יכולים (כל השאר זמין), בלי שעות מותאמות, ועם מגבלה של
+   max_blocked_per_week משמרות חסומות בשבוע. תקופות לפני התאריך הזה נשארות במודל הקודם ("מה כן יכול"). */
+function teamBlockingAt(team, dateStr){ return !!team && (isMokedTeam(team) || (!!team.blocking_from && String(dateStr||"") >= String(team.blocking_from))); }
+function guardBlockingAt(team, dateStr){ return !!team && !isMokedTeam(team) && teamBlockingAt(team, dateStr); }
+/* כמה משמרות חסומות בכל שבוע (ראשון-שבת). "לא יכול" / "אחר" ליום שלם = כל המשמרות של אותו יום. חופשה/מילואים/מחלה לא נספרים. */
+function blockedCountsByWeek(team, dates, entries){
+  const out = {};
+  dates.forEach(d=>{
+    const e = entries[d]; if(!e) return;
+    const dt = parseDate(d); const wk = fmtDate(addDays(dt, -dt.getDay()));
+    let n = 0;
+    if(e.dayStatus){ if(e.dayStatus==="unavailable" || e.dayStatus==="other") n = submitOptionsForTeamDay(team, d).length; }
+    else n = (e.types||[]).length;
+    out[wk] = (out[wk]||0) + n;
+  });
+  return out;
+}
 function isSessionPin(){ return typeof S.pin==="string" && (S.pin.startsWith("mgr:") || S.pin.startsWith("wrk:")); }
 function actorName(){ return isSessionPin() ? (S.actorName || "") : "קוד עריכה"; }
 function goHome(){ S.view = S.managerMode ? "managers" : "home"; S.ui={}; render(); }
@@ -704,7 +722,11 @@ function renderSubmitPeriod(){
                 : windowState.state==="closed" ? `הטופס סגור להגשה לתקופה זו${windowState.closedSince?` (נסגר ${windowState.closedSince})`:""} — ניתן לצפות בהגשה שנשמרה, ללא אפשרות לערוך`
                 : `הטופס עדיין לא נפתח${windowState.opensAt?` · ייפתח ב-${windowState.opensAt}`:""}`;
 
-  const positiveChips = !isMokedTeam(team); // מאבטחים מסמנים "מה כן יכולים" (וי ירוק); המוקד ממשיך לסמן "מה לא יכול" (X אדום)
+  const blockingForm = teamBlockingAt(team, ui.periodStart);
+  const guardBlocking = guardBlockingAt(team, ui.periodStart);
+  const positiveChips = !blockingForm; // מאבטחים מסמנים "מה כן יכולים" (וי ירוק); המוקד (וחיפה מ-01/11) מסמנים "מה לא יכול" (X אדום)
+  const maxBlocks = guardBlocking ? (team.max_blocked_per_week || null) : null;
+  const weekCounts = maxBlocks ? blockedCountsByWeek(team, periodDates(ui.periodStart, team), ui.entries) : {};
   const daysHtml = dates.map(d=>{
     const opts = submitOptionsForTeamDay(team, d);
     const sel = ui.entries[d] || {types:[], customOn:false, customStart:"07:00", customEnd:"15:00", dayStatus:null};
@@ -726,9 +748,9 @@ function renderSubmitPeriod(){
       <h4>${fmtDateHeb(d)}</h4>
       <div class="chip-opts">
         ${opts.map(ot=>`<div class="chip ${sel.types.includes(ot)?"on":""} ${positiveChips?"positive":""}"${readOnly?"":` data-action="toggle-shift" data-date="${d}" data-type="${ot}"`}>${submitOptionLabel(ot, d)}</div>`).join("")}
-        ${readOnly?"":`<div class="chip ${sel.customOn?"on":""} positive" data-action="toggle-custom" data-date="${d}">${positiveChips?"שעות מותאמות":"שעות שאני כן יכול/ה"}</div>`}
+        ${(readOnly || guardBlocking)?"":`<div class="chip ${sel.customOn?"on":""} positive" data-action="toggle-custom" data-date="${d}">${positiveChips?"שעות מותאמות":"שעות שאני כן יכול/ה"}</div>`}
       </div>
-      ${sel.customOn? `
+      ${(sel.customOn && !guardBlocking)? `
         <div class="row" style="margin-top:8px;">
           <div class="field"><label>${positiveChips?"משעה":"יכול/ה משעה"}</label><input type="time" data-action="custom-start" data-date="${d}" value="${sel.customStart}"${readOnly?" disabled":""}></div>
           <div class="field"><label>עד שעה</label><input type="time" data-action="custom-end" data-date="${d}" value="${sel.customEnd}"${readOnly?" disabled":""}></div>
@@ -749,7 +771,9 @@ function renderSubmitPeriod(){
     </div>
     <div class="banner ${bannerCls}">${bannerTxt}</div>
     ${windowState.state==="notyet" ? `<p class="muted">ניתן עדיין לנווט בין תקופות, אך לא להגיש בזמן שהטופס עדיין לא נפתח.</p>` : `
-      ${(!readOnly && !isMokedTeam(team)) ? `<p class="muted">סמנו בכל יום את המשמרות שבהן אתם <b>כן</b> יכולים לעבוד. משמרת שלא תסומן תיחשב כלא זמינה עבורכם. ניתן גם לסמן טווח שעות מותאם נוסף שבו אתם זמינים.<br><b>חובה להתייחס לכל יום</b> — יום שלא מתאים לכם: "לא יכול" או "אחר" (אפשר לפרט בהערה).</p>` : ""}
+      ${(!readOnly && guardBlocking) ? `<p class="muted">סמנו רק את המשמרות שבהן אתם <b>לא</b> יכולים לעבוד (✕). כל משמרת שלא תסומן נחשבת זמינה.${maxBlocks?`<br><b>אפשר לחסום עד ${maxBlocks} משמרות בשבוע</b> — "לא יכול" / "אחר" ליום שלם נספר ככל המשמרות של אותו יום; חופשה, מילואים ומחלה לא נספרים.`:""}</p>
+        ${maxBlocks ? `<div class="banner ${Object.values(weekCounts).some(n=>n>maxBlocks)?"closed":"open"}">חסומות בתקופה: ${Object.keys(weekCounts).length ? Object.keys(weekCounts).sort().map(k=>`${Object.keys(weekCounts).length>1?`שבוע ${fmtDateHeb(k)}: `:""}${weekCounts[k]}/${maxBlocks}`).join(" · ") : `0/${maxBlocks}`}</div>` : ""}` : ""}
+      ${(!readOnly && !isMokedTeam(team) && !guardBlocking) ? `<p class="muted">סמנו בכל יום את המשמרות שבהן אתם <b>כן</b> יכולים לעבוד. משמרת שלא תסומן תיחשב כלא זמינה עבורכם. ניתן גם לסמן טווח שעות מותאם נוסף שבו אתם זמינים.<br><b>חובה להתייחס לכל יום</b> — יום שלא מתאים לכם: "לא יכול" או "אחר" (אפשר לפרט בהערה).</p>` : ""}
       ${readOnly ? `<p class="muted">הטופס נעול לעריכה — מוצגת ההגשה האחרונה שנשמרה, לצפייה בלבד.</p>` : ""}
       ${daysHtml}
       <div class="field" style="margin-top:10px;">
@@ -814,8 +838,18 @@ async function saveSubmission(){
   const ws = computeWindowState(team, ui.periodStart);
   if(ws.state!=="open" && !ui.hasException){ ui.saveMsg = "הטופס נעול להגשה — לא ניתן לשמור."; ui.saveOk = false; return render(); }
   ui.saveMsg = null;
-  // מאבטחים (לא מוקד): חובה להתייחס לכל יום בתקופה ולכתוב הערה (לבקשת סרגיי, 2026-10-20)
-  if(!isMokedTeam(team)){
+  // חיפה מ-01/11 (מודל "מה לא יכול"): עד max_blocked_per_week משמרות חסומות בשבוע; שעות מותאמות לא נשמרות
+  if(guardBlockingAt(team, ui.periodStart)){
+    Object.values(ui.entries||{}).forEach(e=>{ if(e) e.customOn = false; });
+    const mx = team.max_blocked_per_week;
+    if(mx){
+      const wc = blockedCountsByWeek(team, periodDates(ui.periodStart, team), ui.entries);
+      const over = Object.keys(wc).filter(k=>wc[k] > mx);
+      if(over.length){ ui.saveOk = false; ui.saveMsg = `אפשר לחסום עד ${mx} משמרות בשבוע. סימנת ${over.map(k=>`${wc[k]}${over.length>1||Object.keys(wc).length>1?` (שבוע ${fmtDateHeb(k)})`:""}`).join(", ")} — הורידו סימונים ונסו שוב.`; ui.note = (document.getElementById("submitNote")||{}).value || ""; return render(); }
+    }
+  }
+  // מאבטחים (לא מוקד, במודל "מה כן יכול"): חובה להתייחס לכל יום בתקופה (לבקשת סרגיי, 2026-10-20)
+  else if(!isMokedTeam(team)){
     const missing = periodDates(ui.periodStart, team).filter(d=>{ const e = ui.entries[d]; return !e || !(e.dayStatus || e.customOn || (e.types||[]).length); });
     const noteTxt = (document.getElementById("submitNote")||{}).value || "";
     if(missing.length){ ui.saveOk = false; ui.saveMsg = `צריך לסמן כל יום. חסר: ${missing.map(fmtDateHeb).join(", ")} — סמנו משמרות, או "לא יכול" / "אחר".`; ui.note = noteTxt; return render(); }
@@ -928,7 +962,7 @@ function renderAggregate(){
       <b>תקופה: ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(dates[dates.length-1])}</b>
       <button class="btn small secondary" data-action="agg-period-next">תקופה הבאה ▶</button>
     </div>
-    ${renderMissingSubmissions(workers, ui.submittedWorkerIds, ui.exceptionWorkerIds, isMoked, ui.periodStart)}
+    ${renderMissingSubmissions(workers, ui.submittedWorkerIds, ui.exceptionWorkerIds, isMoked || teamBlockingAt(team, ui.periodStart), ui.periodStart)}
   </div>
   <div class="card">
       <h3>${isMoked?"זמינות מול התקנים":"שיבוץ"}</h3>
@@ -1285,7 +1319,9 @@ function renderPivot(dates, workers, entriesByWorker, submittedIds, exceptionIds
             if(!es || !es.length) return `<td>-</td>`;
             // מוקד: שעות מותאמות = "רק בשעות האלה כן יכול" - מוצג בירוק בנפרד, כי שאר הסימונים במוקד הם חסימות
             const mk = workerIsMoked(w, "");
-            return `<td>${es.map(e=> e.shift_type==="custom" ? (mk ? `<span style="color:var(--ok);font-weight:700;">✓ יכול רק ${e.custom_start}-${e.custom_end}</span>` : `${e.custom_start}-${e.custom_end}`) : SHIFT_LABELS[e.shift_type]).join(", ")}</td>`;
+            const gb = guardBlockingAt(teamById(w.team_id), d); // חיפה מ-01/11: הסימונים הם חסימות
+            return `<td>${es.map(e=> e.shift_type==="custom" ? (gb ? "" : mk ? `<span style="color:var(--ok);font-weight:700;">✓ יכול רק ${e.custom_start}-${e.custom_end}</span>` : `${e.custom_start}-${e.custom_end}`)
+              : (gb && !DAY_STATUS_TYPES.includes(e.shift_type) ? `<span style="color:var(--danger);font-weight:700;">✕ ${SHIFT_LABELS[e.shift_type]}</span>` : SHIFT_LABELS[e.shift_type])).filter(Boolean).join(", ")}</td>`;
           }).join("")}
         </tr>`;
       }).join("")}
@@ -1305,7 +1341,7 @@ function renderMissingSubmissions(workers, submittedIds, exceptionIds, isMoked, 
   if(!workers.length) return "";
   const missing = workers.filter(w=>!submittedIds.has(w.id)).sort((a,b)=>a.name.localeCompare(b.name,"he"));
   const warnNote = isMoked
-    ? 'מומלץ להמתין שכולם יגישו (או לפחות לבדוק את הרשימה כאן) לפני הרצת "שיבוץ אוטומטי" — במוקד עובד שלא הגיש נחשב זמין כברירת מחדל, ועלול להישבץ על בסיס זמינות שעוד תשתנה.'
+    ? 'מומלץ להמתין שכולם יגישו (או לפחות לבדוק את הרשימה כאן) לפני הרצת "שיבוץ אוטומטי" — כאן עובד שלא הגיש נחשב זמין כברירת מחדל, ועלול להישבץ על בסיס זמינות שעוד תשתנה.'
     : 'מומלץ לבדוק את הרשימה כאן לפני הרצת "שיבוץ אוטומטי" — עובד שלא הגיש לא נחשב זמין לאף משמרת, כך שהחוסרים בשיבוץ עלולים לנבוע מהגשות חסרות ולא ממחסור אמיתי בכוח אדם.';
   return `<div class="card" style="${missing.length?"border-color:#d9822b;":""}">
     <h3>מי עוד לא הגיש (${missing.length}/${workers.length})</h3>
@@ -1436,7 +1472,10 @@ function availableForSlot(slot, workers, entriesByWorker, assignmentsByDate, exc
     });
     const workerTeam = S.teams.find(t=>t.id===w.team_id);
     const isMoked = workerTeam ? isMokedTeam(workerTeam) : (slot.sector==="מוקד");
-    if(isMoked){
+    if(!isMoked && guardBlockingAt(workerTeam, slot.date)){
+      // חיפה מ-01/11: סימון = חסימה, בלי שעות מותאמות (אם נשארו מהגשה ישנה - מתעלמים)
+      if(dayEntries.some(e=>e.shift_type!=="custom" && blocking.includes(e.shift_type))) return false;
+    } else if(isMoked){
       // מוקד: שעות מותאמות = השעות שכן יכול (ראו mokedWindows) - הן קובעות את זמינות היום כולו
       const wins = mokedWindows(w, slot.date, entriesByWorker);
       if(wins){
