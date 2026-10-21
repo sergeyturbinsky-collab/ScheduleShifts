@@ -244,9 +244,7 @@ function renderTasks(App, session){
     label: `מעבר על הלומדה "${t.title}" ומבחן`, sub: ""}));
   controlsForMainScreen(T.data.controls).forEach(c=>rows.push({done: !!c.read_at, action:"portal-open-control", id:c.id,
     label: `קריאת סיכום בקרה: ${c.title}`, sub: fmtD(App, c.exercise_date)}));
-  if(T.data.equipment_done !== null && T.data.equipment_done !== undefined){
-    rows.push({done: !!T.data.equipment_done, action:"portal-go-logistics", label: "מילוי סטטוס ציוד", sub: ""});
-  }
+  // (2026-10-21) "מילוי סטטוס ציוד" הוסר - את רשימת הציוד מזין הקב"ט
   return `<div class="portal-tasks">${rows.map(r=>`
     <div class="portal-task" data-action="${r.action}"${r.id?` data-id="${r.id}"`:""}>
       <span class="portal-task-icon ${r.done?"done":""}" title="${r.done?"בוצע":"טרם בוצע"}">${r.done?"✔":"🕒"}</span>
@@ -1176,6 +1174,56 @@ async function areqResolve(App, el){
   }catch(e){ PV.busy = false; PV.error = e.message; }
   App.render();
 }
+/* ציוד אישי לעובדים (2026-10-21, סרגיי): הקב"ט מזין ומעדכן את רשימת הציוד של כל מאבטח בגזרות שלו (סרגיי - בכולן).
+   המאבטח רק רואה את הרשימה ושולח בקשות החלפה/ציוד נוסף. השרת: mgr_equipment_workers, mgr_worker_equipment_get / _save. */
+const EQM = { workers:null, at:0, tok:null, items:null, edit:null, busy:false };
+function renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs){
+  const esc = App.escapeHtml;
+  if(EQM.tok !== ms.token){ EQM.tok = ms.token; EQM.workers = null; }
+  if(!EQM.items && !EQM.itemsLoading){ EQM.itemsLoading = true; App.apiGet("logistics_items", "select=id,name,has_size,sort_order&order=sort_order").then(x=>{ EQM.items = x||[]; EQM.itemsLoading = false; App.render(); }).catch(()=>{ EQM.items = []; EQM.itemsLoading = false; }); }
+  if(pg==="equip-workers"){
+    if(!EQM.workers && !EQM.wLoading){ EQM.wLoading = true; App.apiRpc("mgr_equipment_workers", {p_token:ms.token}).then(x=>{ EQM.workers = x||[]; EQM.wLoading = false; App.render(); }).catch(e=>{ EQM.workers = []; EQM.wLoading = false; PV.error = e.message; App.render(); }); }
+    if(!EQM.workers) return loading();
+    const byTeam = {}; EQM.workers.forEach(w=>{ (byTeam[w.team_id] = byTeam[w.team_id]||[]).push(w); });
+    const teamName = id=>{ const t = App.teamById(id); return t ? ((t.sectors&&t.sectors.length) ? t.sectors.join(" / ") : t.name) : ""; };
+    return wrap(`<h2 style="margin-top:4px;">🎒 ציוד אישי לעובדים</h2>
+      <p class="muted">לחצו על עובד כדי להזין או לעדכן את הציוד שברשותו. המאבטח רואה את הרשימה באיזור האישי (לוגיסטי) ולא יכול לערוך אותה.</p>${msgs}
+      ${Object.keys(byTeam).map(tid=>`${Object.keys(byTeam).length>1?`<h3 style="margin:12px 0 4px;">${esc(teamName(tid))}</h3>`:""}
+        ${byTeam[tid].map(w=>`<div class="portal-task" data-action="portal-pv" data-page="equip-edit" data-id="${w.id}" data-name="${esc(w.name)}">
+          <span class="portal-task-icon">${w.items?"🎒":"➕"}</span>
+          <span><b>${esc(w.name)}</b> · ${w.items?`${w.items} פריטים`:'<span class="muted">עדיין לא הוזן</span>'}${w.updated_at?` <span class="muted" style="font-size:.85em;">· עודכן ${esc(dmgFmtDate(w.updated_at))}</span>`:""}</span></div>`).join("")}`).join("") || `<p class="muted">אין עובדים.</p>`}`);
+  }
+  if(pg==="equip-edit"){
+    if(!EQM.edit || EQM.edit.worker_id !== a.id){
+      if(!EQM.eLoading){ EQM.eLoading = true; EQM.edit = null; App.apiRpc("mgr_worker_equipment_get", {p_token:ms.token, p_worker_id:a.id}).then(x=>{ EQM.edit = x; EQM.eLoading = false; App.render(); }).catch(e=>{ EQM.eLoading = false; PV.error = e.message; App.render(); }); }
+      return loading();
+    }
+    if(!EQM.items) return loading();
+    const cur = {}; (EQM.edit.equipment||[]).forEach(e=>cur[e.item_id] = e);
+    return wrap(`<h2 style="margin-top:4px;">🎒 ציוד אישי — ${esc(EQM.edit.name)}</h2>
+      <p class="muted">כמה יש לעובד מכל פריט, ומידה אם רלוונטי. פריט שאין לו — 0.</p>
+      <div style="overflow-x:auto;"><table>
+        <thead><tr><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th></tr></thead>
+        <tbody>${EQM.items.map(it=>{ const c = cur[it.id] || {};
+          return `<tr><td style="text-align:right;">${esc(it.name)}</td>
+            <td><input type="number" min="0" max="50" data-eqm-qty="${it.id}" value="${c.quantity!=null?c.quantity:0}" style="width:70px;"></td>
+            <td>${it.has_size ? `<input type="text" maxlength="20" data-eqm-size="${it.id}" value="${esc(c.size||"")}" placeholder="מידה" style="width:90px;">` : '<span class="muted">-</span>'}</td></tr>`; }).join("")}</tbody>
+      </table></div>
+      <div class="row" style="margin-top:10px;"><button class="btn ok" data-action="portal-eqm-save" data-id="${EQM.edit.worker_id}" ${EQM.busy?"disabled":""}>${EQM.busy?"שומר...":"💾 שמירה"}</button></div>${msgs}`);
+  }
+  return null;
+}
+async function eqmSave(App, el){
+  const ms = loadMgr(App); if(!ms || EQM.busy || !EQM.items) return;
+  const items = EQM.items.map(it=>{ const q = document.querySelector(`[data-eqm-qty="${it.id}"]`), sz = document.querySelector(`[data-eqm-size="${it.id}"]`);
+    return {item_id: it.id, quantity: Math.max(0, Math.min(50, parseInt(q&&q.value,10)||0)), size: sz ? sz.value : null}; });
+  EQM.busy = true; PV.error = null; PV.msg = null; App.render();
+  try{
+    await App.apiRpc("mgr_worker_equipment_save", {p_token:ms.token, p_worker_id:el.dataset.id, p_items:items});
+    EQM.busy = false; EQM.workers = null; EQM.edit = null; PV.msg = "רשימת הציוד נשמרה — העובד רואה אותה באיזור האישי.";
+  }catch(e){ EQM.busy = false; PV.error = e.message; }
+  App.render();
+}
 function renderLogistics(App, session){ return renderLogisticsInner(App, session); }
 function renderLogisticsInner(App, session){
   const esc = App.escapeHtml;
@@ -1185,35 +1233,18 @@ function renderLogisticsInner(App, session){
   const itemName = id=>{ const it=L.items.find(x=>x.id===id); return it?it.name:"?"; };
   const msgs = `${L.error?`<p class="shortage">${esc(L.error)}</p>`:""}${L.msg?`<p class="ok-msg" style="color:#1b7f3b;font-weight:600;">${esc(L.msg)}</p>`:""}`;
 
-  // --- טופס ציוד - פעם אחת בלבד. אחר כך הרשימה מתעדכנת רק דרך בקשות שהמנהל מטפל בהן ---
-  if(!L.data.submitted_at){
-    return `
-    <p>בפעם הראשונה, מלא/י את כל הציוד שנמצא ברשותך באופן קבוע: כמה יש לך מכל פריט, ומידה אם רלוונטי. פריט שאין לך - השאר/י 0. אחרי השליחה הרשימה מתעדכנת רק דרך בקשות ציוד שהמנהל מאשר.</p>
-    <div style="overflow-x:auto;"><table>
-      <thead><tr><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th></tr></thead>
-      <tbody>${L.items.map(it=>{
-        const cur = eqById[it.id] || {};
-        return `<tr><td style="text-align:right;">${esc(it.name)}</td>
-          <td><input type="number" min="0" max="50" data-log-qty="${it.id}" value="${cur.quantity!=null?cur.quantity:0}" style="width:70px;"></td>
-          <td>${it.has_size ? `<input type="text" maxlength="20" data-log-size="${it.id}" value="${esc(cur.size||"")}" placeholder="מידה" style="width:90px;">` : `<span class="muted">-</span>`}</td></tr>`;
-      }).join("")}</tbody>
-    </table></div>
-    <div class="row" style="margin-top:10px;">
-      <button class="btn ok" data-action="portal-log-save" ${L.busy?"disabled":""}>שמור ושלח</button>
-    </div>
-    ${msgs}`;
-  }
-
+  // (2026-10-21, סרגיי) רשימת הציוד האישי מוזנת ע"י הקב"ט בלבד - המאבטח רואה אותה ולא עורך אותה
   // --- אחרי שמולא: הציוד שברשותי + בקשת ציוד נוסף + הבקשות שלי ---
   const owned = L.items.filter(it=> eqById[it.id] && eqById[it.id].quantity>0);
   const reqs = L.data.requests || [];
   return `
     ${msgs}
     <h3 style="margin-top:0;">הציוד שברשותי</h3>
+    <p class="muted" style="margin-top:-6px;">הרשימה מוזנת ומעודכנת ע"י הקב"ט. אם משהו לא נכון — פנו לקב"ט או שלחו בקשה למטה.</p>
     ${owned.length? `<div style="overflow-x:auto;"><table>
       <thead><tr><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th></tr></thead>
       <tbody>${owned.map(it=>`<tr><td style="text-align:right;">${esc(it.name)}</td><td>${eqById[it.id].quantity}</td><td>${esc(eqById[it.id].size||"-")}</td></tr>`).join("")}</tbody>
-    </table></div>` : `<p class="muted">לא רשום ציוד.</p>`}
+    </table></div>` : `<p class="muted">הקב"ט עדיין לא הזין את רשימת הציוד שלך.</p>`}
 
     <h3>בקשת החלפה / ציוד נוסף</h3>
     <p class="muted" style="margin-top:-6px;">הבקשה נשלחת למנהל שלך. הוא מסמן אם הפריט הוחלף או שנופק לך פריט נוסף, והרשימה שלך מתעדכנת לבד.</p>
@@ -2769,7 +2800,7 @@ async function calClick(App, a, el){
 }
 
 /* ---------- עמודי משנה (view "pview") ---------- */
-const PV_TITLES = { "areq-list":"בקשות מנהלתיות", "areq-view":"בקשה מנהלתית", "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
+const PV_TITLES = { "equip-workers":"ציוד אישי לעובדים", "equip-edit":"ציוד אישי", "areq-list":"בקשות מנהלתיות", "areq-view":"בקשה מנהלתית", "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
   "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה", "cal":"יומן משותף" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
@@ -2934,6 +2965,7 @@ function renderPView(App){
   if(pg && pg.indexOf("inc-")===0) return renderIncident(App, ms, pg, a, wrap, loading, msgs);
   if(pg==="cal") return renderCalendar(App, ms, back);
   if(pg==="dmg-list" || pg==="dmg-view" || pg==="dmg-new"){ const h = renderDamageMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
+  if(pg==="equip-workers" || pg==="equip-edit"){ const h = renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
   if(pg==="areq-list" || pg==="areq-view"){ const h = renderAdminReqMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
   if(pg==="k-msg-guards" || pg==="k-msg-mgmt" || pg==="mgmt-inbox"){ const h = renderMsgPages(App, ms, pg, wrap, loading, msgs); if(h) return h; }
   if(pg==="unit-dash") return `<div class="card">${back}<h2 style="margin-bottom:0;">📊 לוח מנהל יחידה</h2><p class="muted">כך רואה את המערכת מנהל היחידה.</p></div>` + renderUnitDashboard(App, ms);
@@ -3840,7 +3872,7 @@ function renderManagerHome(App, ms){
   <div class="card">
     <h3>לוגיסטי</h3>
     <p class="muted" style="margin-top:-6px;">${names(logi)}</p>
-    <div class="grid-teams">${tile("portal-mh-equip", "בקשות ציוד", "החלפה / ציוד נוסף")}${areqMgrTile(App, ms)}</div>
+    <div class="grid-teams">${tile("portal-mh-equip", "בקשות ציוד", "החלפה / ציוד נוסף")}<div class="team-tile" data-action="portal-pv" data-page="equip-workers"><div style="font-size:1.1em;font-weight:700;">🎒 ציוד אישי לעובדים</div><div class="muted" style="font-size:.85em;margin-top:4px;">הזנה ועדכון הרשימה של כל עובד</div></div>${areqMgrTile(App, ms)}</div>
   </div>
   <div class="card">
     <h3>הדרכה</h3>
@@ -4015,6 +4047,7 @@ function onClick(App, a, el){
   if(a==="portal-go-areq"){ S.view = "adminreq"; S.ui = {}; AREQ.open = false; AREQ.view = null; AREQ.mine = null; AREQ.okMsg = null; AREQ.error = null; return App.render(); }
   if(a.indexOf("portal-areq-")===0 && a!=="portal-areq-resolve") return areqAction(App, a, el);
   if(a==="portal-areq-resolve") return areqResolve(App, el);
+  if(a==="portal-eqm-save") return eqmSave(App, el);
   if(a==="portal-go-damage"){ S.view = "damage"; S.ui = {}; DMG.open = false; DMG.view = null; DMG.images = null; DMG.mgrMode = false; DMG.okMsg = null; return App.render(); }
   if(a==="portal-go-logistics"){ S.view = "logistics"; S.ui = {}; T.data = null; L.data = null; L.msg = null; L.error = null; return App.render(); }
   if(a==="portal-log-save") return saveLogistics(App);

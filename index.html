@@ -171,7 +171,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=78"></script>
+<script src="portal.js?v=79"></script>
 <script>
 (function(){
 "use strict";
@@ -748,7 +748,8 @@ function renderSubmitPeriod(){
       <h4>${fmtDateHeb(d)}</h4>
       <div class="chip-opts">
         ${opts.map(ot=>`<div class="chip ${sel.types.includes(ot)?"on":""} ${positiveChips?"positive":""}"${readOnly?"":` data-action="toggle-shift" data-date="${d}" data-type="${ot}"`}>${submitOptionLabel(ot, d)}</div>`).join("")}
-        ${(readOnly || guardBlocking)?"":`<div class="chip ${sel.customOn?"on":""} positive" data-action="toggle-custom" data-date="${d}">${positiveChips?"שעות מותאמות":"שעות שאני כן יכול/ה"}</div>`}
+        ${guardBlocking ? "" : readOnly ? (sel.customOn ? `<div class="chip on positive">${positiveChips?"שעות מותאמות":"שעות שאני כן יכול/ה"}</div>` : "")
+          : `<div class="chip ${sel.customOn?"on":""} positive" data-action="toggle-custom" data-date="${d}">${positiveChips?"שעות מותאמות":"שעות שאני כן יכול/ה"}</div>`}
       </div>
       ${(sel.customOn && !guardBlocking)? `
         <div class="row" style="margin-top:8px;">
