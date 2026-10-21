@@ -123,6 +123,7 @@
 @media (max-width: 600px){ .header-banner{ padding: 8px 10px; gap: 8px; } .logo-chip img{ max-height: 48px; } }
 .logo-strip { display:flex; align-items:center; justify-content:space-between; gap:12px; padding-bottom:8px; margin-bottom:10px; border-bottom:2px solid #1f4e8c; }
 .logo-strip img { width:auto; display:block; }
+.ach-tag { display:inline-block; background:#0c3a6e; color:#fff; font-size:.72em; font-weight:700; border-radius:8px; padding:0 6px; margin-inline-start:4px; vertical-align:middle; }
 
 /* פלט סידור להדפסה/PDF - לבקשת סרגיי (2026-10-05): כפתור "הדפס/PDF" מפעיל window.print(), וכללי
    ה-@media print האלה מעלימים את כל שאר הדף ומשאירים רק את #printArea גלוי, מעמדת (position:absolute)
@@ -170,7 +171,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=76"></script>
+<script src="portal.js?v=77"></script>
 <script>
 (function(){
 "use strict";
@@ -599,6 +600,10 @@ function render(){
 /* פס לוגואים לפלט הדפסה/PDF - אותן תמונות כמו בפס שבראש האפליקציה */
 function logoStripHtml(h){ const imgs = [...document.querySelectorAll(".header-banner img")]; if(!imgs.length) return "";
   return `<div class="logo-strip">${imgs.map(i=>`<img src="${i.getAttribute("src")}" alt="${escapeHtml(i.alt||"")}" style="height:${h||46}px;max-width:24%;object-fit:contain;">`).join("")}</div>`; }
+/* אחמ"ש בגזרות המאבטחים (2026-10-21, סרגיי): מסומן בניהול עובדים (roster_workers.role = 'אחמ"ש', כמו במוקד).
+   בשיבוץ האוטומטי האחמ"ש תמיד "סייר 1" במשמרת שלו; בטבלאות מוצגת לידו תגית אחמ"ש. */
+function isGuardAchmash(w){ return !!(w && w.role==='אחמ"ש' && !isMokedTeam(teamById(w.team_id)||{})); }
+function achTagHtml(w){ return isGuardAchmash(w) ? ` <span class="ach-tag">אחמ"ש</span>` : ""; }
 function isSessionPin(){ return typeof S.pin==="string" && (S.pin.startsWith("mgr:") || S.pin.startsWith("wrk:")); }
 function actorName(){ return isSessionPin() ? (S.actorName || "") : "קוד עריכה"; }
 function goHome(){ S.view = S.managerMode ? "managers" : "home"; S.ui={}; render(); }
@@ -1900,10 +1905,10 @@ function renderTemplateGrid(group, dates, ui, mode){
           const shadowHtml = tmplShadowHtml(tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, a?[a.worker_id]:[], pos===1), q, id=>{ const x = workers.find(y=>y.id===id) || allWorkersById[id]; return x?x.name:"?"; });
           if(mode==="manual"){
             const cls = "tmpl-cell" + (w? (restBad?" tmpl-restwarn":(restTight?" tmpl-resttight":"")) : " tmpl-missing");
-            const label = (w? `${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}` : "חוסר") + shadowHtml;
+            const label = (w? `${escapeHtml(w.name)}${achTagHtml(w)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}` : "חוסר") + shadowHtml;
             return `<td class="${cls}" data-action="tmpl-cell" data-sector="${escapeHtml(secData.sector)}" data-date="${d}" data-type="${q.shift_type}" data-pos="${pos}">${label}</td>`;
           }
-          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}">${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}${shadowHtml}</td>`;
+          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}">${escapeHtml(w.name)}${achTagHtml(w)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}${shadowHtml}</td>`;
           return `<td class="tmpl-missing">חוסר${shadowHtml}</td>`;
         }).join("");
         return `<tr><td class="tmpl-pos">סייר ${pos}${bucketHrs}</td>${cells}</tr>`;
@@ -3075,7 +3080,13 @@ async function runAutoAssign(){
     });
     if(chosen.length < need){ short++; if(streakCut.has(slot)) streakShort++; }
     if(chosen.length===0) continue;
-    const fullList = alreadyAll.map(a=>a.worker_id).concat(chosen.map(w=>w.id));
+    let fullList = alreadyAll.map(a=>a.worker_id).concat(chosen.map(w=>w.id));
+    // גזרות מאבטחים: אחמ"ש תמיד "סייר 1" - מקדימים אותו ברשימה (סדר הרשימה = מספור הסיירים). שיבוצי חפיפה לא זזים.
+    if(!slot.roleCounts){
+      const shadowIds = new Set(alreadyAll.filter(a=>a.shadow_of).map(a=>a.worker_id));
+      const isAch = id=>!shadowIds.has(id) && isGuardAchmash(workers.find(x=>x.id===id) || (ui.allWorkersById||{})[id]);
+      fullList = fullList.filter(isAch).concat(fullList.filter(id=>!isAch(id)));
+    }
     try{
       await apiRpc("rpc_assignment_set", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_ids: fullList, p_method:"auto"});
       // rpc_assignment_set מוחק ומכניס מחדש את כל שורות המשבצת - משחזרים חפיפות ושעות מותאמות של שיבוצים קיימים
@@ -3367,6 +3378,7 @@ function renderAdmin(){
   const teams = ui.teamIds.map(teamById);
   const merged = teams.length>1;
   const anyMoked = teams.some(isMokedTeam);
+  const anyGuard = teams.some(t=>!isMokedTeam(t));
   const avihaiTeam = teams.find(t=>isCityPoolTeam(t)); // צוותי מאיר אזרואל (דניאל כתב / אביחי קדוש) - עמודת עדיפות ערים
   return `<div class="card">
     <span class="backlink" data-action="admin-back">${(isSessionPin() && !ui.mgrPick) ? "◀ חזרה" : "◀ נמען אחר"}</span>
@@ -3380,7 +3392,7 @@ function renderAdmin(){
     ${ui.teamCodeMsg? `<p>${escapeHtml(ui.teamCodeMsg)}</p>`:""}
     ${isLockActive(ui.teamCodeLockedUntil)? `<p class="shortage">🔒 קוד הקב"ט נעול כרגע (יותר מדי ניסיונות שגויים) — ייפתח אוטומטית בעוד כ-${lockMinutesLeft(ui.teamCodeLockedUntil)} דק'. <button class="btn small" data-action="admin-unlock-team">פתח נעילה עכשיו</button></p>`:""}`}
     <table>
-      <thead><tr><th>שם</th><th title="עובד בהכשרה - אפשר לשבץ אותו בחפיפה, באותה קוביה עם עובד שכבר משובץ">חפיפה</th><th title="לא יוצג כאפשרות לשיבוץ בשישי ערב, שישי לילה ושבת ערב">שומר שבת</th><th>קוד אישי</th>${merged?"<th>גזרה</th>":""}${avihaiTeam?"<th title=\"סדר העדיפות לשיבוץ האוטומטי, מימין לשמאל\">ערים (לפי עדיפות)</th>":""}${anyMoked?"<th>תפקיד</th>":""}<th title="כשמסומן, העובד לעולם לא ייבחר ב&quot;שיבוץ אוטומטי&quot; - עדיין אפשר לשבץ אותו ידנית">לא לשבץ אוטומטית</th><th title="כמה משמרות בשבוע לתת לעובד בשיבוץ האוטומטי. ריק = ללא הגבלה. בשיבוץ ידני אפשר לשבץ מעבר">משמרות בשבוע</th><th></th></tr></thead>
+      <thead><tr><th>שם</th><th title="עובד בהכשרה - אפשר לשבץ אותו בחפיפה, באותה קוביה עם עובד שכבר משובץ">חפיפה</th><th title="לא יוצג כאפשרות לשיבוץ בשישי ערב, שישי לילה ושבת ערב">שומר שבת</th>${anyGuard?`<th title="אחמ&quot;ש - בשיבוץ האוטומטי תמיד סייר 1">אחמ"ש</th>`:""}<th>קוד אישי</th>${merged?"<th>גזרה</th>":""}${avihaiTeam?"<th title=\"סדר העדיפות לשיבוץ האוטומטי, מימין לשמאל\">ערים (לפי עדיפות)</th>":""}${anyMoked?"<th>תפקיד</th>":""}<th title="כשמסומן, העובד לעולם לא ייבחר ב&quot;שיבוץ אוטומטי&quot; - עדיין אפשר לשבץ אותו ידנית">לא לשבץ אוטומטית</th><th title="כמה משמרות בשבוע לתת לעובד בשיבוץ האוטומטי. ריק = ללא הגבלה. בשיבוץ ידני אפשר לשבץ מעבר">משמרות בשבוע</th><th></th></tr></thead>
       <tbody>
         ${ui.workers.map(w=>{
           const workerIsMoked = isMokedTeam(teamById(w.team_id));
@@ -3393,14 +3405,15 @@ function renderAdmin(){
             + `<td style="text-align:center;"><input type="number" min="0" max="14" inputmode="numeric" data-action="admin-target-shifts" data-id="${w.id}" value="${w.target_shifts!=null?w.target_shifts:""}" placeholder="ללא" style="width:64px;text-align:center;"></td>`;
           const shadowCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-shadow" data-id="${w.id}" ${w.shadow_trainee?"checked":""}></td>`;
           const shabbatCell = `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-shabbat" data-id="${w.id}" ${w.shabbat_observer?"checked":""}></td>`;
-          return `<tr><td>${escapeHtml(w.name)}</td>${shadowCell}${shabbatCell}<td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${isCityPoolTeam(teamById(w.team_id)) ? `${escapeHtml(cityPrefsText(w))} <button class="btn small secondary" data-action="admin-city-edit" data-id="${w.id}">✏️ שינוי</button>` : "-"}</td>`:""}${roleCell}${exemptCell}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>${ui.cityEditId===w.id ? `<tr><td colspan="${1+1+1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1+1+1}" style="background:#f7f9fc;">
+          const achCell = !anyGuard ? "" : (workerIsMoked ? `<td class="muted" style="text-align:center;">-</td>` : `<td style="text-align:center;"><input type="checkbox" data-action="admin-toggle-achmash" data-id="${w.id}" ${w.role==='אחמ"ש'?"checked":""}></td>`);
+          return `<tr><td>${escapeHtml(w.name)}${!workerIsMoked && w.role==='אחמ"ש' ? ' <span class="ach-tag">אחמ"ש</span>' : ""}</td>${shadowCell}${shabbatCell}${achCell}<td>${escapeHtml(w.personal_code)}</td>${merged?`<td>${escapeHtml(teamById(w.team_id).name)}</td>`:""}${avihaiTeam?`<td>${isCityPoolTeam(teamById(w.team_id)) ? `${escapeHtml(cityPrefsText(w))} <button class="btn small secondary" data-action="admin-city-edit" data-id="${w.id}">✏️ שינוי</button>` : "-"}</td>`:""}${roleCell}${exemptCell}<td>${isLockActive(w.locked_until)?`<button class="btn small" data-action="admin-unlock-worker" data-id="${w.id}" title="נעול עד כ-${lockMinutesLeft(w.locked_until)} דק' מעכשיו">🔒 פתח נעילה</button>`:""}<button class="btn small danger" data-action="admin-delete" data-id="${w.id}">מחק</button></td></tr>${ui.cityEditId===w.id ? `<tr><td colspan="${1+1+1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+(anyGuard?1:0)+1+1+1}" style="background:#f7f9fc;">
             <div style="font-weight:700;margin-bottom:4px;">סדר עדיפות ערים — ${escapeHtml(w.name)}</div>
             ${cityPrefSelectsHtml("cityEdit", w.city_sectors)}
             <p class="muted" style="margin:4px 0;">"ללא העדפה" בכולן = זמין לכל הערים. עדיפות שאחרי "ללא העדפה" לא נחשבת.</p>
             <div class="row"><button class="btn small" data-action="admin-city-save" data-id="${w.id}">שמור</button><button class="btn small secondary" data-action="admin-city-cancel">ביטול</button></div>
             ${ui.cityEditMsg? `<p class="shortage">${escapeHtml(ui.cityEditMsg)}</p>`:""}
           </td></tr>` : ""}`;
-        }).join("") || `<tr><td colspan="${1+1+1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+1+1+1}" class="muted">אין עדיין עובדים</td></tr>`}
+        }).join("") || `<tr><td colspan="${1+1+1+1+(merged?1:0)+(avihaiTeam?1:0)+(anyMoked?1:0)+(anyGuard?1:0)+1+1+1}" class="muted">אין עדיין עובדים</td></tr>`}
       </tbody>
     </table>
     <h3>הוספה / עדכון</h3>
@@ -3493,6 +3506,14 @@ function onAppChange(e){
   // משיבוץ אוטומטי (runAutoAssign) - לא משפיעה על זמינות/שיבוץ ידני.
   // "חפיפה" - עובד בהכשרה שאפשר לשבץ באותה קוביה עם עובד שכבר משובץ (2026-10-07)
   // "שומר שבת" - לא מוצג/משובץ בשישי ערב, שישי לילה ושבת ערב (2026-10-07)
+  if(t.dataset.action==="admin-toggle-achmash"){
+    const id = t.dataset.id, val = t.checked;
+    const ui = S.ui;
+    (async()=>{
+      try{ await apiRpc("admin_update_worker_role",{p_pin:S.pin,p_worker_id:id,p_role: val ? 'אחמ"ש' : null}); ui.adminMsg = val ? "סומן כאחמ\"ש — בשיבוץ האוטומטי יהיה תמיד סייר 1." : "הסימון הוסר."; ui.workers=null; render(); }
+      catch(err){ ui.adminMsg="שגיאה: "+err.message; render(); }
+    })();
+  }
   if(t.dataset.action==="admin-toggle-shabbat"){
     const id = t.dataset.id, val = t.checked;
     const ui = S.ui;
