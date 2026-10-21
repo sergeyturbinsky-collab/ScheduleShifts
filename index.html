@@ -171,7 +171,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=86"></script>
+<script src="portal.js?v=87"></script>
 <script>
 (function(){
 "use strict";
@@ -2016,7 +2016,7 @@ function schedTasksBlock(sector, dates, ui, mode){
       if(slot > perDay[di]) return `<td class="tmpl-na"></td>`;
       const t = tasks.find(x=>x.date===d && x.slot===slot);
       const hrs = t && (t.start||t.end) ? `<br><span class="muted" style="font-size:.85em;" dir="ltr">${escapeHtml(t.start||"")}${t.end?"-"+escapeHtml(t.end):""}</span>` : "";
-      const body = t ? `<b>${escapeHtml(t.worker_name||"?")}</b><br><span style="font-size:.85em;">${escapeHtml(t.title)}</span>${hrs}` : (mode==="manual" ? `<span class="muted">➕</span>` : "");
+      const body = t ? `<b>${escapeHtml(t.worker_name||"?")}</b>${t.series_id?` <span title="משימה מתמשכת ${escapeHtml(t.series_from||"")} – ${escapeHtml(t.series_to||"")}">🔁</span>`:""}<br><span style="font-size:.85em;">${escapeHtml(t.title)}</span>${hrs}` : (mode==="manual" ? `<span class="muted">➕</span>` : "");
       return mode==="manual"
         ? `<td class="tmpl-cell stask-cell" data-action="stask-cell" data-sector="${escapeHtml(sector)}" data-date="${d}" data-slot="${slot}">${body}</td>`
         : `<td class="stask-cell">${body}</td>`;
@@ -2046,45 +2046,107 @@ async function schedTaskRowsAction(el){
   }catch(err){ ui.staskRowsMsg = /invalid pin/i.test(err.message) ? "אין הרשאה — צריך להתחבר מחדש" : err.message; }
   ui.staskRowsBusy = false; render();
 }
+/* משימה חד פעמית / מתמשכת (2026-10-21, סרגיי): קודם בוחרים מאבטח, אחר כך "חד פעמית / מתמשכת". במתמשכת בוחרים
+   מתאריך עד תאריך, והמאבטח משובץ למשימה בכל הימים האלה - תמיד באותה שורה (rpc_sched_task_save_range בוחר שורה
+   שפנויה בכל התאריכים, ומעדיף את השורה שהמאבטח כבר נמצא בה). ימי משימה מתמשכת מקושרים (series_id); עריכה של יום
+   בודד מנתקת אותו מהסדרה. מצב הטופס נשמר ב-ui.staskForm כדי שהשלבים ייפתחו בלי לאבד את מה שכבר הוקלד. */
+function staskInitForm(c){
+  const t = (S.ui.schedTasks||[]).find(x=>x.sector===c.sector && x.date===c.date && x.slot===c.slot);
+  return { worker: t ? t.worker_id : "", kind: t ? (t.series_id ? "range" : "once") : "",
+           from: t && t.series_id ? t.series_from : c.date, to: t && t.series_id ? t.series_to : "",
+           title: t ? t.title : "", start: t && t.start || "", end: t && t.end || "" };
+}
+async function staskReload(){
+  const ui = S.ui;
+  const team = teamById(ui.teamId), group = sectorGroupForTeam(team), dts = periodDates(ui.periodStart, team);
+  const args = {p_sectors: group.citySectors, p_from: dts[0], p_to: dts[dts.length-1]};
+  ui.schedTasks = await apiRpc("sched_tasks_list", args);
+  try{ ui.schedTaskRows = await apiRpc("sched_task_rows_list", args); }catch(e){}
+}
 async function schedTaskAction(a){
     const ui = S.ui;
     const c = ui.staskCell; if(!c || ui.staskBusy) return;
-    const v = id=>{ const x = document.getElementById(id); return x ? x.value : ""; };
-    const wid = v("stask_worker"), title = v("stask_title").trim(), st = v("stask_start"), en = v("stask_end");
-    if(a==="stask-save" && !wid){ ui.staskMsg = "צריך לבחור מאבטח"; return render(); }
-    if(a==="stask-save" && !title){ ui.staskMsg = "צריך לכתוב מה המשימה"; return render(); }
-    ui.staskBusy = true; render();
+    const f = ui.staskForm || (ui.staskForm = staskInitForm(c));
+    const t = (ui.schedTasks||[]).find(x=>x.sector===c.sector && x.date===c.date && x.slot===c.slot);
+    const title = (f.title||"").trim();
+    if(a==="stask-save"){
+      if(!f.worker){ ui.staskMsg = "צריך לבחור מאבטח"; return render(); }
+      if(!f.kind){ ui.staskMsg = "צריך לבחור: משימה חד פעמית או מתמשכת"; return render(); }
+      if(f.kind==="range"){
+        if(!f.from || !f.to){ ui.staskMsg = "צריך לבחור מאיזה יום עד איזה יום"; return render(); }
+        if(f.to < f.from){ ui.staskMsg = "תאריך הסיום לפני תאריך ההתחלה"; return render(); }
+        if((parseDate(f.to) - parseDate(f.from)) / 864e5 > 62){ ui.staskMsg = "משימה מתמשכת — עד 63 ימים"; return render(); }
+      }
+      if(!title){ ui.staskMsg = "צריך לכתוב מה המשימה"; return render(); }
+    }
+    ui.staskBusy = true; ui.staskMsg = null; render();
     try{
-      if(a==="stask-save") await apiRpc("rpc_sched_task_save", {p_pin:S.pin, p_sector:c.sector, p_date:c.date, p_slot:c.slot, p_worker_id:wid, p_title:title, p_start:st||null, p_end:en||null});
+      if(a==="stask-save" && f.kind==="range"){
+        const r = await apiRpc("rpc_sched_task_save_range", {p_pin:S.pin, p_sector:c.sector, p_from:f.from, p_to:f.to, p_slot:c.slot,
+          p_worker_id:f.worker, p_title:title, p_start:f.start||null, p_end:f.end||null, p_clicked_date:c.date,
+          p_replace_series: t && t.series_id || null, p_replace_id: t && !t.series_id ? t.id : null});
+        ui.staskRowsMsg = r && r.slot && r.slot!==c.slot ? `המשימה המתמשכת שובצה בשורה "משימה ${r.slot}" — כדי שהמאבטח יהיה באותה שורה בכל הימים.` : null;
+      }
+      else if(a==="stask-save") await apiRpc("rpc_sched_task_save", {p_pin:S.pin, p_sector:c.sector, p_date:c.date, p_slot:c.slot, p_worker_id:f.worker, p_title:title, p_start:f.start||null, p_end:f.end||null});
+      else if(a==="stask-remove-series" && t && t.series_id) await apiRpc("rpc_sched_task_remove_series", {p_pin:S.pin, p_series:t.series_id});
       else await apiRpc("rpc_sched_task_remove", {p_pin:S.pin, p_sector:c.sector, p_date:c.date, p_slot:c.slot});
-      const team = teamById(ui.teamId), group = sectorGroupForTeam(team), dts = periodDates(ui.periodStart, team);
-      ui.schedTasks = await apiRpc("sched_tasks_list", {p_sectors: group.citySectors, p_from: dts[0], p_to: dts[dts.length-1]});
-      ui.staskCell = null; ui.staskMsg = null;
+      await staskReload();
+      ui.staskCell = null; ui.staskForm = null; ui.staskMsg = null;
     }catch(err){ ui.staskMsg = /invalid pin/i.test(err.message) ? "אין הרשאה — צריך להתחבר מחדש" : err.message; }
     ui.staskBusy = false; return render();
+}
+function staskFormInput(el){
+  const ui = S.ui, f = ui.staskForm; if(!f) return;
+  const k = el.dataset.stf; f[k] = el.value;
+  // מאבטח / סוג המשימה פותחים את השלב הבא - מרנדרים מחדש. בתאריכים לא מרנדרים (כדי לא לקטוע הקלדה) - רק מעדכנים את השורה המסבירה
+  if(k==="worker" || k==="kind"){ ui.staskMsg = null; return render(); }
+  if(k==="from"){ const to = document.getElementById("stask_to"); if(to) to.min = f.from || ""; }
+  const hint = document.getElementById("stask_range_hint"); if(hint) hint.innerHTML = staskRangeHint(f);
+}
+function staskRangeHint(f){
+  const n = f.from && f.to && f.to>=f.from ? Math.round((parseDate(f.to)-parseDate(f.from))/864e5)+1 : 0;
+  if(f.from && f.to && f.to < f.from) return `<span style="color:#b42318;">תאריך הסיום לפני תאריך ההתחלה</span>`;
+  return n ? `${n} ימים · ${fmtDateHeb(f.from)} – ${fmtDateHeb(f.to)}. המאבטח ישובץ למשימה בכל הימים האלה, באותה שורה.` : "בחרו עד איזה יום.";
 }
 function renderSchedTaskOverlay(){
   const ui = S.ui, c = ui.staskCell;
   if(!c) return "";
+  const f = ui.staskForm || (ui.staskForm = staskInitForm(c));
   const t = (ui.schedTasks||[]).find(x=>x.sector===c.sector && x.date===c.date && x.slot===c.slot);
   const ws = (ui.workers||[]).slice().sort((a,b)=>a.name.localeCompare(b.name,"he"));
-  const sel = t ? t.worker_id : "";
+  const radio = (val, label) => `<label style="display:flex;align-items:center;gap:6px;margin:4px 0;cursor:pointer;">
+      <input type="radio" name="stask_kind" data-stf="kind" value="${val}" ${f.kind===val?"checked":""}> ${label}</label>`;
+  const busy = ui.staskBusy ? "disabled" : "";
   return `
   <div class="overlay" data-action="stask-close-bg">
     <div class="card" data-action="noop">
       <h3>${escapeHtml(c.sector)} · ${fmtDateHeb(c.date)} · משימה ${c.slot}</h3>
-      <div class="field"><label>מאבטח</label>
-        <select id="stask_worker"><option value="">— בחרו מאבטח —</option>${ws.map(w=>`<option value="${w.id}" ${w.id===sel?"selected":""}>${escapeHtml(w.name)}</option>`).join("")}</select></div>
-      <div class="field"><label>המשימה</label><input type="text" id="stask_title" maxlength="200" placeholder="למשל: ליווי מבקר, תדריך, השתלמות" value="${escapeHtml(t?t.title:"")}"></div>
+      <div class="field"><label>1. מאבטח</label>
+        <select id="stask_worker" data-stf="worker"><option value="">— בחרו מאבטח —</option>${ws.map(w=>`<option value="${w.id}" ${w.id===f.worker?"selected":""}>${escapeHtml(w.name)}</option>`).join("")}</select></div>
+      ${f.worker ? `
+      <div class="field"><label>2. סוג המשימה</label>
+        ${radio("once", `חד פעמית — רק ב-${fmtDateHeb(c.date)}`)}
+        ${radio("range", "מתמשכת — כמה ימים ברצף")}
+      </div>` : ""}
+      ${f.worker && f.kind==="range" ? `
       <div class="row">
-        <div class="field"><label>משעה</label><input type="time" id="stask_start" value="${escapeHtml(t&&t.start||"")}"></div>
-        <div class="field"><label>עד שעה</label><input type="time" id="stask_end" value="${escapeHtml(t&&t.end||"")}"></div>
+        <div class="field"><label>מתאריך</label><input type="date" id="stask_from" data-stf="from" value="${escapeHtml(f.from||"")}"></div>
+        <div class="field"><label>עד תאריך</label><input type="date" id="stask_to" data-stf="to" min="${escapeHtml(f.from||"")}" value="${escapeHtml(f.to||"")}"></div>
       </div>
-      <p class="muted" style="font-size:.85em;">המשימה תופיע אצל המאבטח באיזור האישי, והוא יקבל התראה.</p>
+      <p class="muted" id="stask_range_hint" style="font-size:.85em;margin-top:0;">${staskRangeHint(f)}</p>` : ""}
+      ${f.worker && f.kind ? `
+      <div class="field"><label>3. המשימה</label><input type="text" id="stask_title" data-stf="title" maxlength="200" placeholder="למשל: ליווי מבקר, תדריך, השתלמות" value="${escapeHtml(f.title||"")}"></div>
+      <div class="row">
+        <div class="field"><label>משעה</label><input type="time" id="stask_start" data-stf="start" value="${escapeHtml(f.start||"")}"></div>
+        <div class="field"><label>עד שעה</label><input type="time" id="stask_end" data-stf="end" value="${escapeHtml(f.end||"")}"></div>
+      </div>
+      <p class="muted" style="font-size:.85em;">המשימה תופיע אצל המאבטח באיזור האישי, והוא יקבל התראה.${f.kind==="range"?" השעות חלות על כל הימים.":""}</p>` : ""}
+      ${t && t.series_id ? `<p class="muted" style="font-size:.85em;">🔁 חלק ממשימה מתמשכת ${fmtDateHeb(t.series_from)} – ${fmtDateHeb(t.series_to)}.${f.kind==="once"?" שמירה כ\"חד פעמית\" תשנה רק את היום הזה.":""}</p>` : ""}
       ${ui.staskMsg? `<p class="shortage">${escapeHtml(ui.staskMsg)}</p>`:""}
-      <div class="row" style="margin-top:8px;">
-        <button class="btn ok" data-action="stask-save" ${ui.staskBusy?"disabled":""}>${ui.staskBusy?"שומר...":"שמירה"}</button>
-        ${t? `<button class="btn secondary" data-action="stask-remove" ${ui.staskBusy?"disabled":""} style="color:#b42318;">מחיקת המשימה</button>`:""}
+      <div class="row" style="margin-top:8px;flex-wrap:wrap;">
+        ${f.worker && f.kind ? `<button class="btn ok" data-action="stask-save" ${busy}>${ui.staskBusy?"שומר...":(f.kind==="range"?"שמירה לכל הימים":"שמירה")}</button>` : ""}
+        ${t? `<button class="btn secondary" data-action="stask-remove" ${busy} style="color:#b42318;">${t.series_id?"מחיקת היום הזה":"מחיקת המשימה"}</button>`:""}
+        ${t && t.series_id ? `<button class="btn secondary" data-action="stask-remove-series" ${busy} style="color:#b42318;">מחיקת כל המשימה המתמשכת</button>`:""}
         <button class="btn secondary" data-action="stask-close">ביטול</button>
       </div>
     </div>
@@ -3909,9 +3971,9 @@ function onAppClick(e){
 
   // ---- manual build ----
   if(a==="manual-exit"){ ui.mode=null; return render(); }
-  if(a==="stask-cell"){ ui.staskCell = {sector:el.dataset.sector, date:el.dataset.date, slot:Number(el.dataset.slot)}; ui.staskMsg = null; ui.staskBusy = false; return render(); }
-  if(a==="stask-close" || a==="stask-close-bg"){ ui.staskCell = null; ui.staskMsg = null; return render(); }
-  if(a==="stask-save" || a==="stask-remove") return schedTaskAction(a);
+  if(a==="stask-cell"){ ui.staskCell = {sector:el.dataset.sector, date:el.dataset.date, slot:Number(el.dataset.slot)}; ui.staskForm = staskInitForm(ui.staskCell); ui.staskMsg = null; ui.staskBusy = false; return render(); }
+  if(a==="stask-close" || a==="stask-close-bg"){ ui.staskCell = null; ui.staskForm = null; ui.staskMsg = null; return render(); }
+  if(a==="stask-save" || a==="stask-remove" || a==="stask-remove-series") return schedTaskAction(a);
   if(a==="stask-rows") return schedTaskRowsAction(el);
   /* "סיימתי" בסוף שיבוץ ידני (2026-10-20, סרגיי): כל שיבוץ נשמר כבר בלחיצה; הכפתור מחזיר לטבלה המרוכזת
      ומזכיר לפרסם אם הסידור עוד לא פורסם */
@@ -4025,6 +4087,15 @@ function onAppClick(e){
 }
 
 /* בחירה/ביטול עובדים בעריכת משבצת ידנית - צריך רינדור מחדש רק כדי לעדכן ספירה, אבל לא לאבד את מצב הצ'קבוקסים - לכן לא ממחזרים render() כאן */
+/* טופס משימה שאינה משמרת: שדות טקסט נשמרים בהקלדה, בחירות (מאבטח/סוג/תאריכים) פותחות את השלב הבא */
+document.addEventListener("input", function(e){
+  if(e.target.dataset && e.target.dataset.stf && (e.target.dataset.stf==="title" || e.target.dataset.stf==="start" || e.target.dataset.stf==="end")){
+    if(S.ui.staskForm) S.ui.staskForm[e.target.dataset.stf] = e.target.value;
+  }
+});
+document.addEventListener("change", function(e){
+  if(e.target.dataset && e.target.dataset.stf) staskFormInput(e.target);
+});
 document.addEventListener("input", function(e){
   if(e.target.dataset && e.target.dataset.action==="custom-start"){
     S.ui.entries[e.target.dataset.date].customStart = e.target.value;
