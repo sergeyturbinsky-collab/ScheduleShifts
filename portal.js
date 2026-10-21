@@ -1023,7 +1023,8 @@ function arBuildText(f, name){
   if((f.actions||[]).length){ L.push(""); L.push("פעולות שבוצעו:"); f.actions.forEach(x=>L.push(`• ${x}`)); }
   L.push(""); L.push("ממצאים וסיום אירוע:");
   (f.end||[]).forEach(x=>L.push(`• ${x}`));
-  L.push(`• ${f.body||"ללא נזק גוף"}`); L.push(`• ${f.prop||"ללא נזק רכוש"}`);
+  L.push(`• ${f.body||"ללא נזק גוף"}`);
+  L.push(`• ${f.prop==="נגרם נזק לרכוש" && has(f.propDesc) ? `נגרם נזק לרכוש: ${f.propDesc.trim().replace(/\s*\n\s*/g, " ")}` : (f.prop||"ללא נזק רכוש")}`);
   if(has(f.notes)){ L.push(""); L.push("פרטים נוספים:"); L.push(f.notes.trim()); }
   L.push("");
   const ops = [name].concat(f.mates||[]).concat(has(f.matesOther) ? f.matesOther.split(/[,،]/).map(x=>x.trim()).filter(Boolean) : []);
@@ -1050,6 +1051,12 @@ function arReportHtml(App, r, images){
     <div class="ar-meta">${esc(r.worker_name||"")}${r.branch?` · ${esc(r.branch)}`:""} · נשלח ${esc(dmgFmtDate(r.created_at))}</div>
     ${images && images.length ? `<div class="ar-h">תמונות מהזירה</div><div class="dmg-imgs ar-imgs">${images.map(s=>`<img src="${s}" alt="">`).join("")}</div>` : ""}</div>`;
 }
+/* זמן הגעה (2026-10-21, סרגיי): בחירה מרשימה נפתחת (חץ) במקום טווחים */
+const AR_MINUTES = Array.from({length:30}, (_,i)=>`${i+1} דק׳`).concat(["35 דק׳","40 דק׳","45 דק׳","50 דק׳","55 דק׳","60 דק׳","יותר משעה"]);
+function arTimeSelect(App, k){
+  const esc = App.escapeHtml, v = AR.f[k]||"";
+  return `<select data-arf="${k}" class="ar-time"><option value="">— בחרו —</option>${AR_MINUTES.map(o=>`<option value="${esc(o)}" ${o===v?"selected":""}>${esc(o)}</option>`).join("")}</select>`;
+}
 function arChips(App, k, opts){
   const f = AR.f, esc = App.escapeHtml, multi = !!AR_MULTI[k];
   return `<div class="ar-chips">${opts.map(o=>{ const on = multi ? (f[k]||[]).includes(o) : f[k]===o;
@@ -1074,7 +1081,7 @@ function arFormHtml(App, session){
     ${sec("איך התקבל האירוע", arChips(App, "source", AR_OPT.source), true)}
     ${sec("התפקיד שלי באירוע", arChips(App, "role", AR_OPT.role)
       + (f.role==="תיאמתי מול הכוחות והכוונתי סייר לזירה" && mates.length ? `<div class="ar-sub">איזה סייר הוכוון לזירה:</div><div class="ar-chips">${mates.map(n=>`<span class="ar-chip${f.directed===n?" on":""}" data-action="portal-ar-chip" data-k="directed" data-v="${esc(n)}">${esc(n)}</span>`).join("")}</div>` : "")
-      + `<div class="ar-sub">זמן הגעה לזירה:</div>${arChips(App, "arrive", AR_OPT.arrive)}`)}
+      + `<div class="ar-sub">זמן הגעה לזירה:</div>${arTimeSelect(App, "arrive")}`)}
     ${sec("מה נמצא בזירה", arChips(App, "findings", AR_OPT.findings)
       + `<div class="ar-sub">חשודים:</div>${arChips(App, "suspects", AR_OPT.suspects)}`
       + (f.suspects && f.suspects!=="אין" ? `<div class="ar-sub">מין:</div>${arChips(App, "sgender", AR_OPT.sgender)}<div class="ar-sub">גיל משוער:</div>${arChips(App, "sage", AR_OPT.sage)}` : ""))}
@@ -1084,10 +1091,11 @@ function arFormHtml(App, session){
     ${sec("🚓 משטרה", `<div class="ar-sub" style="margin-top:0;">הוזמנה לזירה:</div>${arChips(App, "police", AR_OPT.yn)}
       ${f.police==="כן" ? `<div class="field" style="margin-top:6px;"><label>מס׳ אירוע משטרה</label>${inp("policeNo","לא חובה","text",'maxlength="30"')}</div>
         <div class="ar-sub">הגיעה לזירה:</div>${arChips(App, "policeArrived", AR_OPT.yn)}<div class="ar-sub">איזה כוח:</div>${arChips(App, "policeUnit", AR_OPT.punit)}
-        <div class="ar-sub">זמן הגעה:</div>${arChips(App, "policeTime", AR_OPT.arrive)}` : ""}`)}
+        <div class="ar-sub">זמן הגעה:</div>${arTimeSelect(App, "policeTime")}` : ""}`)}
     ${sec("פעולות שביצענו", arChips(App, "actions", AR_OPT.actions))}
     ${sec("איך הסתיים האירוע", arChips(App, "end", AR_OPT.end)
-      + `<div class="ar-sub">נזק גוף:</div>${arChips(App, "body", AR_OPT.body)}<div class="ar-sub">נזק רכוש:</div>${arChips(App, "prop", AR_OPT.prop)}`)}
+      + `<div class="ar-sub">נזק גוף:</div>${arChips(App, "body", AR_OPT.body)}<div class="ar-sub">נזק רכוש:</div>${arChips(App, "prop", AR_OPT.prop)}`
+      + (f.prop==="נגרם נזק לרכוש" ? `<div class="field" style="margin-top:6px;"><label>תיאור הנזק <span class="ar-req">*</span></label><textarea data-arf="propDesc" rows="3" maxlength="1500" placeholder="מה ניזוק ואיך">${esc(f.propDesc||"")}</textarea></div>` : ""))}
     ${sec("מבצעים — מי היה איתי", (mates.length ? `<div class="ar-chips">${mates.map(n=>{ const on = (f.mates||[]).includes(n); return `<span class="ar-chip${on?" on":""}" data-action="portal-ar-chip" data-k="mates" data-v="${esc(n)}">${on?"✓ ":""}${esc(n)}</span>`; }).join("")}</div>` : `<p class="muted" style="margin:0;">טוען...</p>`)
       + `<div class="field" style="margin-top:6px;">${inp("matesOther","מישהו שלא ברשימה (לא חובה)","text",'maxlength="120"')}</div>`)}
     ${sec("פרטים נוספים (לא חובה)", `<textarea data-arf="notes" rows="3" maxlength="3000" placeholder="רק אם יש משהו שלא מופיע בבחירות">${esc(f.notes||"")}</textarea>
@@ -1199,6 +1207,7 @@ async function arAction(App, a, el){
     if(!(f.location||"").trim()) miss.push("כתובת / מיקום");
     if(!f.type || (f.type==="אחר" && !(f.typeOther||"").trim())) miss.push("סוג האירוע");
     if(!f.source) miss.push("איך התקבל האירוע");
+    if(f.prop==="נגרם נזק לרכוש" && !(f.propDesc||"").trim()) miss.push("תיאור הנזק לרכוש");
     if(miss.length){ AR.error = "חסר: " + miss.join(", "); return App.render(); }
     const text = arBuildText(f, session.name);
     AR.busy = true; AR.error = null; App.render();
@@ -1229,6 +1238,7 @@ const AR_CSS = `
   .ar-sec-h{font-weight:700;margin-bottom:6px;} .ar-req{color:#b42318;font-weight:700;}
   .ar-sub{font-size:.88em;color:#4b5563;margin:8px 0 4px;}
   .ar-chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .ar-time{max-width:180px;}
   .ar-chip{border:1.5px solid #c9d4e2;background:#fff;border-radius:999px;padding:6px 12px;cursor:pointer;font-size:.92em;user-select:none;line-height:1.25;}
   .ar-chip.on{background:#1f4e8c;border-color:#1f4e8c;color:#fff;font-weight:600;}
   .ar-doc{border:1px solid var(--border,#d6dde6);border-radius:10px;padding:14px 16px;background:#fff;line-height:1.65;}
