@@ -1013,6 +1013,7 @@ function arBuildText(f, name){
     if(f.suspects && f.suspects!=="אין"){ const sd = [f.sgender, f.sage].filter(x=>x && x!=="לא ידוע"); s += ` חשודים: ${f.suspects}${sd.length?` (${sd.join(", ")})`:""}.`; }
     L.push(s);
   }
+  if(has(f.notes)){ L.push(""); L.push("תיאור האירוע:"); f.notes.trim().split(/\n+/).forEach(x=>{ if(x.trim()) L.push(x.trim()); }); }
   L.push("");
   L.push(`מד״א מספר אירוע: ${f.mda==="כן" && has(f.mdaNo) ? f.mdaNo.trim() : "—"}`);
   L.push(`הוזמנה לזירה: ${f.mda==="כן"?"כן":"לא"}.`);
@@ -1025,14 +1026,13 @@ function arBuildText(f, name){
   (f.end||[]).forEach(x=>L.push(`• ${x}`));
   L.push(`• ${f.body||"ללא נזק גוף"}`);
   L.push(`• ${f.prop==="נגרם נזק לרכוש" && has(f.propDesc) ? `נגרם נזק לרכוש: ${f.propDesc.trim().replace(/\s*\n\s*/g, " ")}` : (f.prop||"ללא נזק רכוש")}`);
-  if(has(f.notes)){ L.push(""); L.push("פרטים נוספים:"); L.push(f.notes.trim()); }
   L.push("");
   const ops = [name].concat(f.mates||[]).concat(has(f.matesOther) ? f.matesOther.split(/[,،]/).map(x=>x.trim()).filter(Boolean) : []);
   L.push(`מבצעים: ${Array.from(new Set(ops)).join(", ")}.`);
   return L.join("\n");
 }
 /* תצוגת הדו"ח המוגמר (מהמלל השמור) */
-const AR_HEADS = ["דוח פעולה מאבטח","פרטי האירוע:","פעולות שבוצעו:","ממצאים וסיום אירוע:","פרטים נוספים:"];
+const AR_HEADS = ["דוח פעולה מאבטח","פרטי האירוע:","תיאור האירוע:","פעולות שבוצעו:","ממצאים וסיום אירוע:","פרטים נוספים:"];
 function arReportHtml(App, r, images){
   const esc = App.escapeHtml;
   const lines = String(r.report_text||"").split("\n");
@@ -1074,7 +1074,7 @@ function arFormHtml(App, session){
     ${sec("מתי ואיפה", `<div class="row">
         <div class="field"><label>תאריך</label>${inp("date","","date")}</div>
         <div class="field"><label>שעה</label>${inp("time","","time")}</div>
-        <div class="field"><label>מס׳ אירוע בסביו <span class="ar-req">*</span></label>${inp("sayvu","למשל: 9338","text",'inputmode="numeric" maxlength="20"')}</div></div>
+        <div class="field"><label>מס׳ אירוע בסביו <span class="ar-req">*</span></label>${inp("sayvu","6 ספרות","text",'inputmode="numeric" maxlength="6" pattern="[0-9]{6}"')}</div></div>
       <div class="field"><label>כתובת / מיקום <span class="ar-req">*</span></label>${inp("location","למשל: אינטרנציונל 24","text",'maxlength="200"')}</div>`, true)}
     ${sec("סוג האירוע", arChips(App, "type", AR_OPT.type) + (f.type==="אחר" ? `<div class="field" style="margin-top:6px;">${inp("typeOther","מה סוג האירוע","text",'maxlength="80"')}</div>` : ""), true)}
     ${sec("מי היו מעורבים", arChips(App, "involved", AR_OPT.involved) + ((f.involved||[]).includes("אחר") ? `<div class="field" style="margin-top:6px;">${inp("involvedOther","מי עוד","text",'maxlength="80"')}</div>` : ""))}
@@ -1098,11 +1098,10 @@ function arFormHtml(App, session){
       + (f.prop==="נגרם נזק לרכוש" ? `<div class="field" style="margin-top:6px;"><label>תיאור הנזק <span class="ar-req">*</span></label><textarea data-arf="propDesc" rows="3" maxlength="1500" placeholder="מה ניזוק ואיך">${esc(f.propDesc||"")}</textarea></div>` : ""))}
     ${sec("מבצעים — מי היה איתי", (mates.length ? `<div class="ar-chips">${mates.map(n=>{ const on = (f.mates||[]).includes(n); return `<span class="ar-chip${on?" on":""}" data-action="portal-ar-chip" data-k="mates" data-v="${esc(n)}">${on?"✓ ":""}${esc(n)}</span>`; }).join("")}</div>` : `<p class="muted" style="margin:0;">טוען...</p>`)
       + `<div class="field" style="margin-top:6px;">${inp("matesOther","מישהו שלא ברשימה (לא חובה)","text",'maxlength="120"')}</div>`)}
-    ${sec("פרטים נוספים (לא חובה)", `<textarea data-arf="notes" rows="3" maxlength="3000" placeholder="רק אם יש משהו שלא מופיע בבחירות">${esc(f.notes||"")}</textarea>
-      <div class="ar-sub">📷 תמונות מהזירה (לא חובה, עד 8):</div>
-      <span><label class="btn secondary small" style="cursor:pointer;">📷 צילום<input type="file" accept="image/*" capture="environment" data-action="portal-ar-files" style="display:none;"></label>
+    ${sec("📷 תמונות מהזירה (לא חובה, עד 8)", `<span><label class="btn secondary small" style="cursor:pointer;">📷 צילום<input type="file" accept="image/*" capture="environment" data-action="portal-ar-files" style="display:none;"></label>
       <label class="btn secondary small" style="cursor:pointer;">🖼️ מהגלריה<input type="file" accept="image/*" multiple data-action="portal-ar-files" style="display:none;"></label></span>
       ${AR.photos.length ? `<div class="dmg-imgs">${AR.photos.map((s,j)=>`<span style="position:relative;display:inline-block;"><img src="${s}" alt=""><span data-action="portal-ar-rmimg" data-j="${j}" style="position:absolute;top:2px;left:2px;background:#fff;border-radius:50%;padding:0 6px;cursor:pointer;">✕</span></span>`).join("")}</div>` : ""}`)}
+    ${sec("תיאור האירוע במלל חופשי", `<textarea data-arf="notes" rows="5" maxlength="4000" placeholder="תארו את השתלשלות האירוע במילים שלכם">${esc(f.notes||"")}</textarea>`)}
     ${AR.error ? `<p class="shortage">${esc(AR.error)}</p>` : ""}
     <div class="flexbar" style="gap:6px;flex-wrap:wrap;margin-top:8px;">
       <button class="btn secondary" data-action="portal-ar-preview">👁 תצוגה מקדימה</button>
@@ -1204,7 +1203,7 @@ async function arAction(App, a, el){
     arSync(App); const f = AR.f;
     const miss = [];
     if(!f.date || !f.time) miss.push("תאריך ושעה");
-    if(!(f.sayvu||"").trim()) miss.push("מס׳ אירוע בסביו");
+    if(!/^\d{6}$/.test((f.sayvu||"").trim())) miss.push("מס׳ אירוע בסביו (6 ספרות בדיוק)");
     if(!(f.location||"").trim()) miss.push("כתובת / מיקום");
     if(!f.type || (f.type==="אחר" && !(f.typeOther||"").trim())) miss.push("סוג האירוע");
     if(!f.source) miss.push("איך התקבל האירוע");
