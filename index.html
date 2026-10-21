@@ -93,6 +93,9 @@
   .tmpl-table th{background:#f4f7fb;font-weight:600;}
   .tmpl-table th .shabbat-th{font-weight:500;font-size:.9em;color:#7a5c00;margin-top:2px;}
   .tmpl-table td.tmpl-pos{background:#f4f7fb;font-weight:600;}
+  /* (2026-10-21, סרגיי) כל הטבלאות (בוקר/ערב/לילה/משימות) - עמודות ימים ברוחב זהה, אחת מתחת לשנייה */
+  .tmpl-fixed{table-layout:fixed;}
+  .tmpl-fixed th,.tmpl-fixed td{white-space:normal;overflow-wrap:anywhere;}
   .stask-cell{font-size:.9em;min-width:70px;}
   .tmpl-pos-hrs{font-size:.72em;font-weight:400;color:#4b5563;white-space:nowrap;line-height:1.35;}
   .tmpl-na{background:#2a2a2a;}
@@ -193,7 +196,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=101"></script>
+<script src="portal.js?v=102"></script>
 <script>
 (function(){
 "use strict";
@@ -1892,6 +1895,7 @@ function buildTemplateData(group, dates, quotas){
   });
 }
 /* שעה לתא: "15" לשעה עגולה, "15:30" כשיש דקות (2026-10-12: סיום שישי בוקר בחצאי שעות לפי כניסת שבת) */
+const TMPL_POS_W = 110, TMPL_DAY_W = 92; // רוחב עמודת התפקיד/סייר ורוחב מינימלי לעמודת יום
 function tmplHourNum(t){ if(!t) return ""; const h = String(parseInt(t.slice(0,2),10)), m = t.slice(3,5); return (m && m!=="00") ? `${h}:${m}` : h; }
 
 /* טקסט השעות לתא: שעות התקן הרגילות, אלא אם לעובד יש שעות מותאמות שונות (למשל שיבוץ שחוצה בין
@@ -2121,7 +2125,7 @@ function renderTemplateGrid(group, dates, ui, mode){
       return `
       <div class="tmpl-bucket-head">${escapeHtml(bucket.label)}</div>
       <div style="overflow-x:auto;">
-      <table class="tmpl-table">
+      <table class="tmpl-table tmpl-fixed" style="min-width:${TMPL_POS_W + dates.length*TMPL_DAY_W}px;"><colgroup><col style="width:${TMPL_POS_W}px">${dates.map(()=>"<col>").join("")}</colgroup>
         <thead><tr><th></th>${dates.map(d=>`<th>${fmtDateHeb(d)}${shabbatThHtml(d, secData.sector)}</th>`).join("")}</tr></thead>
         <tbody>${rowsHtml || `<tr><td colspan="${dates.length+1}" class="muted">אין תקן</td></tr>`}${mirrorHtml}</tbody>
       </table>
@@ -2235,7 +2239,7 @@ function schedTasksBlock(sector, dates, ui, mode){
       <div class="tmpl-bucket-head">משימות (לא משמרת)${mode==="agg"?` <span class="muted" style="font-weight:400;font-size:.85em;">— להוספה או עריכה: "שיבוץ ידני"</span>`:""}</div>
       ${ui.staskRowsMsg ? `<p class="shortage" style="margin:4px 0;">${escapeHtml(ui.staskRowsMsg)}</p>` : ""}
       <div style="overflow-x:auto;">
-      <table class="tmpl-table">
+      <table class="tmpl-table tmpl-fixed" style="min-width:${TMPL_POS_W + dates.length*TMPL_DAY_W}px;"><colgroup><col style="width:${TMPL_POS_W}px">${dates.map(()=>"<col>").join("")}</colgroup>
         <thead><tr><th></th>${dates.map(d=>`<th>${fmtDateHeb(d)}</th>`).join("")}</tr></thead>
         <tbody>${rows}${ctrl}</tbody>
       </table>
@@ -2410,7 +2414,7 @@ function renderMokedTemplateGrid(group, dates, ui, mode){
       return `
       <div class="tmpl-bucket-head">${escapeHtml(bucket.label)}</div>
       <div style="overflow-x:auto;">
-      <table class="tmpl-table">
+      <table class="tmpl-table tmpl-fixed" style="min-width:${TMPL_POS_W + dates.length*TMPL_DAY_W}px;"><colgroup><col style="width:${TMPL_POS_W}px">${dates.map(()=>"<col>").join("")}</colgroup>
         <thead><tr><th></th>${dates.map(d=>`<th>${fmtDateHeb(d)}</th>`).join("")}</tr></thead>
         <tbody>${rowsHtml || `<tr><td colspan="${dates.length+1}" class="muted">אין תקן</td></tr>`}</tbody>
       </table>
