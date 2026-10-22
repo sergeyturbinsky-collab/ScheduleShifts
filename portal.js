@@ -3349,7 +3349,7 @@ function tdLoad(App, ms, force){
 function tdSync(){
   if(!TD.form) return;
   const v = id=>{ const x = document.getElementById(id); return x ? x.value : undefined; };
-  ["title","notes","due","tfrom","tto","remind"].forEach(k=>{ const x = v("td_"+k); if(x!==undefined) TD.form[k] = x; });
+  ["title","notes","due","tfrom","tto","remind","to"].forEach(k=>{ const x = v("td_"+k); if(x!==undefined) TD.form[k] = x; });
 }
 function tdDefaultRemind(due, tfrom){
   const p = n=>String(n).padStart(2,"0");
@@ -3365,6 +3365,10 @@ function renderTodoCard(App, ms){
   const d = TD.data, open = d ? d.open||[] : [], done = d ? d.done||[] : [];
   const f = TD.form;
   const form = f ? `<div class="todo-form">
+      ${(d && d.can_assign && !f.id) ? `<div class="field"><label>למי המשימה</label><select id="td_to">
+          <option value="">לי (משימה שלי)</option>
+          ${(d.people||[]).map(p=>`<option value="${p.id}"${f.to===p.id?" selected":""}>${esc(p.name)}</option>`).join("")}
+        </select><span class="muted" style="font-size:.82em;">משימה למישהו אחר מופיעה רק ב"המשימות שלי" שלו (והוא מקבל התראה). את/ה לא תראה/י אותה ברשימה שלך.</span></div>` : ""}
       <div class="field"><label>מה צריך לעשות</label><input type="text" id="td_title" maxlength="300" value="${esc(f.title||"")}" placeholder="למשל: לבדוק ציוד בעמדה, לחזור לאלירן"></div>
       <div class="field"><label>פרטים <span class="muted">(לא חובה)</span></label><textarea id="td_notes" rows="2" maxlength="3000">${esc(f.notes||"")}</textarea></div>
       <div class="row">
@@ -3385,6 +3389,7 @@ function renderTodoCard(App, ms){
       </div></div>` : "";
   const chips = t=>{
     const out = [];
+    if(t.assigned_by_name) out.push(`<span class="todo-chip" style="background:#efe7fb;">👤 מאת ${esc(t.assigned_by_name)}</span>`);
     const tm = t.time_from ? ` · <span dir="ltr">${esc(t.time_from)}${t.time_to?`–${esc(t.time_to)}`:""}</span>` : (t.time_to ? ` · עד <span dir="ltr">${esc(t.time_to)}</span>` : "");
     if(t.due) out.push(`<span class="todo-chip${String(t.due)<today?" late":""}">📅 ${esc(fmtD(App, t.due))}${tm}</span>`);
     else if(tm) out.push(`<span class="todo-chip">🕒${tm.replace(" · "," ")}</span>`);
@@ -3423,7 +3428,8 @@ function renderTodoCard(App, ms){
       <h3 style="margin:0;">📝 המשימות שלי${open.length?` <span class="muted" style="font-size:.8em;font-weight:400;">(${open.length})</span>`:""}</h3>
       ${f ? "" : `<button class="btn small" data-action="portal-todo-new">➕ משימה חדשה</button>`}
     </div>
-    <p class="muted" style="font-size:.82em;margin:4px 0 0;">רק את/ה רואה את המשימות האלה.</p>
+    <p class="muted" style="font-size:.82em;margin:4px 0 0;">רק את/ה רואה את המשימות האלה.${d && d.can_assign ? " אפשר גם לשבץ משימה למנהל אחר — בטופס \"משימה חדשה\"." : ""}</p>
+    ${TD.sentMsg ? `<p style="color:#1b7f3b;font-weight:600;margin:6px 0 0;">${esc(TD.sentMsg)}</p>` : ""}
     ${form}
     ${!d ? `<p class="muted">טוען...</p>` : d.error ? `<p class="shortage">${esc(d.error)}</p>`
       : (open.length ? open.map(row).join("") : (f ? "" : `<p class="muted" style="margin:8px 0 0;">אין משימות פתוחות.</p>`))}
@@ -3461,6 +3467,13 @@ async function todoAction(App, a, el){
       }
       TD.busy = true; TD.error = null; App.render();
       const base = {p_token:ms.token, p_id:f.id||null, p_title:f.title, p_notes:f.notes||null, p_due:f.due||null, p_remind_at:remindIso};
+      if(!f.id && f.to){
+        await App.apiRpc("mgr_todo_assign", {p_token:ms.token, p_to:f.to, p_title:f.title, p_notes:f.notes||null, p_due:f.due||null, p_time_from:f.tfrom||null, p_time_to:f.tto||null, p_remind_at:remindIso});
+        const who = ((TD.data && TD.data.people)||[]).find(p=>p.id===f.to);
+        TD.form = null; TD.busy = false; TD.error = null; TD.sentMsg = `✅ המשימה נשלחה ל${who?who.name:""}`;
+        setTimeout(()=>{ TD.sentMsg = null; App.render(); }, 6000);
+        tdLoad(App, ms, true); return App.render();
+      }
       try{ await App.apiRpc("mgr_todo_save2", Object.assign({}, base, {p_time_from:f.tfrom||null, p_time_to:f.tto||null})); }
       catch(e2){ if(/mgr_todo_save2|function|404/i.test(e2.message)) await App.apiRpc("mgr_todo_save", base); else throw e2; }
       TD.form = null;
