@@ -214,7 +214,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=111"></script>
+<script src="portal.js?v=112"></script>
 <script>
 (function(){
 "use strict";
@@ -299,11 +299,12 @@ function rangesOverlaps(aStart,aEnd,bStart,bEnd){
 const SHIFT_LABELS = {
   morning:"בוקר", evening:"ערב", night:"לילה", coordinated:'מתואמת (11:00-23:00)',
   friday_morning:'בוקר עד 17:00', friday_night:"לילה שישי", motzash:'מוצ"ש', custom:"שעות מותאמות אישית", combined:"משמרת (11:00-23:00)",
-  vacation:"חופשה", reserve:"מילואים", sick:"מחלה", unavailable:"לא יכול", other:"אחר (פירוט בהערה)"
+  vacation:"חופשה", reserve:"מילואים", sick:"מחלה", study:"לימודים", unavailable:"לא יכול", other:"אחר (פירוט בהערה)"
 };
 /* סוגי "יום שלם" - חוסמים את כל המשמרות של אותו יום, ללא קשר לסוג המשמרת שנבדקת */
 /* (2026-10-20) נוספו "לא יכול" ו"אחר" - מאבטח חייב לסמן כל יום בהגשה (ראו saveSubmission) */
-const DAY_STATUS_TYPES = ["vacation","reserve","sick","unavailable","other"];
+/* (2026-10-22, סרגיי) נוסף "לימודים" */
+const DAY_STATUS_TYPES = ["vacation","reserve","sick","study","unavailable","other"];
 /* ארבע ה"ערים" הגיאוגרפיות שמשתתפות בבריכה המשותפת של "מאיר אזרואל" (דניאל כתב=ירושלים
    + אביחי קדוש=בית שמש/מודיעין עילית/ביתר עילית) - ראו computeWorkerCities ו-availableForSlot. */
 const POOLED_CITY_SECTORS = ["ירושלים","בית שמש","מודיעין עילית","ביתר עילית"];
@@ -654,19 +655,21 @@ function achTagHtml(w){ return isGuardAchmash(w) ? ` <span class="ach-tag">אח�
    max_blocked_per_week משמרות חסומות בשבוע. תקופות לפני התאריך הזה נשארות במודל הקודם ("מה כן יכול"). */
 function teamBlockingAt(team, dateStr){ return !!team && (isMokedTeam(team) || (!!team.blocking_from && String(dateStr||"") >= String(team.blocking_from))); }
 function guardBlockingAt(team, dateStr){ return !!team && !isMokedTeam(team) && teamBlockingAt(team, dateStr); }
-/* כמה משמרות חסומות בכל שבוע (ראשון-שבת). "לא יכול" / "אחר" ליום שלם = כל המשמרות של אותו יום. חופשה/מילואים/מחלה לא נספרים. */
+/* כמה משמרות חסומות בכל שבוע (ראשון-שבת). סימון "יום שלם" (חסימת כל היום / חופשה / מילואים / מחלה / לימודים / אחר) לא נספר
+   במכסת החסימות (2026-10-22, סרגיי) - נספרות רק משמרות בודדות שסומנו ✕. */
 function blockedCountsByWeek(team, dates, entries){
   const out = {};
   dates.forEach(d=>{
     const e = entries[d]; if(!e) return;
     const dt = parseDate(d); const wk = fmtDate(addDays(dt, -dt.getDay()));
     let n = 0;
-    if(e.dayStatus){ if(e.dayStatus==="unavailable" || e.dayStatus==="other") n = submitOptionsForTeamDay(team, d).length; }
-    else n = (e.types||[]).length;
+    if(!e.dayStatus) n = (e.types||[]).length;
     out[wk] = (out[wk]||0) + n;
   });
   return out;
 }
+/* בטופס של חיפה (מודל החסימות) "לא יכול" ליום שלם מוצג כ"חסימת כל היום" */
+function dayStatusLabel(t, guardBlocking){ return (guardBlocking && t==="unavailable") ? "חסימת כל היום" : SHIFT_LABELS[t]; }
 function isSessionPin(){ return typeof S.pin==="string" && (S.pin.startsWith("mgr:") || S.pin.startsWith("wrk:")); }
 function actorName(){ return isSessionPin() ? (S.actorName || "") : "קוד עריכה"; }
 function goHome(){ S.view = S.managerMode ? "managers" : "home"; S.ui={}; render(); }
@@ -783,13 +786,13 @@ function renderSubmitPeriod(){
     const dayStatusRow = `
       <div class="chip-opts" style="margin-top:6px;">
         <span class="muted" style="align-self:center;">יום שלם:</span>
-        ${DAY_STATUS_TYPES.filter(t=>!guardBlocking || !["unavailable","other"].includes(t) || sel.dayStatus===t).map(t=>`<div class="chip ${sel.dayStatus===t?"on":""}"${readOnly?"":` data-action="toggle-daystatus" data-date="${d}" data-type="${t}"`}>${SHIFT_LABELS[t]}</div>`).join("")}
+        ${(guardBlocking ? ["unavailable","vacation","reserve","sick","study","other"] : DAY_STATUS_TYPES).map(t=>`<div class="chip ${sel.dayStatus===t?"on":""}"${readOnly?"":` data-action="toggle-daystatus" data-date="${d}" data-type="${t}"`}>${dayStatusLabel(t, guardBlocking)}</div>`).join("")}
       </div>`;
     if(sel.dayStatus){
       return `
       <div class="day-card">
         <h4>${fmtDateHeb(d)}</h4>
-        <p class="muted">היום מסומן כ"${SHIFT_LABELS[sel.dayStatus]}"${readOnly?"":` — כל המשמרות של היום הזה חסומות. לחצו שוב על הכפתור כדי לבטל ולחזור לבחירת משמרות.`}</p>
+        <p class="muted">היום מסומן כ"${dayStatusLabel(sel.dayStatus, guardBlocking)}"${readOnly?"":` — כל המשמרות של היום הזה חסומות. לחצו שוב על הכפתור כדי לבטל ולחזור לבחירת משמרות.`}</p>
         ${dayStatusRow}
       </div>`;
     }
@@ -825,7 +828,7 @@ function renderSubmitPeriod(){
       ${(!readOnly && guardBlocking) ? `<div class="note-box" style="border-color:#1f4e8c;background:#eef4fb;margin:8px 0;">
           <b>📌 שימו לב — ${maxBlocks ? `אפשר לסמן רק ${maxBlocks} חסימות בשבוע` : "מסמנים רק חסימות"}.</b><br>
           מסמנים (✕) רק את המשמרות שבהן <b>לא</b> יכולים לעבוד. <b>כל שאר המשמרות נחשבות פתוחות לשיבוץ</b> — אין צורך לסמן אותן.<br>
-          <span class="muted" style="font-size:.9em;">חופשה / מילואים / מחלה מסמנים ב"יום שלם" — הם לא נספרים בחסימות.</span></div>
+          <span class="muted" style="font-size:.9em;">יום שלם — <b>חסימת כל היום</b>, חופשה, מילואים, מחלה, לימודים או אחר — מסמנים בשורה "יום שלם" בתחתית כל יום, והוא <b>לא נספר</b> במכסת החסימות.</span></div>
         ${ui.blockMsg ? `<p class="shortage">${escapeHtml(ui.blockMsg)}</p>` : ""}
         ${maxBlocks ? `<div class="banner ${Object.values(weekCounts).some(n=>n>maxBlocks)?"closed":"open"}">חסומות בתקופה: ${Object.keys(weekCounts).length ? Object.keys(weekCounts).sort().map(k=>`${Object.keys(weekCounts).length>1?`שבוע ${fmtDateHeb(k)}: `:""}${weekCounts[k]}/${maxBlocks}`).join(" · ") : `0/${maxBlocks}`}</div>` : ""}` : ""}
       ${(!readOnly && !isMokedTeam(team) && !guardBlocking) ? `<p class="muted">סמנו בכל יום את המשמרות שבהן אתם <b>כן</b> יכולים לעבוד. משמרת שלא תסומן תיחשב כלא זמינה עבורכם. ניתן גם לסמן טווח שעות מותאם נוסף שבו אתם זמינים.<br><b>חובה להתייחס לכל יום</b> — יום שלא מתאים לכם: "לא יכול" או "אחר" (אפשר לפרט בהערה).</p>` : ""}
