@@ -350,7 +350,7 @@ function pushGateHtml(App, name, N, act){
   const head = `<div class="card">
     <div class="flexbar" style="justify-content:space-between;">
       <h2 style="margin:0;">שלום, ${esc(name)}</h2>
-      <button class="btn small secondary" data-action="${act.logout}">יציאה</button>
+      ${homeBackBtn(App)}
     </div></div>`;
   if(N.state===null || N.checking) return head + `<div class="card"><p class="muted">בודק התראות במכשיר...</p></div>`;
   let body;
@@ -416,7 +416,7 @@ function renderWorkerHome(App, session){
   <div class="card">
     <div class="flexbar" style="justify-content:space-between;">
       <h2 style="margin:0;">שלום, ${esc(session.name)}</h2>
-      <button class="btn small secondary" data-action="portal-logout">יציאה</button>
+      ${homeBackBtn(App)}
     </div>
     <!-- סדר הרובריקות (2026-10-21, סרגיי): שתיים בכל שורה - ימין/שמאל: דוח פעולה | דיווח נזק, משמרות | הדרכה, מנהלתיות | לוגיסטי -->
     <div class="grid-teams" style="margin-top:12px;grid-template-columns:repeat(2,minmax(0,1fr));">
@@ -4429,7 +4429,7 @@ function renderManagerHome(App, ms){
   <div class="card">
     <div class="flexbar" style="justify-content:space-between;">
       <h2 style="margin:0;">שלום, ${esc(ms.name)}</h2>
-      <button class="btn small secondary" data-action="portal-mgr-logout">יציאה</button>
+      ${homeBackBtn(App)}
     </div>
   </div>
 `;
@@ -4493,10 +4493,31 @@ function enterMgrSchedule(App, ms, which, scope){
 function renderHome(App){
   window.__portalApp = App;
   const ms = loadMgr(App);
-  if(ms) return renderManagerHome(App, ms);
-  const session = loadSession(App);
-  return session ? renderWorkerHome(App, session) : renderLogin(App);
+  const session = ms ? null : loadSession(App);
+  const html = ms ? renderManagerHome(App, ms) : session ? renderWorkerHome(App, session) : renderLogin(App);
+  // "יציאה" עבר לתחתית המסך כ"התנתק מהמשתמש" (2026-10-22, סרגיי); למעלה במקומו - "חזרה לעמוד קודם"
+  const act = ms ? "portal-mgr-logout" : session ? "portal-logout" : null;
+  return act ? html + `<div class="logout-bottom"><button class="btn secondary" data-action="${act}">🚪 התנתק מהמשתמש</button></div>` : html;
 }
+/* כפתור "חזרה לעמוד קודם" בכרטיס הפתיחה של מסך הבית (רק כשיש לאן לחזור) */
+function homeBackBtn(App){ return (App.navCanBack && App.navCanBack()) ? `<button class="btn small secondary" data-action="nav-back">◀ חזרה לעמוד קודם</button>` : ""; }
+/* היסטוריית ניווט: מה מגדיר "מסך" בפורטל, ושמירה/שחזור שלו */
+function navKey(){
+  const id = v=>v ? (v.id || 1) : "";
+  return [PV.page||"", PV.page ? JSON.stringify(PV.args||{}).slice(0,120) : "", MHS.section||"", DMG.open?"o":"", id(DMG.view), AR.open?"o":"", id(AR.view), AREQ.open?"o":"", id(AREQ.view), M.tile||""].join("~");
+}
+function navSave(){ return {pv:{page:PV.page, args:Object.assign({}, PV.args||{}), stack:(PV.stack||[]).slice()}, mhs:MHS.section||"", dmgView:DMG.view, arView:AR.view, areqView:AREQ.view, mTile:M.tile}; }
+function navRestore(s){
+  PV.page = s.pv.page; PV.args = s.pv.args; PV.stack = s.pv.stack.slice(); PV.data = null; PV.posts = null; PV.msg = null; PV.error = null; PV.busy = false;
+  MHS.section = s.mhs; try{ sessionStorage.setItem("cst_mh_section", MHS.section); }catch(e){}
+  DMG.open = false; DMG.view = s.dmgView; DMG.images = null; DMG.mimages = null;
+  AR.open = false; AR.view = s.arView; AR.images = null; AR.mimages = null;
+  AREQ.open = false; AREQ.view = s.areqView; AREQ.vfiles = null; AREQ.mfiles = null;
+  M.tile = s.mTile; M.code = null; M.list = null; M.error = null; M.msg = null;
+  SW.open = false;
+}
+function navHasParent(App){ return App.S.view==="home" && !!MHS.section && !!loadMgr(App); }
+function navRoot(){ if(!MHS.section) return false; MHS.section = ""; try{ sessionStorage.setItem("cst_mh_section", ""); }catch(e){} return true; }
 
 /* ================================================================
    בוט שאלות ותשובות על תפעול המערכת (2026-10-22, סרגיי): עיגול קטן קבוע בפינת המסך (זז עם הגלילה, לא מסתיר את
@@ -4539,8 +4560,8 @@ const HELP_KB = [
   {who:"w", q:"מה זה משימה שאינה משמרת?", k:"משימה שאינה משמרת משימות שהוטלו עליי שובצתי למשימה ליווי תדריך השתלמות",
    a:`הקב"ט יכול לשבץ אותך למשימה מחוץ למשמרת (למשל ליווי, תדריך, השתלמות), ליום אחד או לכמה ימים. היא מופיעה במסך הבית תחת <b>"📌 משימות שהוטלו עליי"</b> ומקבלים עליה התראה.`},
 
-  {who:"a", q:"איך נכנסים למערכת?", k:"להיכנס נכנסים כניסה התחברות להתחבר שם קוד אישי איך מתחברים יציאה להתנתק התנתקות משתמש אחר",
-   a:`בדף הכניסה מקלידים את השם, בוחרים אותו מהרשימה ומזינים את <b>הקוד האישי</b>. השם לא מופיע? צריך לפנות לקב"ט שיוסיף אותך. כדי להתנתק (למשל בטלפון של מישהו אחר) — לחצן <b>יציאה</b> בראש המסך.`},
+  {who:"a", q:"איך נכנסים למערכת?", k:"להיכנס נכנסים כניסה התחברות להתחבר שם קוד אישי איך מתחברים יציאה להתנתק התנתקות התנתק משתמש אחר חזרה עמוד קודם",
+   a:`בדף הכניסה מקלידים את השם, בוחרים אותו מהרשימה ומזינים את <b>הקוד האישי</b>. השם לא מופיע? צריך לפנות לקב"ט שיוסיף אותך. כדי להתנתק (למשל בטלפון של מישהו אחר) — לחצן <b>🚪 התנתק מהמשתמש</b> בתחתית מסך הבית. לחצן <b>◀ חזרה</b> מחזיר לעמוד הקודם.`},
   {who:"a", q:"המערכת לא נטענת / לא מתעדכנת", k:"אפליקציה האפליקציה מערכת לא עובד עובדת נטען נטענת תקוע תקועה שגיאה באג רענון לרענן לא מתעדכן ישן גרסה איטי לבן",
    a:`קודם כל לרענן את הדף (במחשב F5, בטלפון למשוך את המסך למטה או לסגור ולפתוח את האפליקציה). בדקו שיש אינטרנט. אם עדיין לא עובד — צלמו מסך ושלחו לקב"ט.`},
   {who:"w", q:"למה אני לא רואה את הסידור?", k:"לא רואה סידור לא מופיע לא פורסם עדיין אין משמרות ריק איפה הסידור",
@@ -4858,6 +4879,7 @@ function onClick(App, a, el){
   if(a==="portal-push-enable"){ const ss = loadSession(App); if(ss && !N.busy) enablePush(App, ss); return; }
   if(a==="portal-managers"){ S.view = "managers"; S.ui = {}; return App.render(); }
   if(a==="portal-logout"){
+    if(App.navReset) App.navReset();
     const s = loadSession(App);
     if(s) App.apiRpc("worker_logout", {p_token: s.token}).catch(()=>{});
     clearMgrMode(App);
@@ -4899,6 +4921,7 @@ function onClick(App, a, el){
   if(a==="portal-mh-section"){ MHS.section = el.dataset.s||""; try{ sessionStorage.setItem("cst_mh_section", MHS.section); }catch(e){} window.scrollTo(0,0); return App.render(); }
   if(a==="portal-mh-agg" || a==="portal-mh-admin"){ const ms = loadMgr(App); if(!ms) return App.render(); return enterMgrSchedule(App, ms, a==="portal-mh-agg"?"agg":"admin", el.dataset.scope||null); }
   if(a==="portal-mgr-logout"){
+    if(App.navReset) App.navReset();
     const ms = loadMgr(App);
     if(ms) App.apiRpc("manager_logout", {p_token: ms.token}).catch(()=>{});
     saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null; MN.state = null; INC.pendCount = undefined; INC.opts = null; C.data = null; C.homeCount = undefined; C.month = null; C.sel = null; C.edit = null; CW.data = null; CW.my = null; CW.week = null; CW.lastDone = null; U.data = null; U.error = null; U.loading = false;
@@ -5019,6 +5042,7 @@ function onClick(App, a, el){
   if(document.getElementById("portalStyles")) return;
   const st = document.createElement("style"); st.id = "portalStyles";
   st.textContent = `${AR_CSS}${HELP_CSS}
+  .logout-bottom{text-align:center;margin:26px 0 8px;} .logout-bottom .btn{min-width:200px;}
   .dmg-table{width:100%;border-collapse:collapse;} .dmg-table th,.dmg-table td{border:1px solid var(--border);padding:6px 8px;text-align:right;vertical-align:top;} .dmg-table th{background:#f4f7fb;width:34%;font-weight:600;}
   .dmg-imgs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;} .dmg-imgs img{width:96px;height:96px;object-fit:cover;border-radius:6px;border:1px solid var(--border);}
   .areq-file{position:relative;display:inline-block;} .areq-pdf{display:inline-flex;align-items:center;justify-content:center;width:96px;height:96px;border:1px solid var(--border);border-radius:6px;background:#f7f9fc;font-weight:700;text-decoration:none;}
@@ -5103,5 +5127,5 @@ if("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("messa
   const App = window.__portalApp;
   if(ev.data && ev.data.type==="refresh" && App && App.S.view==="home" && loadSession(App)){ T.data = null; F.data = null; P.shifts = null; App.render(); }
 });
-window.Portal = { onDrag, renderHome, renderSection, renderManagerRequests, renderManagerPasswords, renderPView, pvTitle, onChange: onChangeTraining, resetPasswordsScreen(){ W.pin=null; W.list=null; W.error=null; W.msg=null; W.tried=false; W.loading=false; }, onClick, onInput, onKey, resetState(){ P.shifts=null; P.checkedSession=false; } };
+window.Portal = { navKey, navSave, navRestore, navHasParent, navRoot, onDrag, renderHome, renderSection, renderManagerRequests, renderManagerPasswords, renderPView, pvTitle, onChange: onChangeTraining, resetPasswordsScreen(){ W.pin=null; W.list=null; W.error=null; W.msg=null; W.tried=false; W.loading=false; }, onClick, onInput, onKey, resetState(){ P.shifts=null; P.checkedSession=false; } };
 })();

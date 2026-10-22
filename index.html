@@ -214,7 +214,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=113"></script>
+<script src="portal.js?v=114"></script>
 <script>
 (function(){
 "use strict";
@@ -598,9 +598,34 @@ async function init(){
 }
 function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
+/* ============== היסטוריית ניווט ("חזרה לעמוד קודם", 2026-10-22, סרגיי) ==============
+   בכל render מחשבים "מפתח מסך" (view + תת-מסך + מצב הפורטל). כשהמפתח משתנה - המסך הקודם נשמר במחסנית,
+   ו"חזרה" משחזרת אותו (בלי לפתוח מחדש טפסים שנשלחו; נתונים נטענים מחדש). */
+const NAV = { stack:[], cur:null, restoring:false };
+function navKey(){ const u = S.ui||{}; return [S.view, S.managerMode?1:0, u.step||"", u.teamId||"", u.mode||"", (window.Portal && window.Portal.navKey) ? window.Portal.navKey() : ""].join("|"); }
+function navSnap(k){ return {key:k, view:S.view, managerMode:S.managerMode, ui:Object.assign({}, S.ui||{}), portal:(window.Portal && window.Portal.navSave) ? window.Portal.navSave() : null}; }
+function navTrack(){
+  const k = navKey();
+  if(NAV.cur && NAV.cur.key!==k && !NAV.restoring){ NAV.stack.push(NAV.cur); if(NAV.stack.length>40) NAV.stack.shift(); }
+  NAV.restoring = false; NAV.cur = navSnap(k);
+}
+function navCanBack(){ return NAV.stack.some(x=>x.key!==navKey()) || !!(window.Portal && window.Portal.navHasParent && window.Portal.navHasParent(App)); }
+function navReset(){ NAV.stack = []; NAV.cur = null; }
+function navBack(){
+  const cur = navKey(); let s;
+  do { s = NAV.stack.pop(); } while(s && s.key===cur);
+  if(!s){ if(window.Portal && window.Portal.navRoot && window.Portal.navRoot()){ NAV.restoring = true; window.scrollTo(0,0); return render(); } return goHome(); }
+  S.view = s.view; S.managerMode = s.managerMode; S.ui = Object.assign({}, s.ui);
+  if("loaded" in S.ui) S.ui.loaded = false; // לטעון מחדש נתונים עדכניים
+  S.ui.shareOpen = false; S.ui.clearAsk = false;
+  if(s.portal && window.Portal && window.Portal.navRestore) window.Portal.navRestore(s.portal);
+  NAV.restoring = true; window.scrollTo(0,0); render();
+}
+
 /* ============== RENDER SHELL ============== */
 function render(){
   const app = document.getElementById("app");
+  navTrack();
   const portalCtx = !!window.Portal && !S.managerMode;
   document.getElementById("headerTitle").textContent = portalCtx ? "איזור אישי" : "הגשת אילוצים ובניית סידור עבודה";
   document.getElementById("headerSub").textContent =
@@ -620,7 +645,7 @@ function render(){
     S.view==="submit" ? "הגשת אילוצים" :
     S.view==="aggregate" ? "טבלה מרוכזת ובניית סידור" :
     S.view==="admin" ? "ניהול עובדים ומורשי גישה" : "";
-  document.getElementById("headerActions").innerHTML = S.view==="home" ? "" : `<button class="btn small secondary" data-action="go-home">🏠 בית</button>`;
+  document.getElementById("headerActions").innerHTML = S.view==="home" ? "" : `<button class="btn small secondary" data-action="nav-back">◀ חזרה</button> <button class="btn small secondary" data-action="go-home">🏠 בית</button>`;
   let html = "";
   if(S.view==="home") html = renderHome();
   else if(S.view==="managers") html = renderManagerMenu();
@@ -4156,6 +4181,7 @@ function onAppClick(e){
   const ui = S.ui;
 
   if(a==="go-home") return goHome();
+  if(a==="nav-back") return navBack();
   if(a.startsWith("portal-") && window.Portal){
     if(a==="portal-managers") S.managerMode = true;
     return window.Portal.onClick(App, a, el);
@@ -4547,7 +4573,7 @@ document.addEventListener("input", function(e){
 });
 
 /* מה שהפורטל (portal.js) צריך מהקוד הראשי */
-const App = { submitPeriodStart, SUPABASE_URL, SUPABASE_ANON_KEY, effQuota, logoStripHtml, S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
+const App = { navCanBack, navReset, submitPeriodStart, SUPABASE_URL, SUPABASE_ANON_KEY, effQuota, logoStripHtml, S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
 
 init();
 })();
