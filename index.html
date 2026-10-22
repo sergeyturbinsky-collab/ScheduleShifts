@@ -196,7 +196,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=106"></script>
+<script src="portal.js?v=107"></script>
 <script>
 (function(){
 "use strict";
@@ -3086,6 +3086,17 @@ async function confirmPin(){
 }
 
 /* --------- חילופי משמרות (2026-10-11): עותק מקורי של הסידור שפורסם, ותיעוד ההחלפות שבוצעו --------- */
+/* צפייה בסידור (2026-10-22, סרגיי: "כל מי שצופה בסידור יראה את זה כמו הקב"ט") - אותה טבלה שהקב"ט רואה בטבלה המרוכזת
+   (בוקר/ערב/לילה, גלילה הצידה בטלפון), במקום הפלט המתומצת להדפסה. למנהלים - גם שליחה בוואטסאפ/מייל. */
+function renderScheduleViewer(team){
+  const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
+  const isMoked = group.citySectors[0]==="מוקד";
+  const grid = !group.citySectors.length ? `<p class="muted">אין נתוני התקנים להצגה.</p>`
+    : (isMoked ? renderMokedTemplateGrid(group, dates, ui, "view") : renderTemplateGrid(group, dates, ui, "view"));
+  return `${ui.workerView ? "" : `<div class="row no-print" style="margin-bottom:8px;"><button class="btn ok" data-action="share-open">📤 שליחה בוואטסאפ / מייל</button></div>`}
+    <h3 style="margin:4px 0 8px;">${escapeHtml(group.label)} — ${fmtDateHeb(dates[0])} — ${fmtDateHeb(dates[dates.length-1])}</h3>
+    ${grid}`;
+}
 function renderOriginalPrint(team){
   const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
   if(ui.origAssignments===undefined){
@@ -3094,9 +3105,9 @@ function renderOriginalPrint(team){
       .then(r=>{ ui.origAssignments = r || []; render(); }).catch(()=>{ ui.origAssignments = []; render(); });
   }
   if(ui.origAssignments===null) return `<p class="muted">טוען...</p>`;
-  if(!ui.origAssignments.length) return `<p class="muted">אין עדיין החלפות בתקופה הזו — הסידור המקורי זהה לעדכני.</p>` + renderPrintView(team);
+  if(!ui.origAssignments.length) return `<p class="muted">אין עדיין החלפות בתקופה הזו — הסידור המקורי זהה לעדכני.</p>` + renderScheduleViewer(team);
   const saved = ui.assignments; ui.assignments = ui.origAssignments;
-  try{ return `<p class="muted no-print">מוצג הסידור כפי שפורסם במקור, לפני החלפות.</p>` + renderPrintView(team); } finally { ui.assignments = saved; }
+  try{ return `<p class="muted no-print">מוצג הסידור כפי שפורסם במקור, לפני החלפות.</p>` + renderScheduleViewer(team); } finally { ui.assignments = saved; }
 }
 function renderSwapHistoryBox(group, dates){
   const ui = S.ui;
@@ -3138,7 +3149,7 @@ function renderMgrScheduleView(){
         <div class="chip ${ui.showOriginal?"":"on"}" data-action="mgrview-current">הסידור העדכני</div>
         <div class="chip ${ui.showOriginal?"on":""}" data-action="mgrview-original">הסידור המקורי (לפני החלפות)</div>
       </div>
-      ${ui.showOriginal ? renderOriginalPrint(team) : renderPrintView(team)}
+      ${ui.showOriginal ? renderOriginalPrint(team) : renderScheduleViewer(team)}
       ${renderSwapHistoryBox(group, periodDates(ui.periodStart, team))}`
       : `<p class="muted" style="margin-top:12px;">הסידור לתקופה ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(periodDates(ui.periodStart, team).slice(-1)[0])} עדיין לא פורסם. הוא יופיע כאן מיד אחרי הפרסום.</p>`}
   </div>`;
