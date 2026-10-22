@@ -196,7 +196,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=105"></script>
+<script src="portal.js?v=106"></script>
 <script>
 (function(){
 "use strict";
@@ -765,7 +765,7 @@ function renderSubmitPeriod(){
     const dayStatusRow = `
       <div class="chip-opts" style="margin-top:6px;">
         <span class="muted" style="align-self:center;">יום שלם:</span>
-        ${DAY_STATUS_TYPES.map(t=>`<div class="chip ${sel.dayStatus===t?"on":""}"${readOnly?"":` data-action="toggle-daystatus" data-date="${d}" data-type="${t}"`}>${SHIFT_LABELS[t]}</div>`).join("")}
+        ${DAY_STATUS_TYPES.filter(t=>!guardBlocking || !["unavailable","other"].includes(t) || sel.dayStatus===t).map(t=>`<div class="chip ${sel.dayStatus===t?"on":""}"${readOnly?"":` data-action="toggle-daystatus" data-date="${d}" data-type="${t}"`}>${SHIFT_LABELS[t]}</div>`).join("")}
       </div>`;
     if(sel.dayStatus){
       return `
@@ -804,7 +804,11 @@ function renderSubmitPeriod(){
     </div>
     <div class="banner ${bannerCls}">${bannerTxt}</div>
     ${windowState.state==="notyet" ? `<p class="muted">ניתן עדיין לנווט בין תקופות, אך לא להגיש בזמן שהטופס עדיין לא נפתח.</p>` : `
-      ${(!readOnly && guardBlocking) ? `<p class="muted">סמנו רק את המשמרות שבהן אתם <b>לא</b> יכולים לעבוד (✕). כל משמרת שלא תסומן נחשבת זמינה.${maxBlocks?`<br><b>אפשר לחסום עד ${maxBlocks} משמרות בשבוע</b> — "לא יכול" / "אחר" ליום שלם נספר ככל המשמרות של אותו יום; חופשה, מילואים ומחלה לא נספרים.`:""}</p>
+      ${(!readOnly && guardBlocking) ? `<div class="note-box" style="border-color:#1f4e8c;background:#eef4fb;margin:8px 0;">
+          <b>📌 שימו לב — ${maxBlocks ? `אפשר לסמן רק ${maxBlocks} חסימות בשבוע` : "מסמנים רק חסימות"}.</b><br>
+          מסמנים (✕) רק את המשמרות שבהן <b>לא</b> יכולים לעבוד. <b>כל שאר המשמרות נחשבות פתוחות לשיבוץ</b> — אין צורך לסמן אותן.<br>
+          <span class="muted" style="font-size:.9em;">חופשה / מילואים / מחלה מסמנים ב"יום שלם" — הם לא נספרים בחסימות.</span></div>
+        ${ui.blockMsg ? `<p class="shortage">${escapeHtml(ui.blockMsg)}</p>` : ""}
         ${maxBlocks ? `<div class="banner ${Object.values(weekCounts).some(n=>n>maxBlocks)?"closed":"open"}">חסומות בתקופה: ${Object.keys(weekCounts).length ? Object.keys(weekCounts).sort().map(k=>`${Object.keys(weekCounts).length>1?`שבוע ${fmtDateHeb(k)}: `:""}${weekCounts[k]}/${maxBlocks}`).join(" · ") : `0/${maxBlocks}`}</div>` : ""}` : ""}
       ${(!readOnly && !isMokedTeam(team) && !guardBlocking) ? `<p class="muted">סמנו בכל יום את המשמרות שבהן אתם <b>כן</b> יכולים לעבוד. משמרת שלא תסומן תיחשב כלא זמינה עבורכם. ניתן גם לסמן טווח שעות מותאם נוסף שבו אתם זמינים.<br><b>חובה להתייחס לכל יום</b> — יום שלא מתאים לכם: "לא יכול" או "אחר" (אפשר לפרט בהערה).</p>` : ""}
       ${readOnly ? `<p class="muted">הטופס נעול לעריכה — מוצגת ההגשה האחרונה שנשמרה, לצפייה בלבד.</p>` : ""}
@@ -4129,6 +4133,18 @@ function onAppClick(e){
     ui.entries[d].dayStatus = null;
     const arr = ui.entries[d].types;
     const i = arr.indexOf(ty);
+    ui.blockMsg = null;
+    if(i<0){
+      // חיפה (מודל "מה לא יכול"): לא מאפשרים לסמן יותר מ-max_blocked_per_week חסימות בשבוע (2026-10-22, סרגיי)
+      const tm = teamById(S.identity && S.identity.teamId);
+      const mx = tm && guardBlockingAt(tm, ui.periodStart) ? tm.max_blocked_per_week : null;
+      if(mx){
+        arr.push(ty);
+        const wc = blockedCountsByWeek(tm, periodDates(ui.periodStart, tm), ui.entries);
+        if(Object.values(wc).some(n=>n > mx)){ arr.pop(); ui.blockMsg = `אפשר לסמן רק ${mx} חסימות בשבוע. כדי לחסום משמרת אחרת — בטלו קודם סימון אחר.`; }
+        return render();
+      }
+    }
     if(i>=0) arr.splice(i,1); else arr.push(ty);
     return render();
   }
