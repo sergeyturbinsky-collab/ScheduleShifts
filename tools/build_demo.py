@@ -28,7 +28,7 @@ def build():
     idx = must_sub(r'const SUPABASE_URL = "[^"]+";', f'const SUPABASE_URL = "{DEMO_URL}";', idx)
     idx = must_sub(r'const SUPABASE_ANON_KEY = "[^"]+";', f'const SUPABASE_ANON_KEY = "{DEMO_KEY}";', idx)
     if LIVE_URL in idx: raise SystemExit("live URL still present")
-    idx = must_sub(r'<script>if\("serviceWorker" in navigator\)[^\n]*</script>\n', '', idx)
+    idx = must_sub(r'<script>if\("serviceWorker" in navigator\).*?</script>\n', '', idx, flags=re.S)
     idx = must_sub(r'<link rel="manifest" href="manifest.webmanifest">\n', '', idx)
     idx = must_sub(r'<title>', '<title>דמו — ', idx)
     idx = must_sub(r'<body>', '<body>\n' + BANNER, idx)

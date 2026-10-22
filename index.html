@@ -12,7 +12,32 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="איזור אישי">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<script>if("serviceWorker" in navigator) window.addEventListener("load", ()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));</script>
+<script>if("serviceWorker" in navigator){ window.addEventListener("load", ()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+  /* גרסה חדשה של האתר נשמרה ברקע (ראו sw.js) - מציעים לרענן */
+  /* בודקים אם בזיכרון של הטלפון כבר נשמרה גרסה חדשה יותר מזו שמוצגת (לפי portal.js?v=N) */
+  async function checkNewVersion(){
+    try{
+      if(!window.caches || document.getElementById("newVerBar")) return;
+      const cur = (document.querySelector('script[src*="portal.js"]')||{}).src || "";
+      const curV = +((cur.match(/[?&]v=(\d+)/)||[])[1]||0);
+      const hit = await caches.match(new URL("./", location.href).href);
+      if(!hit) return;
+      const newV = +(((await hit.text()).match(/portal\.js\?v=(\d+)/)||[])[1]||0);
+      if(curV && newV > curV) showNewVersion();
+    }catch(e){}
+  }
+  window.addEventListener("load", ()=>setTimeout(checkNewVersion, 4000));
+  document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState==="visible") setTimeout(checkNewVersion, 2500); });
+  navigator.serviceWorker.addEventListener("message", ev=>{ if(ev.data && ev.data.type==="new-version") checkNewVersion(); });
+  function showNewVersion(){
+    if(document.getElementById("newVerBar")) return;
+    const b = document.createElement("div"); b.id = "newVerBar"; b.className = "no-print";
+    b.style.cssText = "position:fixed;bottom:70px;left:50%;transform:translateX(-50%);z-index:1000;background:#1f4e8c;color:#fff;padding:10px 16px;border-radius:12px;box-shadow:0 4px 14px rgba(0,0,0,.3);direction:rtl;font-weight:600;cursor:pointer;max-width:calc(100vw - 32px);text-align:center;";
+    b.textContent = "🔄 יש גרסה חדשה של המערכת — לחצו לעדכון";
+    b.onclick = ()=>location.reload();
+    document.body.appendChild(b);
+  }
+}</script>
 <style>
   :root{
     --bg:#eaf4ff; --card:#ffffff; --border:#cfe3f7; --text:#0f2942; --muted:#5c7a99;
@@ -206,7 +231,11 @@
   function check(){
     fetch(location.pathname + "?nc=" + Date.now(), {cache:"no-store"}).then(function(r){ return r.text(); }).then(function(t){
       var m = t.match(/portal\.js\?v=(\d+)/), cur = mine.match(/portal\.js\?v=(\d+)/);
-      if(m && cur && m[1] !== cur[1] && !document.querySelector("input:focus, textarea:focus, select:focus")) location.reload();
+      if(m && cur && m[1] !== cur[1]){
+        // באמצע הקלדה לא מרעננים - מציגים "יש גרסה חדשה" (2026-10-22)
+        if(document.querySelector("input:focus, textarea:focus, select:focus")){ if(window.showNewVersion) window.showNewVersion(); }
+        else location.reload();
+      }
     }).catch(function(){});
   }
   document.addEventListener("visibilitychange", function(){
@@ -216,7 +245,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=117"></script>
+<script src="portal.js?v=118"></script>
 <script>
 (function(){
 "use strict";
@@ -226,15 +255,51 @@ const SUPABASE_URL = "https://hcejwcxsqhpiufaakalj.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhjZWp3Y3hzcWhwaXVmYWFrYWxqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg3MTI0NjYsImV4cCI6MjEwNDI4ODQ2Nn0.Zd7DzSSRhjt_DsL2nq_OIbvFV3prmTtKvUjMbEZROQk";
 
 /* ============== API HELPERS ============== */
+/* ===== תקשורת (2026-10-22, סרגיי: "שהמערכת תרוץ יותר מהר ותיתקע פחות") =====
+   כל בקשה לשרת מוגבלת בזמן (15 שניות + זמן לפי גודל הקובץ שנשלח), כדי שקליטה חלשה לא תשאיר "טוען..." לנצח.
+   בקשת קריאה שנכשלה (או 5xx) מנוסה שוב אוטומטית; פעולת שמירה לא נשלחת פעמיים. כשל תקשורת מציג פס "בעיית תקשורת". */
+const RPC_WRITE_RE = /(create|save|send|add_|_add|delete|remove|resolve|take|request|clear|publish|login|logout|subscribe|unlock|seen|done|swap_cancel|grant|revoke|upsert|_set|set_|update|cancel|reset|_log$|^help_log|mark|issue|reply|claim|release|close|reopen|import|ack|finish|enroll|checkin|checkout)/i;
+async function netFetch(url, opts, retries){
+  const bodyLen = opts && typeof opts.body === "string" ? opts.body.length : 0;
+  const ms = 15000 + Math.round(bodyLen / 20); // ~50KB לשנייה לקבצים גדולים
+  for(let i=0;;i++){
+    const ctl = new AbortController(); const t = setTimeout(()=>ctl.abort(), ms);
+    try{
+      const res = await fetch(url, Object.assign({}, opts||{}, {signal: ctl.signal}));
+      clearTimeout(t);
+      if(res.status >= 500 && i < (retries||0)){ await new Promise(r=>setTimeout(r, 700*(i+1))); continue; }
+      netState(true); return res;
+    }catch(e){
+      clearTimeout(t);
+      if(i < (retries||0)){ await new Promise(r=>setTimeout(r, 700*(i+1))); continue; }
+      netState(false);
+      throw new Error(navigator.onLine===false ? "אין חיבור לאינטרנט" : "בעיית תקשורת — בדקו את הקליטה ונסו שוב");
+    }
+  }
+}
+function netState(ok){
+  let bar = document.getElementById("netBar");
+  if(ok){ if(bar) bar.remove(); return; }
+  if(!bar){
+    bar = document.createElement("div"); bar.id = "netBar"; bar.className = "no-print";
+    bar.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:1000;background:#b42318;color:#fff;padding:8px 12px;text-align:center;font-weight:600;direction:rtl;box-shadow:0 2px 8px rgba(0,0,0,.25);";
+    bar.innerHTML = `⚠ <span id="netBarTxt"></span> <button type="button" style="margin-inline-start:10px;background:#fff;color:#b42318;border:none;border-radius:6px;padding:4px 12px;font-weight:700;cursor:pointer;">נסו שוב</button>`;
+    bar.querySelector("button").onclick = ()=>location.reload();
+    document.body.appendChild(bar);
+  }
+  document.getElementById("netBarTxt").textContent = navigator.onLine===false ? "אין חיבור לאינטרנט" : "בעיית תקשורת עם השרת";
+}
+window.addEventListener("offline", ()=>netState(false));
+window.addEventListener("online", ()=>{ netState(true); try{ render(); }catch(e){} });
 async function apiGet(table, query){
   const url = `${SUPABASE_URL}/rest/v1/${table}?${query}`;
-  const res = await fetch(url, {headers:{apikey:SUPABASE_ANON_KEY, Authorization:`Bearer ${SUPABASE_ANON_KEY}`}});
+  const res = await netFetch(url, {headers:{apikey:SUPABASE_ANON_KEY, Authorization:`Bearer ${SUPABASE_ANON_KEY}`}}, 1);
   if(!res.ok) throw new Error(await res.text());
   return res.json();
 }
 async function apiRpc(fn, body){
   const url = `${SUPABASE_URL}/rest/v1/rpc/${fn}`;
-  const res = await fetch(url, {method:"POST", headers:{apikey:SUPABASE_ANON_KEY, Authorization:`Bearer ${SUPABASE_ANON_KEY}`, "Content-Type":"application/json"}, body:JSON.stringify(body||{})});
+  const res = await netFetch(url, {method:"POST", headers:{apikey:SUPABASE_ANON_KEY, Authorization:`Bearer ${SUPABASE_ANON_KEY}`, "Content-Type":"application/json"}, body:JSON.stringify(body||{})}, RPC_WRITE_RE.test(fn) ? 0 : 1);
   const txt = await res.text();
   let data; try{ data = txt? JSON.parse(txt) : null; }catch(e){ data = txt; }
   if(!res.ok){ const msg = (data && data.message) ? data.message : txt; throw new Error(msg||"שגיאה"); }
@@ -242,7 +307,7 @@ async function apiRpc(fn, body){
 }
 async function apiInsert(table, row){
   const url = `${SUPABASE_URL}/rest/v1/${table}`;
-  const res = await fetch(url, {method:"POST", headers:{apikey:SUPABASE_ANON_KEY, Authorization:`Bearer ${SUPABASE_ANON_KEY}`, "Content-Type":"application/json", Prefer:"return=representation,resolution=merge-duplicates"}, body:JSON.stringify(row)});
+  const res = await netFetch(url, {method:"POST", headers:{apikey:SUPABASE_ANON_KEY, Authorization:`Bearer ${SUPABASE_ANON_KEY}`, "Content-Type":"application/json", Prefer:"return=representation,resolution=merge-duplicates"}, body:JSON.stringify(row)}, 0);
   const txt = await res.text();
   let data; try{ data = txt? JSON.parse(txt) : null; }catch(e){ data = txt; }
   if(!res.ok) throw new Error((data&&data.message)||txt);
@@ -251,7 +316,7 @@ async function apiInsert(table, row){
 async function apiUpsertSubmission(row){
   // upsert on worker_id+period_start
   const url = `${SUPABASE_URL}/rest/v1/constraint_submissions?on_conflict=worker_id,period_start`;
-  const res = await fetch(url, {method:"POST", headers:{apikey:SUPABASE_ANON_KEY, Authorization:`Bearer ${SUPABASE_ANON_KEY}`, "Content-Type":"application/json", Prefer:"return=representation,resolution=merge-duplicates"}, body:JSON.stringify(row)});
+  const res = await netFetch(url, {method:"POST", headers:{apikey:SUPABASE_ANON_KEY, Authorization:`Bearer ${SUPABASE_ANON_KEY}`, "Content-Type":"application/json", Prefer:"return=representation,resolution=merge-duplicates"}, body:JSON.stringify(row)}, 0);
   const txt = await res.text();
   let data; try{ data = txt? JSON.parse(txt) : null; }catch(e){ data = txt; }
   if(!res.ok) throw new Error((data&&data.message)||txt);
@@ -259,7 +324,7 @@ async function apiUpsertSubmission(row){
 }
 async function apiDelete(table, query){
   const url = `${SUPABASE_URL}/rest/v1/${table}?${query}`;
-  const res = await fetch(url, {method:"DELETE", headers:{apikey:SUPABASE_ANON_KEY, Authorization:`Bearer ${SUPABASE_ANON_KEY}`}});
+  const res = await netFetch(url, {method:"DELETE", headers:{apikey:SUPABASE_ANON_KEY, Authorization:`Bearer ${SUPABASE_ANON_KEY}`}}, 0);
   if(!res.ok) throw new Error(await res.text());
 }
 
@@ -584,19 +649,28 @@ function pickerTiles(){
 }
 
 /* ============== INIT ============== */
+/* (2026-10-22) הגדרות הצוותים והתקנים נשמרות בטלפון: האפליקציה עולה מיד מהעותק השמור ומתעדכנת ברקע,
+   וגם בלי קליטה אפשר לראות את מה שנשמר */
+const CFG_KEY = "cst_cfg_cache";
 async function init(){
+  let cached = null;
+  try{ cached = JSON.parse(localStorage.getItem(CFG_KEY) || "null"); }catch(e){}
+  const hasCache = !!(cached && Array.isArray(cached.teams) && Array.isArray(cached.quotas));
+  if(hasCache){ S.teams = cached.teams; S.quotas = cached.quotas; render(); }
   try{
     const [teams, quotas] = await Promise.all([
       apiGet("constraint_teams","select=*&order=sort_order"),
       apiGet("shift_quotas","select=*&order=sector,sort_order")
     ]);
+    const changed = !hasCache || JSON.stringify(teams) !== JSON.stringify(cached.teams) || JSON.stringify(quotas) !== JSON.stringify(cached.quotas);
     S.teams = teams;
     S.quotas = quotas;
+    try{ localStorage.setItem(CFG_KEY, JSON.stringify({teams, quotas, at: Date.now()})); }catch(e){}
+    if(changed) render();
   }catch(e){
-    document.getElementById("app").innerHTML = `<div class="card"><p class="shortage">שגיאה בטעינת הנתונים: ${escapeHtml(e.message)}</p></div>`;
-    return;
+    if(hasCache) return; // ממשיכים עם העותק השמור; פס "בעיית תקשורת" כבר מוצג
+    document.getElementById("app").innerHTML = `<div class="card"><p class="shortage">שגיאה בטעינת הנתונים: ${escapeHtml(e.message)}</p><button class="btn" onclick="location.reload()">🔄 נסו שוב</button></div>`;
   }
-  render();
 }
 function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
@@ -984,7 +1058,7 @@ async function saveSubmission(){
     });
     if(rows.length){
       const url = `${SUPABASE_URL}/rest/v1/constraint_entries`;
-      const res = await fetch(url,{method:"POST",headers:{apikey:SUPABASE_ANON_KEY,Authorization:`Bearer ${SUPABASE_ANON_KEY}`,"Content-Type":"application/json",Prefer:"return=minimal"},body:JSON.stringify(rows)});
+      const res = await netFetch(url,{method:"POST",headers:{apikey:SUPABASE_ANON_KEY,Authorization:`Bearer ${SUPABASE_ANON_KEY}`,"Content-Type":"application/json",Prefer:"return=minimal"},body:JSON.stringify(rows)}, 0);
       if(!res.ok) throw new Error(await res.text());
     }
     ui.saveOk = true; ui.saveMsg = "האילוצים נשמרו בהצלחה.";
@@ -4601,7 +4675,7 @@ document.addEventListener("input", function(e){
 });
 
 /* מה שהפורטל (portal.js) צריך מהקוד הראשי */
-const App = { navCanBack, navReset, submitPeriodStart, SUPABASE_URL, SUPABASE_ANON_KEY, effQuota, logoStripHtml, S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
+const App = { netFetch, navCanBack, navReset, submitPeriodStart, SUPABASE_URL, SUPABASE_ANON_KEY, effQuota, logoStripHtml, S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
 
 init();
 })();

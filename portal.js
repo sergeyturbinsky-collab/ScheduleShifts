@@ -115,6 +115,7 @@ function hoursOf(App, a){
 }
 
 async function loadShifts(App, session){
+  if(HB.pending) return; // מסך הבית נטען כרגע בפנייה אחת (worker_home_bundle)
   const from = App.fmtDate(App.addDays(new Date(), -1));
   const to = App.fmtDate(App.addDays(new Date(), 35));
   try{
@@ -134,6 +135,7 @@ async function loadShifts(App, session){
 const SW = { open:false, list:null, board:null, sel:null, busy:false, msg:null, error:null, confirm:null };
 function swKey(a){ return `${a.sector}|${a.entry_date}|${a.shift_type}`; }
 function loadSwaps(App, session){
+  if(HB.pending) return;
   SW.list = [];
   App.apiRpc("worker_swap_board", {p_token: session.token}).then(r=>{ SW.board = r || {}; SW.list = (r && r.mine) || []; App.render(); }).catch(()=>{});
 }
@@ -218,6 +220,7 @@ function renderMyShifts(App, session){
 const T = { data:null };
 
 async function loadTasks(App, session){
+  if(HB.pending) return;
   T.data = {loading:true};
   try{
     const team = App.teamById(session.team_id);
@@ -400,7 +403,7 @@ function pushGateHtml(App, name, N, act){
    מוצג רק כשיש משימות; מתרענן בכל כניסה למסך הבית (ובקבלת פוש - App.render מהרענון הכללי). */
 const ST = { list:null, loading:false, at:0 };
 function loadWorkerSchedTasks(App, session){
-  if(!ST.loading && (!ST.list || Date.now()-ST.at > 60000)){
+  if(!HB.pending && !ST.loading && (!ST.list || Date.now()-ST.at > 60000)){
     ST.loading = true;
     App.apiRpc("worker_sched_tasks", {p_token: session.token})
       .then(d=>{ ST.list = d||[]; ST.at = Date.now(); ST.loading = false; App.render(); })
@@ -410,9 +413,51 @@ function loadWorkerSchedTasks(App, session){
 }
 /* (2026-10-22, סרגיי) המשימות מוצגות בתוך "המשמרות שלי" - עובד שכל השבוע שלו משימה (למשל מוס"ח) ראה טבלה ריקה */
 function renderWorkerSchedTasks(App, session){ loadWorkerSchedTasks(App, session); return ""; }
+/* מסך הבית של העובד מהר יותר (2026-10-22, סרגיי: "שהמערכת תרוץ יותר מהר ותיתקע פחות"):
+   1) כל הנתונים של מסך הבית בפנייה אחת לשרת (worker_home_bundle) במקום 6-8 פניות.
+   2) הנתונים מהפעם הקודמת נשמרים בטלפון ומוצגים מיד, ומתעדכנים ברקע תוך שנייה-שתיים.
+   אם הפונקציה לא זמינה - חוזרים לטעינה הרגילה (כל חלק בנפרד). */
+const HB = { pending:false, broken:false, fresh:false };
+function hbKey(session){ return "cst_home_cache_" + (session.worker_id || session.name || ""); }
+function hbApply(App, d){
+  P.shifts = d.shifts || []; P.shiftsError = null;
+  ST.list = d.sched_tasks || []; ST.at = Date.now();
+  SW.board = d.swaps || {}; SW.list = (d.swaps && d.swaps.mine) || [];
+  if(d.tasks) T.data = Object.assign({periodStart: d.periodStart}, d.tasks);
+  F.data = {posts: d.feed || []};
+}
+function hbFromCache(App, session){
+  try{ const c = JSON.parse(localStorage.getItem(hbKey(session)) || "null");
+    if(c && Date.now() - c.at < 7*86400000){ hbApply(App, c); return true; } }catch(e){}
+  return false;
+}
+function hbClear(session){ try{ if(session) localStorage.removeItem(hbKey(session)); }catch(e){} }
+async function hbLoad(App, session){
+  if(HB.pending) return; HB.pending = true; P.checkedSession = true;
+  try{
+    const team = App.teamById(session.team_id);
+    let periodStart = null; try{ periodStart = team ? await App.submitPeriodStart(team) : null; }catch(e){}
+    const from = App.fmtDate(App.addDays(new Date(), -1)), to = App.fmtDate(App.addDays(new Date(), 35));
+    const d = await App.apiRpc("worker_home_bundle", {p_token: session.token, p_from: from, p_to: to, p_period_start: periodStart});
+    if(!d || !d.info){ HB.pending = false; hbClear(session); saveSession(App, null); P.shifts = null; T.data = null; F.data = null; return App.render(); }
+    const info = d.info;
+    if(!!info.schedule_editor !== !!session.schedule_editor){ const cur = loadSession(App); if(cur) saveSession(App, Object.assign({}, cur, {schedule_editor: !!info.schedule_editor})); }
+    d.periodStart = periodStart;
+    hbApply(App, d); HB.fresh = true;
+    try{ localStorage.setItem(hbKey(session), JSON.stringify(Object.assign({at: Date.now()}, d))); }catch(e){}
+  }catch(e){
+    if(/session/i.test(e.message)){ HB.pending = false; hbClear(session); saveSession(App, null); P.shifts = null; return App.render(); }
+    HB.broken = true; P.checkedSession = false; // טעינה רגילה (כל חלק בנפרד); נתונים שמורים שכבר מוצגים נשארים
+  }
+  HB.pending = false; App.render();
+}
 function renderWorkerHome(App, session){
   const esc = App.escapeHtml;
   const gate = pushGate(App, session); if(gate) return gate;
+  if(!HB.broken && !HB.pending && (P.shifts===null || !HB.fresh)){
+    if(P.shifts===null) hbFromCache(App, session);
+    hbLoad(App, session);
+  }
   if(!P.checkedSession){
     P.checkedSession = true;
     App.apiRpc("worker_session_info", {p_token: session.token}).then(info=>{
@@ -454,7 +499,7 @@ function renderWorkerHome(App, session){
   <div class="portal-cols">
     <div class="portal-col-main">
       <div class="card">
-        <div class="flexbar" style="justify-content:space-between;"><h3 style="margin:0;">המשמרות שלי</h3>
+        <div class="flexbar" style="justify-content:space-between;"><h3 style="margin:0;">המשמרות שלי${(HB.pending && P.shifts!==null) ? ` <span class="muted" style="font-size:.6em;font-weight:normal;">⟳ מתעדכן…</span>` : ""}</h3>
           ${(P.shifts && P.shifts.length) ? `<button class="btn small" data-action="portal-swap-open">🔁 מבקש חילוף</button>` : ""}</div>
         <div style="height:8px;"></div>
         ${renderMyShifts(App, session)}
@@ -1927,6 +1972,7 @@ function controlsForMainScreen(list){
   return list.filter(c=> !c.read_at || c.id===latest.id);
 }
 async function loadFeed(App, session){
+  if(HB.pending) return;
   F.data = {loading:true};
   try{ F.data = {posts: await App.apiRpc("worker_feed", {p_token: session.token}) || []}; }
   catch(e){ F.data = {posts:[], error:"שגיאה בטעינת העדכונים"}; }
@@ -4218,7 +4264,7 @@ async function trnAction(App, a, el){
   }catch(e){ PV.busy = false; PV.error = e.message; PV.msg = null; App.render(); }
 }
 async function filesFn(App, body){
-  const res = await fetch(App.SUPABASE_URL + "/functions/v1/portal-files", {method:"POST",
+  const res = await (App.netFetch || fetch)(App.SUPABASE_URL + "/functions/v1/portal-files", {method:"POST",
     headers:{"Content-Type":"application/json", apikey:App.SUPABASE_ANON_KEY, Authorization:"Bearer "+App.SUPABASE_ANON_KEY}, body:JSON.stringify(body)});
   const j = await res.json().catch(()=>({}));
   if(!res.ok) throw new Error(j.error || "שגיאה");
@@ -4951,6 +4997,7 @@ function onClick(App, a, el){
   if(a==="portal-logout"){
     if(App.navReset) App.navReset();
     const s = loadSession(App);
+    hbClear(s); HB.fresh = false;
     if(s) logoutServer(App, "worker", s.token);
     clearMgrMode(App);
     saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null; T.data = null; F.data = null; N.state = null; SW.list = null; SW.open = false; SW.msg = null; ST.list = null; ST.at = 0;
