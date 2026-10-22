@@ -3594,7 +3594,7 @@ function renderLockCard(App, ms){
 /* ---------- עמודי משנה (view "pview") ---------- */
 const PV_TITLES = { "login-status":"סטטוס מחוברים", "ar-list":"דוחות פעולה", "ar-view":"דוח פעולה", "equip-workers":"ציוד אישי לעובדים", "equip-edit":"ציוד אישי", "areq-list":"בקשות מנהלתיות", "areq-view":"בקשה מנהלתית", "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
-  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה", "cal":"יומן משותף" };
+  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "swap-hist":"היסטוריית החלפות", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה", "cal":"יומן משותף" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
 function pvGo(App, page, args, push){
   if(push !== false && App.S.view==="pview" && PV.page) PV.stack.push({page:PV.page, args:PV.args});
@@ -3604,6 +3604,7 @@ function pvGo(App, page, args, push){
   if(page==="trn-quiz-new" || page==="trn-quiz-edit") PV.quiz = null;
   PV.delAsk = false;
   if(page==="swap-mgr") PV.swap = null;
+  if(page==="swap-hist") PV.swapHist = null;
   if(page==="login-status"){ LS.data = null; LS.filter = "all"; }
   App.S.view = "pview"; App.S.ui = {};
   App.render();
@@ -3862,9 +3863,25 @@ function renderPView(App){
       <div class="field"><label>סיכום</label><textarea id="ctlSummary" rows="10" style="width:100%;">${esc(f.summary||"")}</textarea></div>
       <button class="btn ok" data-action="portal-ctl-send" ${PV.busy?"disabled":""}>שלח למאבטח ולקב"ט שלו</button>`);
   }
+  if(pg==="swap-hist"){
+    const H = PV.swapHist || (PV.swapHist = {list:null});
+    if(H.list===null){ H.list = "loading";
+      const secs = a.id ? App.sectorGroupForTeam(App.teamById(a.id)).citySectors : [].concat(...mgrScopeGroups(App, ms).map(g=>App.sectorGroupForTeam(App.teamById(g.id)).citySectors));
+      App.apiRpc("swap_history", {p_sectors: secs, p_from: App.fmtDate(App.addDays(new Date(), -60)), p_to: App.fmtDate(App.addDays(new Date(), 90))})
+        .then(r=>{ H.list = (r||[]).slice().sort((x,y)=>String(y.entry_date).localeCompare(String(x.entry_date))); App.render(); }).catch(()=>{ H.list = []; App.render(); }); }
+    if(H.list==="loading") return loading();
+    return wrap(`<h2>📜 היסטוריית החלפות</h2><p class="muted" style="margin-top:-6px;">החלפות שבוצעו בחודשיים האחרונים ובסידורים הבאים, מהחדש לישן.</p>
+      ${H.list.length ? `<div class="portal-tasks">${H.list.map(r=>`<div class="portal-task"><span class="portal-task-icon">✔</span>
+        <span style="flex:1;">${App.fmtDateHeb(r.entry_date)} · ${esc(App.SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${esc(r.sector)}: ${esc(r.from_name)} ← <b>${esc(r.to_name||"")}</b>
+        <span class="muted" style="font-size:.85em;display:block;">${r.by_kind==="m"?"סומן ע\"י "+esc(r.by_name||""):"לקח בעצמו"}</span></span></div>`).join("")}</div>` : `<p class="muted">אין החלפות בתקופה הזו.</p>`}`);
+  }
   if(pg==="swap-mgr"){
     const S2 = PV.swap || (PV.swap = {teamId: a.id || null, sector:null, rows:null, sel:null, list:null});
-    if(S2.list===null){ S2.list = []; App.apiRpc("mgr_swap_list", {p_token:tok}).then(r=>{ S2.list = r||[]; App.render(); }).catch(()=>{}); }
+    // הרשימה מתרעננת בכל כניסה וכל 30 שניות (2026-10-22: בקשה של צגה לא הופיעה כי הוצגה רשימה ישנה)
+    if(S2.list===null) S2.list = [];
+    if(!S2.listBusy && (!S2.listAt || Date.now()-S2.listAt > 30000)){ S2.listBusy = true;
+      App.apiRpc("mgr_swap_list", {p_token:tok}).then(r=>{ S2.list = r||[]; S2.listAt = Date.now(); S2.listBusy = false; App.render(); })
+        .catch(()=>{ S2.listAt = Date.now(); S2.listBusy = false; }); }
     const openHtml = S2.list.length ? `<h3 style="margin-top:4px;">בקשות חילוף פתוחות</h3><div class="portal-tasks">${S2.list.map(r=>`<div class="portal-task">
         <span class="portal-task-icon">🔁</span>
         <span style="flex:1;"><b>${esc(r.worker_name)}</b> — ${App.fmtDateHeb(r.entry_date)} · ${esc(App.SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${esc(r.sector)}
@@ -3880,7 +3897,8 @@ function renderPView(App){
     if(S2.hist===undefined){ S2.hist = null; const today = App.fmtDate(new Date());
       const secs = S2.teamId ? App.sectorGroupForTeam(App.teamById(S2.teamId)).citySectors : [].concat(...mgrScopeGroups(App, ms).map(g=>App.sectorGroupForTeam(App.teamById(g.id)).citySectors));
       App.apiRpc("swap_history", {p_sectors: secs, p_from: App.fmtDate(App.addDays(new Date(), -14)), p_to: App.fmtDate(App.addDays(new Date(), 90))}).then(r=>{ S2.hist = r||[]; App.render(); }).catch(()=>{ S2.hist = []; }); }
-    const histHtml = (S2.hist && S2.hist.length) ? `<h3 style="margin-top:18px;">תיעוד החלפות</h3><div class="muted" style="font-size:.9em;line-height:1.9;">${S2.hist.map(r=>`<div>✔ ${App.fmtDateHeb(r.entry_date)} · ${esc(App.SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${esc(r.sector)}: ${esc(r.from_name)} ← <b>${esc(r.to_name||"")}</b> <span style="font-size:.85em;">(${r.by_kind==="m"?"סומן ע\"י "+esc(r.by_name||""):"לקח בעצמו"})</span></div>`).join("")}</div>` : "";
+    // (2026-10-22, סרגיי) ההיסטוריה לא מוצגת ישר - לחצן שמעביר לעמוד שלה
+    const histHtml = (S2.hist && S2.hist.length) ? `<div style="margin-top:16px;"><button class="btn secondary" data-action="portal-pv" data-page="swap-hist"${S2.teamId?` data-id="${S2.teamId}"`:""}>📜 היסטוריית החלפות (${S2.hist.length})</button></div>` : "";
     if(!S2.teamId){
       const groups = mgrScopeGroups(App, ms);
       return wrap(`<h2>🔁 מבקש חילוף</h2>${msgs}${openHtml}<p class="muted">לפתיחת בקשה חדשה — בחרו קבוצת גזרות:</p>
@@ -4779,6 +4797,7 @@ function navRestore(s){
   AREQ.open = false; AREQ.view = s.areqView; AREQ.vfiles = null; AREQ.mfiles = null;
   M.tile = s.mTile; M.code = null; M.list = null; M.error = null; M.msg = null;
   SW.open = false;
+  PV.swap = null; PV.swapHist = null; // חזרה לעמוד חילופים - טוענים מחדש, לא רשימה ישנה
 }
 function navHasParent(App){ return App.S.view==="home" && !!MHS.section && !!loadMgr(App); }
 function navRoot(){ if(!MHS.section) return false; MHS.section = ""; try{ sessionStorage.setItem("cst_mh_section", ""); }catch(e){} return true; }

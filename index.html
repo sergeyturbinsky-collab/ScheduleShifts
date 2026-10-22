@@ -254,7 +254,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=127"></script>
+<script src="portal.js?v=128"></script>
 <script>
 (function(){
 "use strict";
@@ -1147,7 +1147,7 @@ function renderAggregate(){
   <div class="card">
     <span class="backlink" data-action="agg-back">${(isSessionPin() && !ui.mgrPick) ? "◀ חזרה" : "◀ בחירת צוות אחר"}</span>
     <h2>טבלה מרוכזת — ${escapeHtml(group.label)}</h2>
-    ${renderSwapHistoryBox(group, dates)}
+    ${renderSwapHistoryBox(group, dates, team.id)}
     ${streakWarningsHtml(group, dates)}
     ${group.pooledNote? `<div class="note-box">שים לב: כמה תת-גזרות/קב"טים חולקים כאן את אותה בריכת עובדים זמינים (אין הפרדה בהגשת האילוצים ברמת תת-הגזרה), כך שהזמינות מחושבת עבור כל תת-הגזרות/הצוותים יחד.</div>`:""}
     <div class="flexbar">
@@ -3417,7 +3417,9 @@ function renderOriginalPrint(team){
   const saved = ui.assignments; ui.assignments = ui.origAssignments;
   try{ return `<p class="muted no-print">מוצג הסידור כפי שפורסם במקור, לפני החלפות.</p>` + renderScheduleViewer(team); } finally { ui.assignments = saved; }
 }
-function renderSwapHistoryBox(group, dates){
+/* חילופים במסך הסידור (2026-10-22, סרגיי): בקשות חילוף פתוחות של הגזרה מוצגות למעלה (עם מעבר לטיפול),
+   וההיסטוריה של ההחלפות - רק בלחיצה על לחצן, לא פתוחה ישר במסך. */
+function renderSwapHistoryBox(group, dates, teamId){
   const ui = S.ui;
   const key = group.citySectors.join(",") + "|" + dates[0];
   if(ui.swapHistKey !== key){
@@ -3425,9 +3427,23 @@ function renderSwapHistoryBox(group, dates){
     apiRpc("swap_history", {p_sectors: group.citySectors, p_from: dates[0], p_to: dates[dates.length-1]})
       .then(r=>{ ui.swapHist = r || []; render(); }).catch(()=>{ ui.swapHist = []; });
   }
-  if(!ui.swapHist || !ui.swapHist.length) return "";
-  return `<div class="card no-print" style="margin-top:12px;"><h3 style="margin-top:0;">🔁 תיעוד החלפות בתקופה</h3>
-    <div class="muted" style="font-size:.9em;line-height:1.9;">${ui.swapHist.map(r=>`<div>✔ ${fmtDateHeb(r.entry_date)} · ${escapeHtml(SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${escapeHtml(r.sector)}: ${escapeHtml(r.from_name)} ← <b>${escapeHtml(r.to_name||"")}</b> <span style="font-size:.85em;">(${r.by_kind==="m"?"סומן ע״י "+escapeHtml(r.by_name||""):"לקח בעצמו"})</span></div>`).join("")}</div></div>`;
+  // בקשות פתוחות - רק למנהל מחובר (לפי הסשן שלו), מתרענן כל 30 שניות
+  const tok = (typeof S.pin==="string" && S.pin.startsWith("mgr:")) ? S.pin.slice(4) : null;
+  if(tok && !ui.swapOpenBusy && (!ui.swapOpenAt || Date.now()-ui.swapOpenAt > 30000)){
+    ui.swapOpenBusy = true;
+    apiRpc("mgr_swap_list", {p_token: tok}).then(r=>{ ui.swapOpen = r || []; ui.swapOpenAt = Date.now(); ui.swapOpenBusy = false; render(); })
+      .catch(()=>{ ui.swapOpenAt = Date.now(); ui.swapOpenBusy = false; });
+  }
+  const open = (ui.swapOpen||[]).filter(r=>group.citySectors.includes(r.sector));
+  const hist = ui.swapHist || [];
+  const openHtml = open.length ? `<div class="note-box" style="border-color:#e8590c;background:#fff4e6;margin:0 0 8px;">
+      <div class="flexbar" style="justify-content:space-between;gap:6px;"><b>🔁 בקשות חילוף פתוחות (${open.length})</b>
+        <button class="btn small" data-action="portal-pv" data-page="swap-mgr"${teamId?` data-id="${teamId}"`:""}>לטיפול בבקשות</button></div>
+      ${open.map(r=>`<div style="margin-top:4px;">• <b>${escapeHtml(r.worker_name)}</b> — ${fmtDateHeb(r.entry_date)} · ${escapeHtml(SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${escapeHtml(r.sector)}${r.note?` <span class="muted">(${escapeHtml(r.note)})</span>`:""}</div>`).join("")}</div>` : "";
+  const histBtn = hist.length ? `<button class="btn small secondary" data-action="swap-hist-toggle">${ui.showSwapHist?"▲ הסתר היסטוריית החלפות":`📜 היסטוריית החלפות בתקופה (${hist.length})`}</button>` : "";
+  const histHtml = (ui.showSwapHist && hist.length) ? `<div class="muted" style="font-size:.9em;line-height:1.9;margin-top:6px;">${hist.map(r=>`<div>✔ ${fmtDateHeb(r.entry_date)} · ${escapeHtml(SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${escapeHtml(r.sector)}: ${escapeHtml(r.from_name)} ← <b>${escapeHtml(r.to_name||"")}</b> <span style="font-size:.85em;">(${r.by_kind==="m"?"סומן ע״י "+escapeHtml(r.by_name||""):"לקח בעצמו"})</span></div>`).join("")}</div>` : "";
+  if(!openHtml && !histBtn) return "";
+  return `<div class="no-print" style="margin:8px 0;">${openHtml}${histBtn}${histHtml}</div>`;
 }
 
 /* --------- צפייה בלבד בסידור עבודה - למנהלים בלי הרשאת עריכה (2026-10-11): אותו פלט כמו "הפקת פלט
@@ -3458,7 +3474,7 @@ function renderMgrScheduleView(){
         <div class="chip ${ui.showOriginal?"on":""}" data-action="mgrview-original">הסידור המקורי (לפני החלפות)</div>
       </div>
       ${ui.showOriginal ? renderOriginalPrint(team) : renderScheduleViewer(team)}
-      ${renderSwapHistoryBox(group, periodDates(ui.periodStart, team))}`
+      ${renderSwapHistoryBox(group, periodDates(ui.periodStart, team), team.id)}`
       : `<p class="muted" style="margin-top:12px;">הסידור לתקופה ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(periodDates(ui.periodStart, team).slice(-1)[0])} עדיין לא פורסם. הוא יופיע כאן מיד אחרי הפרסום.</p>`}
   </div>`;
 }
@@ -4561,6 +4577,7 @@ function onAppClick(e){
   if(a==="agg-reload"){ ui.loaded = false; ui.loadError = null; return render(); }
   if(a==="agg-publish-force"){ ui.pubConfirm = null; return setSchedulePublished(true, true); }
   if(a==="agg-publish-cancel"){ ui.pubConfirm = null; return render(); }
+  if(a==="swap-hist-toggle"){ ui.showSwapHist = !ui.showSwapHist; return render(); }
   if(a==="agg-avail-toggle"){ ui.showAvailByDay = !ui.showAvailByDay; return render(); }
   if(a==="tmpl-other-sectors-toggle"){ ui.tmplShowOtherSectors = !ui.tmplShowOtherSectors; return render(); }
   if(a==="tmpl-add-worker-toggle"){ ui.tmplAddWorkerOpen = !ui.tmplAddWorkerOpen; ui.tmplAddWorkerMsg=null; return render(); }
