@@ -3314,6 +3314,33 @@ function renderLoginStatus(App, ms, wrap, loading){
     ${!all.filter(show).length ? `<p class="muted">אין משתמשים בסינון הזה.</p>` : ""}`);
 }
 
+/* ================================================================
+   עובדים נעולים (2026-10-22, סרגיי): קב"ט/סרגיי רואים במסך הבית מי ננעל אחרי 3 טעויות בקוד ופותחים לו את הנעילה
+   בלחיצה (admin_unlock_worker_code עם הסשן). כשעובד ננעל - הקב"ט מקבל התראה. השרת: mgr_locked_workers.
+   ================================================================ */
+const LK = { list:null, at:0, loading:false, tok:null, msg:null };
+function lkLoad(App, ms, force){
+  if(LK.tok !== ms.token){ LK.tok = ms.token; LK.list = null; LK.at = 0; }
+  if(LK.loading || (!force && LK.list && Date.now()-LK.at < 30000)) return;
+  LK.loading = true;
+  App.apiRpc("mgr_locked_workers", {p_token:ms.token}).then(d=>{ LK.list = d||[]; LK.at = Date.now(); LK.loading = false; App.render(); })
+    .catch(()=>{ LK.loading = false; LK.at = Date.now(); });
+}
+function renderLockCard(App, ms){
+  lkLoad(App, ms);
+  const esc = App.escapeHtml, list = LK.list || [];
+  if(!list.length) return LK.msg ? `<div class="card"><p style="color:#1b7f3b;font-weight:600;margin:0;">${esc(LK.msg)}</p></div>` : "";
+  const mins = iso=>Math.max(1, Math.ceil((new Date(iso).getTime()-Date.now())/60000));
+  return `<div class="card" style="border:2px solid #f3c4c0;background:#fff7f6;">
+    <h3 style="margin-top:0;">🔒 עובדים נעולים (${list.length})</h3>
+    <p class="muted" style="margin-top:-6px;font-size:.88em;">טעו בקוד האישי 3 פעמים — הכניסה שלהם נעולה ל-30 דקות. אפשר לפתוח עכשיו:</p>
+    ${list.map(w=>`<div class="flexbar" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);gap:8px;">
+      <span><b>${esc(w.name)}</b> <span class="muted" style="font-size:.85em;">${esc(w.team||"")} · עוד ${mins(w.locked_until)} דק׳</span></span>
+      <button class="btn small ok" data-action="portal-lk-unlock" data-id="${w.id}" data-name="${esc(w.name)}">🔓 פתח נעילה</button></div>`).join("")}
+    ${LK.msg ? `<p style="color:#1b7f3b;font-weight:600;">${esc(LK.msg)}</p>` : ""}
+  </div>`;
+}
+
 /* ---------- עמודי משנה (view "pview") ---------- */
 const PV_TITLES = { "login-status":"סטטוס התחברות", "ar-list":"דוחות פעולה", "ar-view":"דוח פעולה", "equip-workers":"ציוד אישי לעובדים", "equip-edit":"ציוד אישי", "areq-list":"בקשות מנהלתיות", "areq-view":"בקשה מנהלתית", "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
@@ -4414,6 +4441,7 @@ function renderManagerHome(App, ms){
 `;
   if(!ms.is_admin) return `${head}
   <div class="mgr-cols"><div class="mgr-main">
+  ${renderLockCard(App, ms)}
   ${renderTodoCard(App, ms)}
   ${mainHtml}
   </div><div class="mgr-side">${renderCalWeekSide(App, ms)}</div></div>`;
@@ -4441,6 +4469,7 @@ function renderManagerHome(App, ms){
     ${big("moked", "📡", "מוקד", "סידור המוקד, עובדי המוקד, חילופים ובקשות")}
     ${big("unit", "🏢", "ניהול היחידה", "גזרות, אירועים, דוחות, לוגיסטי, הודעות וניהול")}
   </div>
+  ${renderLockCard(App, ms)}
   ${renderTodoCard(App, ms)}
   ${renderCalWeekSide(App, ms)}`;
 }
@@ -4624,6 +4653,14 @@ function onClick(App, a, el){
     if(a==="portal-wsched-agg"){ S.view = "aggregate"; S.ui = {teamId: ss.team_id}; }
     else { S.view = "admin"; S.ui = {pinOk: true, teamIds: [ss.team_id], recipientLabel: ss.name}; }
     return App.render();
+  }
+  if(a==="portal-lk-unlock"){
+    const ms = loadMgr(App); if(!ms) return;
+    const id = el.dataset.id, nm = el.dataset.name;
+    el.disabled = true;
+    return App.apiRpc("admin_unlock_worker_code", {p_pin:"mgr:"+ms.token, p_worker_id:id})
+      .then(()=>{ LK.list = (LK.list||[]).filter(w=>w.id!==id); LK.msg = `✔ הנעילה של ${nm} נפתחה — אפשר להיכנס שוב עם הקוד.`; setTimeout(()=>{ LK.msg = null; App.render(); }, 8000); App.render(); })
+      .catch(e=>{ LK.msg = "שגיאה: " + e.message; App.render(); });
   }
   if(a==="portal-mh-section"){ MHS.section = el.dataset.s||""; try{ sessionStorage.setItem("cst_mh_section", MHS.section); }catch(e){} window.scrollTo(0,0); return App.render(); }
   if(a==="portal-mh-agg" || a==="portal-mh-admin"){ const ms = loadMgr(App); if(!ms) return App.render(); return enterMgrSchedule(App, ms, a==="portal-mh-agg"?"agg":"admin", el.dataset.scope||null); }
