@@ -248,7 +248,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=122"></script>
+<script src="portal.js?v=123"></script>
 <script>
 (function(){
 "use strict";
@@ -1857,17 +1857,19 @@ function computeRestViolations(assignments){
       }
     };
     for(let i=1;i<uniq.length;i++){
-      // רק משמרת עוקבת נחשבת המשך רציף: מתחילה כשהקודמת נגמרת (או לפני כן) ונגמרת אחריה, ואף אחת מהן לא "מתואמת"
-      // (המקבילה לבוקר/ערב). למשל ערב שממשיך ללילה. חפיפה אחרת או פער קצר - נבדקים כרגיל (אדום)
+      // המשך רציף (2026-10-21/22, סרגיי: "עובד שמתחיל ב-07 וממשיך עד 19", "מתחיל במוצ"ש ועובר ללילה של מוצ"ש"):
+      // משמרת שמתחילה כשרצף העבודה הנוכחי עוד לא נגמר (או בדיוק כשהוא נגמר), מסוג אחר, היא חלק מאותו רצף -
+      // לא "פחות מ-8 שעות מנוחה", והמנוחה נמדדת מסוף הרצף. למשל: ערב שממשיך ללילה; בוקר 07-19 + ערב 15-19;
+      // ערב מוצ"ש 20-23 + לילה מוצ"ש (20-07) במוקד. "מתואם" (המקבילה לבוקר/ערב בחיפה) לא נחשבת המשך, אבל
+      // שורת מתואם עם כפיל רגיל באותן שעות כן (נבדק לפי כל השורות ברצף). חפיפה בין גזרות שונות - נשארת אדומה.
       const curType = uniq[i].a.shift_type;
-      // (2026-10-22, סרגיי: "עובד שמתחיל ב-07 וממשיך עד 19 - לא חריגה של 8 שעות מנוחה")
-      // א. משמרת שהיא הזנב של רצף העבודה הנוכחי באותה גזרה (מתחילה אחריו ונגמרת בדיוק איתו - למשל בוקר 07-19
-      //    וערב 15-19, אותה עבודה שנשמרה בשתי שורות) - חלק מאותו רצף. משמרת שמתחילה באותה שעה (במקביל) נשארת אדומה.
-      if(+uniq[i].iv.start > +uniq[i-1].iv.start && +uniq[i].iv.start < +curEnd && +uniq[i].iv.end === +curEnd && chain.some(x=>x.a.sector===uniq[i].a.sector)){ chain.push(uniq[i]); continue; }
-      // ב. המשך רציף: גם כשהשורה הקודמת היא "מתואם" עם כפיל רגיל באותן שעות (למשל אחמ"ש בחיפה: מתואם+ערב
-      //    16:30-22:30 ואז לילה מ-22:30) - נבדק לפי סוגי המשמרת של כל השורות באותן שעות, לא רק הראשונה
-      const prevTypes = [uniq[i-1].a].concat(uniq[i-1].dups||[]).map(x=>x.shift_type);
-      if(+uniq[i].iv.start > +uniq[i-1].iv.start && +uniq[i].iv.start <= +curEnd && +uniq[i].iv.end > +curEnd && curType!=="coordinated" && prevTypes.some(t=>t!=="coordinated" && t!==curType)){ curEnd = uniq[i].iv.end; chain.push(uniq[i]); continue; }
+      const chainRows = []; chain.forEach(x=>{ chainRows.push(x.a); (x.dups||[]).forEach(d=>chainRows.push(d)); });
+      const touches = +uniq[i].iv.start === +curEnd, overlaps = +uniq[i].iv.start < +curEnd;
+      if((touches || overlaps) && curType!=="coordinated"
+         && chainRows.some(r=> r.shift_type!=="coordinated" && r.shift_type!==curType && (touches || r.sector===uniq[i].a.sector))){
+        if(+uniq[i].iv.end > +curEnd) curEnd = uniq[i].iv.end;
+        chain.push(uniq[i]); continue;
+      }
       closeChain(); chain = [uniq[i]]; chainStart = uniq[i].iv.start;
       const gapHours = (uniq[i].iv.start - curEnd) / 3600000;
       const target = gapHours < REST_HOURS_REQUIRED ? bad : (Math.abs(gapHours-REST_HOURS_REQUIRED) < 0.01 ? bad.tight : null);
@@ -2056,7 +2058,9 @@ function buildTemplateData(group, dates, quotas){
       const dt = dayTypeForDate(d), wd = parseDate(d).getDay();
       quotas.filter(q=>q.sector===sector && q.day_type===dt && (q.weekday==null||q.weekday===wd)).forEach(q=>rowsBySector.push(q));
     });
-    const hasSeparateNight = rowsBySector.some(q=>q.shift_type==="night"||q.shift_type==="friday_night");
+    // לפי כל התקנים של הגזרה, לא רק התאריכים שהתבקשו - אחרת כשמחשבים יום שבת לבד (שעות מותאמות, שיבוץ לתא)
+    // מוצ"ש נופל לשורת הערב ודורס את "ערב מוצ"ש" במוקד (2026-10-22, סרגיי: "משבץ רק לאחת המשמרות")
+    const hasSeparateNight = quotas.some(q=>q.sector===sector && (q.shift_type==="night"||q.shift_type==="friday_night"));
     function bucketKey(shiftType){
       if(shiftType==="morning"||shiftType==="friday_morning") return "morning";
       if(shiftType==="night"||shiftType==="friday_night") return "night";
@@ -2130,6 +2134,18 @@ function tmplCustomHits(group, date, sector, clickedType, customStart, customEnd
   const rng = q=>{ let a = timeToMinutes(q.start_time), b = timeToMinutes(q.end_time); if(b<=a) b += 1440; return [a,b]; };
   const [qs, qe] = rng(clicked.quota);
   const cs = timeToMinutes(customStart); let ce = timeToMinutes(customEnd); if(ce<=cs) ce += 1440;
+  // בלוקים מקוננים (2026-10-22, סרגיי): במוקד במוצ"ש "ערב מוצ"ש" (20-23) נמצא בתוך "מוצ"ש" (20-07, שורת הלילה).
+  // טווח שמכסה את הבלוק הפנימי וממשיך אחרי סופו (למשל 20:00-07:00) משבץ בשניהם - כמו ערב שממשיך ללילה.
+  if(clickedType!=="coordinated"){
+    for(const h of all){
+      if(h===clicked || h.bucket===clicked.bucket || h.quota.shift_type==="coordinated") continue;
+      const [a,b] = rng(h.quota);
+      let inner = null, outer = null, ib = 0;
+      if(a>=qs && b<=qe){ inner = h; outer = clicked; ib = b; }
+      else if(a<=qs && b>=qe){ inner = clicked; outer = h; ib = qe; }
+      if(inner && cs < ib && ce > ib) return [inner, outer];
+    }
+  }
   if(cs >= qs && ce <= qe) return [clicked];
   // מועמדים: בלוקים רציפים (לא "מתואמת" המקבילה, ולא בלוק שמכיל את המשמרת או מוכל בה), לפי החפיפה עם החלק שחורג
   const isParallel = h=>{ if(h.quota.shift_type==="coordinated" && clickedType!=="coordinated") return true; const [a,b] = rng(h.quota); return (a<=qs && b>=qe) || (a>=qs && b<=qe); };
@@ -3216,7 +3232,9 @@ async function confirmTmplCustomHours(){
       // עם נקודת החלוקה בתחילת המשמרת המאוחרת (למשל ערב 16:30-22:30 + לילה 22:30-4:30). חלק ששווה לשעות התקן נשמר בלי שעות מותאמות.
       let hcs = cs, hce = ce;
       if(hits.length===2){
-        const split = hits[1].quota.start_time.slice(0,5);
+        // נקודת החלוקה: תחילת המשמרת המאוחרת; ובבלוקים מקוננים (שתיהן מתחילות יחד, מוצ"ש במוקד) - סוף הבלוק הפנימי
+        const h0s = timeToMinutes(hits[0].quota.start_time), h1s = timeToMinutes(hits[1].quota.start_time);
+        const split = (h1s > h0s ? hits[1].quota.start_time : hits[0].quota.end_time).slice(0,5);
         if(hit===hits[0]) hce = split; else hcs = split;
         if(hcs===hit.quota.start_time.slice(0,5) && hce===hit.quota.end_time.slice(0,5)){ hcs = null; hce = null; }
       }
