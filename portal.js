@@ -3411,31 +3411,45 @@ function lsLoad(App, ms){
 }
 function lsState(u){ return !u.active ? "off" : (u.push ? "ok" : "nopush"); }
 function renderLoginStatus(App, ms, wrap, loading){
+  // (2026-10-22, סרגיי: "סטטוס מחוברים בחלוקה לפי גזרות") - טבלת סיכום לכל גזרה למעלה, ומתחתיה כל גזרה
+  // כרשימה נפתחת: קודם מחוברים עם התראות, אחר כך מחוברים בלי התראות, ובסוף מי שלא מחובר.
   const esc = App.escapeHtml;
   if(!LS.data){ lsLoad(App, ms); return loading(); }
   if(LS.data.error) return wrap(`<p class="shortage">${esc(LS.data.error)}</p>`);
   const ws = LS.data.workers||[], mgs = LS.data.managers||[], all = ws.concat(mgs);
   const cnt = st=>all.filter(u=>lsState(u)===st).length;
   const ago = iso=>{ if(!iso) return ""; const d = (Date.now()-new Date(iso).getTime())/864e5; return d<1 ? "היום" : d<2 ? "אתמול" : `לפני ${Math.floor(d)} ימים`; };
+  const dev = ua=>!ua ? "" : /iPhone|iPad/i.test(ua) ? "📱 אייפון" : /Android/i.test(ua) ? "📱 אנדרואיד" : /Windows|Macintosh|Linux/i.test(ua) ? "💻 מחשב" : "";
   const badge = {ok:`<span class="ls-b ok">🟢 מחובר + התראות</span>`, nopush:`<span class="ls-b warn">🟡 מחובר, בלי התראות</span>`, off:`<span class="ls-b off">⚪ לא מחובר</span>`};
+  const ord = {ok:0, nopush:1, off:2};
   const f = LS.filter;
   const show = u=> f==="all" || lsState(u)===f;
-  const row = u=>`<div class="ls-row"><span class="ls-name">${esc(u.name)}${u.role?` <span class="muted" style="font-size:.8em;">${esc(u.role)}</span>`:""}</span>${badge[lsState(u)]}
+  const row = u=>`<div class="ls-row"><span class="ls-name">${esc(u.name)}${u.role?` <span class="muted" style="font-size:.8em;">${esc(u.role)}</span>`:""}</span>${badge[lsState(u)]}${dev(u.ua)?` <span class="muted" style="font-size:.8em;">${dev(u.ua)}</span>`:""}
       <span class="muted ls-when">${u.last_at ? `כניסה אחרונה: ${esc(fmtDT(App, u.last_at))} (${ago(u.last_at)})${u.logins>1?` · ${u.logins} כניסות`:""}` : "לא נרשמה כניסה"}${u.push_ok_at?` · התראה אחרונה נמסרה ${ago(u.push_ok_at)}`:""}</span></div>`;
-  const groups = {}; ws.forEach(u=>{ (groups[u.team||"ללא צוות"] = groups[u.team||"ללא צוות"]||[]).push(u); });
-  const grpHtml = (title, list)=>{ const vis = list.filter(show); if(!vis.length) return "";
-    const on = list.filter(u=>u.active).length;
-    return `<h3 style="margin:14px 0 4px;">${esc(title)} <span class="muted" style="font-size:.75em;font-weight:400;">${on}/${list.length} מחוברים</span></h3>${vis.map(row).join("")}`; };
+  const groups = []; const gIdx = {};
+  const add = (title, u)=>{ if(!(title in gIdx)){ gIdx[title] = groups.length; groups.push({title, list:[]}); } groups[gIdx[title]].list.push(u); };
+  mgs.forEach(u=>add("מנהלים וקב\"טים", u));
+  ws.forEach(u=>add(u.team||"ללא צוות", u));
+  groups.forEach(g=>g.list.sort((x,y)=> ord[lsState(x)]-ord[lsState(y)] || String(x.name).localeCompare(String(y.name), "he")));
+  const stats = list=>({ok:list.filter(u=>lsState(u)==="ok").length, nopush:list.filter(u=>lsState(u)==="nopush").length, off:list.filter(u=>lsState(u)==="off").length, n:list.length});
+  const tot = stats(all);
+  const summary = `<div style="overflow-x:auto;"><table class="ls-sum"><thead><tr><th>גזרה</th><th>🟢 מחוברים + התראות</th><th>🟡 בלי התראות</th><th>⚪ לא מחוברים</th><th>סה"כ</th></tr></thead><tbody>
+      ${groups.map((g,i)=>{ const st = stats(g.list); return `<tr><td><span class="ls-jump" data-action="portal-ls-jump" data-i="${i}" style="color:var(--accent,#1c5d99);text-decoration:underline;cursor:pointer;">${esc(g.title)}</span></td><td>${st.ok}</td><td>${st.nopush}</td><td>${st.off}</td><td>${st.n}</td></tr>`; }).join("")}
+      <tr class="ls-tot"><td>סה"כ</td><td>${tot.ok}</td><td>${tot.nopush}</td><td>${tot.off}</td><td>${tot.n}</td></tr></tbody></table></div>`;
+  const grpHtml = (g, i)=>{ const vis = g.list.filter(show); if(!vis.length) return ""; const st = stats(g.list);
+    return `<details class="ls-g" id="ls-g${i}"${f!=="all" || LS.openAll ? " open" : ""}><summary><b>${esc(g.title)}</b> <span class="muted" style="font-size:.85em;font-weight:400;">🟢 ${st.ok} · 🟡 ${st.nopush} · ⚪ ${st.off} — ${st.ok+st.nopush}/${st.n} מחוברים</span></summary>${vis.map(row).join("")}</details>`; };
   const chip = (k, label)=>`<span class="ar-chip${f===k?" on":""}" data-action="portal-ls-filter" data-k="${k}">${label}</span>`;
   return wrap(`<style>.ls-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:7px 0;border-bottom:1px solid var(--border);}
       .ls-name{font-weight:600;min-width:140px;} .ls-when{font-size:.82em;flex-basis:100%;} .ls-b{font-size:.8em;border-radius:999px;padding:1px 8px;font-weight:700;}
-      .ls-b.ok{background:#e3f4e8;color:#1b7f3b;} .ls-b.warn{background:#fff3cd;color:#7a5200;} .ls-b.off{background:#f1f3f5;color:#6b7280;}</style>
-    <div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;"><h2 style="margin:0;">👥 סטטוס התחברות</h2>
-      <button class="btn small secondary" data-action="portal-ls-refresh">🔄 רענון</button></div>
-    <p class="muted" style="font-size:.85em;margin:4px 0 8px;">"מחובר" = נכנס לאיזור האישי והכניסה עדיין בתוקף (30 יום). "התראות" = הפעיל התראות במכשיר. כניסות נרשמות מהיום והלאה (וגם מכניסות שעדיין בתוקף).</p>
+      .ls-b.ok{background:#e3f4e8;color:#1b7f3b;} .ls-b.warn{background:#fff3cd;color:#7a5200;} .ls-b.off{background:#f1f3f5;color:#6b7280;}
+      .ls-sum{width:100%;border-collapse:collapse;font-size:.9em;margin:6px 0 10px;} .ls-sum th,.ls-sum td{border:1px solid var(--border);padding:5px 6px;text-align:center;} .ls-sum td:first-child{text-align:right;font-weight:600;}
+      .ls-sum .ls-tot td{font-weight:800;background:#f6f8fa;} .ls-g{border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin:8px 0;} .ls-g summary{cursor:pointer;padding:4px 0;}</style>
+    <div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;"><h2 style="margin:0;">🟢 סטטוס מחוברים</h2>
+      <span><button class="btn small secondary" data-action="portal-ls-openall">${LS.openAll?"➖ לסגור הכל":"➕ לפתוח הכל"}</button> <button class="btn small secondary" data-action="portal-ls-refresh">🔄 רענון</button></span></div>
+    <p class="muted" style="font-size:.85em;margin:4px 0 8px;">"מחובר" = נכנס לאיזור האישי והכניסה עדיין בתוקף (30 יום). "התראות" = הפעיל התראות במכשיר. לחיצה על שם גזרה פותחת את הרשימה שלה.</p>
+    ${summary}
     <div class="ar-chips" style="margin-bottom:6px;">${chip("all", `הכל (${all.length})`)}${chip("ok", `🟢 מחוברים + התראות (${cnt("ok")})`)}${chip("nopush", `🟡 בלי התראות (${cnt("nopush")})`)}${chip("off", `⚪ לא מחוברים (${cnt("off")})`)}</div>
-    ${grpHtml("מנהלים וקב\"טים", mgs)}
-    ${Object.keys(groups).map(k=>grpHtml(k, groups[k])).join("")}
+    ${groups.map(grpHtml).join("")}
     ${!all.filter(show).length ? `<p class="muted">אין משתמשים בסינון הזה.</p>` : ""}`);
 }
 
@@ -3467,7 +3481,7 @@ function renderLockCard(App, ms){
 }
 
 /* ---------- עמודי משנה (view "pview") ---------- */
-const PV_TITLES = { "login-status":"סטטוס התחברות", "ar-list":"דוחות פעולה", "ar-view":"דוח פעולה", "equip-workers":"ציוד אישי לעובדים", "equip-edit":"ציוד אישי", "areq-list":"בקשות מנהלתיות", "areq-view":"בקשה מנהלתית", "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
+const PV_TITLES = { "login-status":"סטטוס מחוברים", "ar-list":"דוחות פעולה", "ar-view":"דוח פעולה", "equip-workers":"ציוד אישי לעובדים", "equip-edit":"ציוד אישי", "areq-list":"בקשות מנהלתיות", "areq-view":"בקשה מנהלתית", "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
   "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה", "cal":"יומן משותף" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
@@ -4525,7 +4539,7 @@ function renderManagerHome(App, ms){
     <h3>🔑 ניהול מערכת</h3>
     <div class="grid-teams">${tile("portal-mh-codes", "🔑 עריכת קודים של מנהלים", "קביעה ושינוי קוד אישי לכל מנהל")}
       <div class="team-tile" data-action="portal-pv" data-page="unit-dash"><div style="font-size:1.1em;font-weight:700;">📊 לוח מנהל יחידה</div><div class="muted" style="font-size:.85em;margin-top:4px;">תמונת מצב כמו שמנהל היחידה רואה</div></div>
-      <div class="team-tile" data-action="portal-pv" data-page="login-status"><div style="font-size:1.1em;font-weight:700;">👥 סטטוס התחברות</div><div class="muted" style="font-size:.85em;margin-top:4px;">מי מחובר, התראות וכניסה אחרונה</div></div></div>
+      <div class="team-tile" data-action="portal-pv" data-page="login-status"><div style="font-size:1.1em;font-weight:700;">🟢 סטטוס מחוברים</div><div class="muted" style="font-size:.85em;margin-top:4px;">לפי גזרות: מי מחובר, התראות וכניסה אחרונה</div></div></div>
   </div>` : ""}
   ${schedU.length && !ms.edit_as_button? `<div class="card">
     <h3>סידור עבודה${ms.is_admin?" — גזרות":""}</h3>
@@ -4599,6 +4613,7 @@ function renderManagerHome(App, ms){
     ${big("moked", "📡", "מוקד", "סידור המוקד, עובדי המוקד, חילופים ובקשות")}
     ${big("unit", "🏢", "ניהול היחידה", "גזרות, אירועים, דוחות, לוגיסטי, הודעות וניהול")}
   </div>
+  <div class="team-tile" data-action="portal-pv" data-page="login-status" style="margin-bottom:12px;text-align:center;"><div style="font-size:1.15em;font-weight:800;">🟢 סטטוס מחוברים</div><div class="muted" style="font-size:.85em;margin-top:4px;">מי התחבר למערכת, לפי גזרות — מחוברים, התראות וכניסה אחרונה</div></div>
   ${renderLockCard(App, ms)}
   ${renderTodoCard(App, ms)}
   ${renderCalWeekSide(App, ms)}`;
@@ -5137,6 +5152,8 @@ function onClick(App, a, el){
   if(a==="portal-eqo-toggle"){ EQM.ordOpen = !(el.parentElement && el.parentElement.open); return; }
   if(a==="portal-ls-filter"){ LS.filter = el.dataset.k; return App.render(); }
   if(a==="portal-ls-refresh"){ LS.data = null; return App.render(); }
+  if(a==="portal-ls-jump"){ const d = document.getElementById("ls-g"+el.dataset.i); if(d){ d.open = true; d.scrollIntoView({behavior:"smooth", block:"start"}); } return; }
+  if(a==="portal-ls-openall"){ LS.openAll = !LS.openAll; return App.render(); }
   if(a.indexOf("portal-todo-")===0) return todoAction(App, a, el);
   if(a.indexOf("portal-inc-")===0) return incClick(App, a, el);
   if(a.indexOf("portal-cal-")===0 || a.indexOf("portal-calw-")===0) return calClick(App, a, el);
