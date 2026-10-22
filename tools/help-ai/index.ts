@@ -15,6 +15,20 @@ const cors = {
 const json = (o: unknown, status = 200) =>
   new Response(JSON.stringify(o), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
+// המדריך העדכני נטען מהאתר (tools/help-ai/manual.md בריפו) כל 10 דקות, כך שעדכון שלו לא דורש פריסה מחדש של הפונקציה.
+// אם האתר לא זמין - משתמשים בעותק שבתוך הפונקציה (manual.ts).
+const MANUAL_URL = "https://sergeyturbinsky-collab.github.io/ScheduleShifts/tools/help-ai/manual.md";
+let manualCache = { text: MANUAL, at: 0 };
+async function getManual() {
+  if (Date.now() - manualCache.at < 600e3) return manualCache.text;
+  try {
+    const r = await fetch(MANUAL_URL, { cache: "no-store" });
+    const t = r.ok ? await r.text() : "";
+    manualCache = { text: t.length > 2000 && t.includes("##") ? t : manualCache.text, at: Date.now() };
+  } catch (_) { manualCache.at = Date.now(); }
+  return manualCache.text;
+}
+
 
 const RULES = `אתה "הבוט של המערכת" — עוזר שעונה למשתמשים של מערכת התפעול של חברת אבטחה על **איך משתמשים במערכת**.
 כללים:
@@ -84,7 +98,7 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         model: MODEL, max_tokens: 500,
         system: [
-          { type: "text", text: "מדריך המערכת:\n\n" + MANUAL, cache_control: { type: "ephemeral" } },
+          { type: "text", text: "מדריך המערכת:\n\n" + (await getManual()), cache_control: { type: "ephemeral" } },
           { type: "text", text: rules },
         ],
         messages,
