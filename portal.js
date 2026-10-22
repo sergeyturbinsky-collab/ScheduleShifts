@@ -537,7 +537,7 @@ function isMokedWorker(App, session){
 async function loadLogistics(App, session){
   try{
     const [items, data] = await Promise.all([
-      App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options&order=sort_order"),
+      App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options,has_serial&order=sort_order"),
       App.apiRpc("worker_equipment_get", {p_token: session.token})
     ]);
     L.items = items; L.data = data; L.error = null;
@@ -862,11 +862,11 @@ async function dmgAction(App, a, el){
   if(a==="portal-dmg-mnew"){
     if(!ms) return App.render();
     DMG.open = true; DMG.mgrMode = true; DMG.restored = null;
-    if(!DMG.items) App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; });
+    if(!DMG.items) App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options,has_serial&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; });
     const mdr = el.dataset.fresh ? null : dmgLoadDraft(App, true);
     if(mdr){ dmgRestore(mdr); DMG.error = null; DMG.msg = null; return pvGo(App, "dmg-new", {}); }
     DMG.form = {branch: Array.from(new Set(mgrTeams(App, ms.logistics_team_ids).flatMap(t=>(t.sectors&&t.sectors.length)?t.sectors:[t.name]))).join(" / ")}; DMG.parties = [dmgNewParty("מאבטח", "")]; DMG.vehicles = [{label:"", photos:[]}]; DMG.equipPhotos = []; DMG.error = null; DMG.msg = null;
-    if(!DMG.items) App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; });
+    if(!DMG.items) App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options,has_serial&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; });
     return pvGo(App, "dmg-new", {});
   }
   if(a==="portal-dmg-close"){
@@ -1585,7 +1585,7 @@ document.addEventListener("change", e=>{
 function renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs){
   const esc = App.escapeHtml;
   if(EQM.tok !== ms.token){ EQM.tok = ms.token; EQM.workers = null; }
-  if(!EQM.items && !EQM.itemsLoading){ EQM.itemsLoading = true; App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options&order=sort_order").then(x=>{ EQM.items = x||[]; EQM.itemsLoading = false; App.render(); }).catch(()=>{ EQM.items = []; EQM.itemsLoading = false; }); }
+  if(!EQM.items && !EQM.itemsLoading){ EQM.itemsLoading = true; App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options,has_serial&order=sort_order").then(x=>{ EQM.items = x||[]; EQM.itemsLoading = false; App.render(); }).catch(()=>{ EQM.items = []; EQM.itemsLoading = false; }); }
   if(pg==="equip-workers"){
     eqmLoadWorkers(App, ms);
     if(!EQM.workers && !EQM.wLoading){ EQM.wLoading = true; App.apiRpc("mgr_equipment_workers", {p_token:ms.token}).then(x=>{ EQM.workers = x||[]; EQM.wLoading = false; App.render(); }).catch(e=>{ EQM.workers = []; EQM.wLoading = false; PV.error = e.message; App.render(); }); }
@@ -1598,7 +1598,7 @@ function renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs){
       ${Object.keys(byTeam).map(tid=>`${Object.keys(byTeam).length>1?`<h3 style="margin:12px 0 4px;">${esc(teamName(tid))}</h3>`:""}
         ${byTeam[tid].map(w=>`<div class="portal-task" data-action="portal-pv" data-page="equip-edit" data-id="${w.id}" data-name="${esc(w.name)}">
           <span class="portal-task-icon">${w.items?"🎒":"➕"}</span>
-          <span><b>${esc(w.name)}</b> · ${w.items?`${w.items} פריטים`:'<span class="muted">עדיין לא הוזן</span>'}${(w.waiting&&w.waiting.length)?` <span class="eqw-badge">⏳ ממתין ל-${w.waiting.length}${w.waiting.some(x=>x.status==="ordered")?` · 📦 ${w.waiting.filter(x=>x.status==="ordered").length} הוזמנו`:""}</span>`:""}${w.updated_at?` <span class="muted" style="font-size:.85em;">· עודכן ${esc(dmgFmtDate(w.updated_at))}</span>`:""}</span></div>`).join("")}`).join("") || `<p class="muted">אין עובדים.</p>`}`);
+          <span><b>${esc(w.name)}</b> · ${w.items?`${w.items} פריטים`:'<span class="muted">עדיין לא הוזן</span>'}${(w.serials||[]).map(x=>` <span class="eqs-tag eqs-serial" dir="ltr">📷 ${esc(x.serial)}</span>`).join("")}${(w.waiting&&w.waiting.length)?` <span class="eqw-badge">⏳ ממתין ל-${w.waiting.length}${w.waiting.some(x=>x.status==="ordered")?` · 📦 ${w.waiting.filter(x=>x.status==="ordered").length} הוזמנו`:""}</span>`:""}${w.updated_at?` <span class="muted" style="font-size:.85em;">· עודכן ${esc(dmgFmtDate(w.updated_at))}</span>`:""}</span></div>`).join("")}`).join("") || `<p class="muted">אין עובדים.</p>`}`);
   }
   if(pg==="equip-edit"){
     if(!EQM.edit || EQM.edit.worker_id !== a.id){
@@ -1611,6 +1611,8 @@ function renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs){
     const statusCell = it=>{ const v = EQM.statusSel[it.id] || "";
       return `<select data-eqm-status="${it.id}" class="eqs-sel${v?" eqs-"+v:""}"><option value="">—</option>${Object.keys(EQ_STATUS).map(k=>`<option value="${k}" ${v===k?"selected":""}>${EQ_STATUS[k]}</option>`).join("")}</select>`; };
     const sizeCell = (it, c)=>{
+      // מספר סידורי (2026-10-22, סרגיי: "מצלמה שהונפקה למאבטח, כולל מספר מצלמה")
+      if(it.has_serial) return `<input type="text" maxlength="40" data-eqm-serial="${it.id}" value="${esc(c.serial||"")}" placeholder="מס' ${/מצלמ/.test(it.name)?"מצלמה":"סידורי"}" style="width:100px;" dir="ltr">`;
       if(!it.has_size) return '<span class="muted">-</span>';
       const opts = Array.isArray(it.size_options) && it.size_options.length ? it.size_options : null;
       if(!opts) return `<input type="text" maxlength="20" data-eqm-size="${it.id}" value="${esc(c.size||"")}" placeholder="מידה" style="width:90px;">`;
@@ -1620,7 +1622,7 @@ function renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs){
     return wrap(`<h2 style="margin-top:4px;">🎒 ציוד אישי — ${esc(EQM.edit.name)}</h2>
       <p class="muted">כמה יש לעובד מכל פריט, מידה אם רלוונטי, וסטטוס: ✅ קיבל · ❌ לא קיבל (ממתין) · 📦 הוזמן. "לא קיבל" ו"הוזמן" נכנסים לרשימת ההמתנה, ו"הוזמן" — גם למשימת ההזמנות המרוכזת בלוגיסטי.</p>
       <div style="overflow-x:auto;"><table class="eqm-table">
-        <thead><tr><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th><th>סטטוס</th></tr></thead>
+        <thead><tr><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה / מס'</th><th>סטטוס</th></tr></thead>
         <tbody>${EQM.items.map(it=>{ const c = cur[it.id] || {};
           return `<tr><td style="text-align:right;">${esc(it.name)}</td>
             <td><input type="number" min="0" max="50" data-eqm-qty="${it.id}" value="${c.quantity!=null?c.quantity:0}" style="width:70px;"></td>
@@ -1632,8 +1634,12 @@ function renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs){
 }
 async function eqmSave(App, el){
   const ms = loadMgr(App); if(!ms || EQM.busy || !EQM.items) return;
-  const items = EQM.items.map(it=>{ const q = document.querySelector(`[data-eqm-qty="${it.id}"]`), sz = document.querySelector(`[data-eqm-size="${it.id}"]`);
-    return {item_id: it.id, quantity: Math.max(0, Math.min(50, parseInt(q&&q.value,10)||0)), size: sz ? sz.value : null, status: (EQM.statusSel && EQM.statusSel[it.id]) || ""}; });
+  const items = EQM.items.map(it=>{ const q = document.querySelector(`[data-eqm-qty="${it.id}"]`), sz = document.querySelector(`[data-eqm-size="${it.id}"]`), sr = document.querySelector(`[data-eqm-serial="${it.id}"]`);
+    const o = {item_id: it.id, quantity: Math.max(0, Math.min(50, parseInt(q&&q.value,10)||0)), size: sz ? sz.value : null, status: (EQM.statusSel && EQM.statusSel[it.id]) || ""};
+    if(sr) o.serial = sr.value.trim();
+    return o; });
+  // מספר סידורי בלי כמות - כנראה הונפק: כמות 1
+  items.forEach(o=>{ if(o.serial && !o.quantity) o.quantity = 1; });
   EQM.busy = true; PV.error = null; PV.msg = null; App.render();
   try{
     await App.apiRpc("mgr_worker_equipment_save", {p_token:ms.token, p_worker_id:el.dataset.id, p_items:items});
@@ -1660,7 +1666,7 @@ function renderLogisticsInner(App, session){
     <p class="muted" style="margin-top:-6px;">הרשימה מוזנת ומעודכנת ע"י הקב"ט. אם משהו לא נכון — פנו לקב"ט או שלחו בקשה למטה.</p>
     ${owned.length? `<div style="overflow-x:auto;"><table>
       <thead><tr><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th></tr></thead>
-      <tbody>${owned.map(it=>`<tr><td style="text-align:right;">${esc(it.name)}</td><td>${eqById[it.id].quantity}</td><td>${esc(eqById[it.id].size||"-")}</td></tr>`).join("")}</tbody>
+      <tbody>${owned.map(it=>`<tr><td style="text-align:right;">${esc(it.name)}</td><td>${eqById[it.id].quantity}</td><td>${eqById[it.id].serial ? `<span dir="ltr">מס' ${esc(eqById[it.id].serial)}</span>` : esc(eqById[it.id].size||"-")}</td></tr>`).join("")}</tbody>
     </table></div>` : `<p class="muted">הקב"ט עדיין לא הזין את רשימת הציוד שלך.</p>`}
     ${(()=>{ const wt = L.items.filter(it=>eqById[it.id] && eqById[it.id].waiting);
       return wt.length ? `<h3>⏳ ממתין ל...</h3><p class="muted" style="margin-top:-6px;">ציוד שהקב"ט רשם שאת/ה ממתין/ה לקבל. "📦 הוזמן" — הציוד הוזמן ובדרך.</p>
@@ -4383,7 +4389,7 @@ function renderSection(App, view){
     <h2>עדכונים והודעות</h2>
     ${renderAllUpdates(App, session)}
   </div>`;
-  if(view==="damage" && !DMG.items && !DMG.itemsLoading){ DMG.itemsLoading = true; App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; }); }
+  if(view==="damage" && !DMG.items && !DMG.itemsLoading){ DMG.itemsLoading = true; App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options,has_serial&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; }); }
   const body = view==="logistics" ? renderLogistics(App, session) : view==="damage" ? renderDamageWorker(App, session) : view==="adminreq" ? renderAdminReqWorker(App, session) : view==="actreport" ? renderActionReportWorker(App, session) : renderTraining(App, session);
   return `<div class="card">
     <span class="backlink" data-action="go-home">◀ חזרה לאיזור האישי</span>
@@ -4717,7 +4723,7 @@ const HELP_KB = [
   {who:"m", q:"איך מוסיפים עובד או משנים קוד?", k:"להוסיף עובד חדש קוד אישי למחוק עובד ניהול עובדים",
    a:`<b>ניהול עובדים</b> → הוספה (שם, קוד אישי, תפקיד), שינוי קוד, סימון אחמ"ש / חפיפה / שומר שבת / יעד משמרות בשבוע, ומחיקה.`},
   {who:"m", q:"איך מזינים ציוד אישי לעובד?", k:"ציוד אישי לעובדים להזין רשימת ציוד בקשות ציוד ממתין המתנה רשימת המתנה חגורה מידה קיבל הוזמן הזמנה סטטוס",
-   a:`<b>🎒 ציוד אישי לעובדים</b> → בוחרים עובד → כמות ומידה לכל פריט (לחגורה — מידות 36–56) → לכל פריט סטטוס: <b>✅ קיבל / ❌ לא קיבל / 📦 הוזמן</b> → שמירה. "לא קיבל" ו"הוזמן" מופיעים ב"⏳ רשימת המתנה לציוד", וכל מה שהוזמן — ב"📦 משימה: הזמנות ציוד" המרוכזת בכרטיס הלוגיסטי. העובד רואה את הרשימה באיזור האישי. בקשות ציוד מהעובדים — ב"בקשות ציוד".`},
+   a:`<b>🎒 ציוד אישי לעובדים</b> → בוחרים עובד → כמות ומידה לכל פריט (לחגורה — מידות 36–56) → במצלמת גוף רושמים את <b>מספר המצלמה</b> → לכל פריט סטטוס: <b>✅ קיבל / ❌ לא קיבל / 📦 הוזמן</b> → שמירה. "לא קיבל" ו"הוזמן" מופיעים ב"⏳ רשימת המתנה לציוד", וכל מה שהוזמן — ב"📦 משימה: הזמנות ציוד" המרוכזת בכרטיס הלוגיסטי. העובד רואה את הרשימה באיזור האישי. בקשות ציוד מהעובדים — ב"בקשות ציוד".`},
   {who:"m", q:"איפה רואים דוחות פעולה, נזק ואירועים?", k:"מאבטחים מילאו שמילאו דוח דוחות פעולה נזק תאונה sayvu סביו אירוע חריג תחקיר",
    a:`בכרטיס <b>🚨 דו"ח אירוע חריג</b>: תחקירי SAYVU, <b>📝 דוחות פעולה</b> של המאבטחים ו<b>⚠️ דיווחי נזק/תאונה</b>. חדשים מסומנים באדום עם מונה, ומקבלים עליהם התראה. מכל דוח אפשר להפיק PDF.`},
   {who:"m", q:"איך מוסיפים משימה אישית עם תזכורת?", k:"משימות שלי משימה אישית תזכורת להזכיר",
@@ -5179,7 +5185,7 @@ function onClick(App, a, el){
   .eqw-badge{display:inline-block;background:#fff3cd;color:#8a5a00;border-radius:999px;padding:1px 8px;font-size:.82em;font-weight:600;}
   .eqo-task{border-color:#7aa7e6;background:#eef5ff;} .eqo-task summary{color:#0d4a94;}
   .eqw-name{cursor:pointer;text-decoration:underline;text-decoration-color:#9bb6d8;}
-  .eqs-tag{display:inline-block;border-radius:999px;padding:0 7px;font-size:.8em;font-weight:600;} .eqs-tag.eqs-ordered{background:#dbeafe;color:#0d4a94;} .eqs-tag.eqs-not_received{background:#fde8e7;color:#b42318;}
+  .eqs-tag{display:inline-block;border-radius:999px;padding:0 7px;font-size:.8em;font-weight:600;} .eqs-tag.eqs-ordered{background:#dbeafe;color:#0d4a94;} .eqs-tag.eqs-serial{background:#eef2f7;color:#334155;} .eqs-tag.eqs-not_received{background:#fde8e7;color:#b42318;}
   .eqs-sel{max-width:110px;} .eqs-sel.eqs-received{background:#e6f7ec;} .eqs-sel.eqs-not_received{background:#fde8e7;} .eqs-sel.eqs-ordered{background:#dbeafe;}
   .eqm-table td, .eqm-table th{padding:5px 4px;}
   .eqw-opts{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:4px 10px;margin-top:8px;} .eqw-opts label{display:flex;gap:6px;align-items:center;font-weight:normal;color:#1f2937;font-size:.95em;}
