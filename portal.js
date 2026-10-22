@@ -178,7 +178,8 @@ function renderMyShifts(App, session){
   if(P.shifts===null){ loadShifts(App, session); return `<p class="muted">טוען...</p>`; }
   if(P.shiftsError) return `<p class="shortage">${esc(P.shiftsError)}</p>`;
   if(SW.list===null) loadSwaps(App, session);
-  if(!P.shifts.length) return `${SW.msg?`<p style="color:#1b7f3b;font-weight:600;">${esc(SW.msg)}</p>`:""}<p class="muted">אין כרגע משמרות בסידור שפורסם. כשהסידור יפורסם, המשמרות שלך יופיעו כאן.</p>${renderSwapBoard(App)}`;
+  const tasks = loadWorkerSchedTasks(App, session);
+  if(!P.shifts.length && !tasks.length) return `${SW.msg?`<p style="color:#1b7f3b;font-weight:600;">${esc(SW.msg)}</p>`:""}<p class="muted">אין כרגע משמרות בסידור שפורסם. כשהסידור יפורסם, המשמרות שלך יופיעו כאן.</p>${renderSwapBoard(App)}`;
   // משמרת שחוצה שני בלוקים נשמרת כשתי שורות עם אותן שעות - מוצגת פעם אחת
   const seen = new Set();
   const rows = P.shifts.filter(a=>{
@@ -193,7 +194,9 @@ function renderMyShifts(App, session){
   ${SW.open ? renderSwapPanel(App, session, rows) : ""}
   <div style="overflow-x:auto;"><table>
     <thead><tr><th>תאריך</th><th>משמרת</th><th>שעות</th><th>גזרה</th><th></th></tr></thead>
-    <tbody>${rows.map(a=>{
+    <tbody>${rows.map(a=>Object.assign({_t:false}, a)).concat(tasks.map(t=>({_t:true, entry_date:t.date, title:t.title, start:t.start, end:t.end, sector:t.sector})))
+      .sort((x,y)=>String(x.entry_date).localeCompare(String(y.entry_date)) || (x._t - y._t)).map(a=>{
+      if(a._t) return `<tr class="my-task-row"><td>${App.fmtDateHeb(a.entry_date)}</td><td>📌 ${esc(a.title)}</td><td>${a.start?`<span dir="ltr">${esc(a.start)}${a.end?"-"+esc(a.end):""}</span>`:""}</td><td>${esc(a.sector||"")}</td><td class="muted">משימה (לא משמרת)</td></tr>`;
       const q = quotaFor(App, a);
       const label = App.SHIFT_LABELS[a.shift_type] || (q&&q.label) || a.shift_type;
       const notes = [];
@@ -382,26 +385,17 @@ function pushGateHtml(App, name, N, act){
 /* משימות שהמשבץ הקצה למאבטח מתוך טבלת השיבוץ (לא משמרת) - 2026-10-20, לבקשת סרגיי.
    מוצג רק כשיש משימות; מתרענן בכל כניסה למסך הבית (ובקבלת פוש - App.render מהרענון הכללי). */
 const ST = { list:null, loading:false, at:0 };
-function renderWorkerSchedTasks(App, session){
-  const esc = App.escapeHtml;
+function loadWorkerSchedTasks(App, session){
   if(!ST.loading && (!ST.list || Date.now()-ST.at > 60000)){
     ST.loading = true;
     App.apiRpc("worker_sched_tasks", {p_token: session.token})
       .then(d=>{ ST.list = d||[]; ST.at = Date.now(); ST.loading = false; App.render(); })
       .catch(()=>{ ST.loading = false; ST.at = Date.now(); ST.list = ST.list||[]; });
   }
-  const list = ST.list||[];
-  if(!list.length) return "";
-  const days = ["ראשון","שני","שלישי","רביעי","חמישי","שישי","שבת"];
-  const fmt = d=>{ const x = new Date(d+"T12:00:00"); return `יום ${days[x.getDay()]} ${x.getDate()}/${x.getMonth()+1}`; };
-  return `<div class="card">
-    <h3>📌 משימות שהוטלו עליי</h3>
-    ${list.map(t=>`<div style="padding:7px 0;border-bottom:1px solid var(--border);">
-      <b>${esc(t.title)}</b>
-      <div class="muted" style="font-size:.88em;">${fmt(t.date)}${t.start?` · <span dir="ltr">${esc(t.start)}${t.end?"-"+esc(t.end):""}</span>`:""}</div>
-    </div>`).join("")}
-  </div>`;
+  return ST.list||[];
 }
+/* (2026-10-22, סרגיי) המשימות מוצגות בתוך "המשמרות שלי" - עובד שכל השבוע שלו משימה (למשל מוס"ח) ראה טבלה ריקה */
+function renderWorkerSchedTasks(App, session){ loadWorkerSchedTasks(App, session); return ""; }
 function renderWorkerHome(App, session){
   const esc = App.escapeHtml;
   const gate = pushGate(App, session); if(gate) return gate;
@@ -4516,14 +4510,14 @@ const HELP_KB = [
   // ---------- עובדים ----------
   {who:"w", q:"איך מגישים משמרות / אילוצים?", k:"חיפה הגשה הגשת להגיש מגיש אילוצים משמרות סידור טופס זמינות לסמן",
    a:`במסך הבית לוחצים <b>🗓️ משמרות</b>. נפתחת התקופה שפתוחה עכשיו להגשה. בכל יום מסמנים את המשמרות, ובסוף לוחצים <b>שמירה</b>.<br>
-      • בחיפה מסמנים רק את מה ש<b>לא</b> יכולים (✕) — עד 3 משמרות חסומות בשבוע. כל השאר נחשב פתוח לשיבוץ. אפשר גם לסמן <b>יום שלם</b> (חסימת כל היום, חופשה, מילואים, מחלה, לימודים או אחר) — זה לא נספר ב-3 החסימות.<br>
+      • בחיפה מסמנים רק את מה ש<b>לא</b> יכולים (✕) — עד 3 משמרות חסומות בשבוע. כל השאר נחשב פתוח לשיבוץ. אפשר גם לסמן <b>יום שלם</b> (חופשה, מילואים, מחלה, לימודים או אחר) — זה לא נספר ב-3 החסימות.<br>
       • בגזרות האחרות מסמנים מה <b>כן</b> יכולים, וחובה להתייחס לכל יום.<br>
       • במוקד מסמנים מה לא יכולים.<br>
       אפשר לחזור ולעדכן עד שההגשה ננעלת.`},
   {who:"w", q:"מתי ההגשה נפתחת ומתי ננעלת?", k:"סגורה סגור הספקתי פספסתי עד מתי להגיש נסגר נסגרת נפתח נפתחת ננעל ננעלת נעילה פתיחה מועד הגשה עד מתי רביעי ראשון",
    a:`ההגשה לשבוע הבא נפתחת <b>ברגע שהקב"ט מפרסם את הסידור של השבוע הנוכחי</b> (או במועד הפתיחה הקבוע), ונסגרת במועד הקבוע — <b>בחיפה ביום רביעי ב-12:00</b>. בראש טופס ההגשה כתוב תמיד אם הטופס פתוח ועד מתי. פספסת? הקב"ט יכול לפתוח לך הגשה ידנית.`},
   {who:"w", q:"כמה משמרות אפשר לחסום?", k:"חסימות לחסום חסימה שלוש 3 כמה לא יכול מגבלה יום שלם כל היום לימודים אחר",
-   a:`בחיפה אפשר לסמן <b>עד 3 משמרות חסומות בשבוע</b>. כל משמרת שלא סומנה נחשבת פתוחה לשיבוץ. בשורה "יום שלם" בתחתית כל יום אפשר לבחור <b>חסימת כל היום</b>, חופשה, מילואים, מחלה, לימודים או אחר — <b>יום שלם לא נספר</b> ב-3 החסימות. כדי לחסום משמרת בודדת רביעית — בטלו קודם סימון אחר.`},
+   a:`בחיפה אפשר לסמן <b>עד 3 משמרות חסומות בשבוע</b>. כל משמרת שלא סומנה נחשבת פתוחה לשיבוץ. לא יכולים כל היום? בשורה "יום שלם" בתחתית היום בוחרים חופשה, מילואים, מחלה, לימודים או <b>אחר</b> (לכל סיבה אחרת, עם פירוט בהערה) — <b>יום שלם לא נספר</b> ב-3 החסימות. כדי לחסום משמרת בודדת רביעית — בטלו קודם סימון אחר.`},
   {who:"w", q:"איך רואים את המשמרות שלי ואת הסידור המלא?", k:"צוות הצוות כולמ אחרימ משמרות שלי לראות סידור מלא מתי אני עובד שובצתי שיבוץ שלי פורסם",
    a:`במסך הבית מופיעות <b>"המשמרות שלי"</b> — רק מסידור שהקב"ט פרסם. לסידור של כל הגזרה: <b>📋 סידור מלא</b>. בטלפון הסידור מוצג כשורה לכל יום ועמודה לכל משמרת.`},
   {who:"w", q:"איך מבקשים חילוף משמרת?", k:"חילוף להחליף החלפה מחליף לא יכול להגיע משמרת אחרת",

@@ -214,7 +214,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=112"></script>
+<script src="portal.js?v=113"></script>
 <script>
 (function(){
 "use strict";
@@ -655,7 +655,7 @@ function achTagHtml(w){ return isGuardAchmash(w) ? ` <span class="ach-tag">אח�
    max_blocked_per_week משמרות חסומות בשבוע. תקופות לפני התאריך הזה נשארות במודל הקודם ("מה כן יכול"). */
 function teamBlockingAt(team, dateStr){ return !!team && (isMokedTeam(team) || (!!team.blocking_from && String(dateStr||"") >= String(team.blocking_from))); }
 function guardBlockingAt(team, dateStr){ return !!team && !isMokedTeam(team) && teamBlockingAt(team, dateStr); }
-/* כמה משמרות חסומות בכל שבוע (ראשון-שבת). סימון "יום שלם" (חסימת כל היום / חופשה / מילואים / מחלה / לימודים / אחר) לא נספר
+/* כמה משמרות חסומות בכל שבוע (ראשון-שבת). סימון "יום שלם" (חופשה / מילואים / מחלה / לימודים / אחר) לא נספר
    במכסת החסימות (2026-10-22, סרגיי) - נספרות רק משמרות בודדות שסומנו ✕. */
 function blockedCountsByWeek(team, dates, entries){
   const out = {};
@@ -668,7 +668,7 @@ function blockedCountsByWeek(team, dates, entries){
   });
   return out;
 }
-/* בטופס של חיפה (מודל החסימות) "לא יכול" ליום שלם מוצג כ"חסימת כל היום" */
+/* בטופס של חיפה (מודל החסימות) אין כפתור "לא יכול" ליום שלם - משתמשים ב"אחר" (2026-10-22, סרגיי). הגשה ישנה עם "לא יכול" מוצגת כ"חסימת כל היום" */
 function dayStatusLabel(t, guardBlocking){ return (guardBlocking && t==="unavailable") ? "חסימת כל היום" : SHIFT_LABELS[t]; }
 function isSessionPin(){ return typeof S.pin==="string" && (S.pin.startsWith("mgr:") || S.pin.startsWith("wrk:")); }
 function actorName(){ return isSessionPin() ? (S.actorName || "") : "קוד עריכה"; }
@@ -786,7 +786,7 @@ function renderSubmitPeriod(){
     const dayStatusRow = `
       <div class="chip-opts" style="margin-top:6px;">
         <span class="muted" style="align-self:center;">יום שלם:</span>
-        ${(guardBlocking ? ["unavailable","vacation","reserve","sick","study","other"] : DAY_STATUS_TYPES).map(t=>`<div class="chip ${sel.dayStatus===t?"on":""}"${readOnly?"":` data-action="toggle-daystatus" data-date="${d}" data-type="${t}"`}>${dayStatusLabel(t, guardBlocking)}</div>`).join("")}
+        ${(guardBlocking ? ["vacation","reserve","sick","study","other"].concat(sel.dayStatus==="unavailable"?["unavailable"]:[]) : DAY_STATUS_TYPES).map(t=>`<div class="chip ${sel.dayStatus===t?"on":""}"${readOnly?"":` data-action="toggle-daystatus" data-date="${d}" data-type="${t}"`}>${dayStatusLabel(t, guardBlocking)}</div>`).join("")}
       </div>`;
     if(sel.dayStatus){
       return `
@@ -828,7 +828,7 @@ function renderSubmitPeriod(){
       ${(!readOnly && guardBlocking) ? `<div class="note-box" style="border-color:#1f4e8c;background:#eef4fb;margin:8px 0;">
           <b>📌 שימו לב — ${maxBlocks ? `אפשר לסמן רק ${maxBlocks} חסימות בשבוע` : "מסמנים רק חסימות"}.</b><br>
           מסמנים (✕) רק את המשמרות שבהן <b>לא</b> יכולים לעבוד. <b>כל שאר המשמרות נחשבות פתוחות לשיבוץ</b> — אין צורך לסמן אותן.<br>
-          <span class="muted" style="font-size:.9em;">יום שלם — <b>חסימת כל היום</b>, חופשה, מילואים, מחלה, לימודים או אחר — מסמנים בשורה "יום שלם" בתחתית כל יום, והוא <b>לא נספר</b> במכסת החסימות.</span></div>
+          <span class="muted" style="font-size:.9em;">יום שלם — חופשה, מילואים, מחלה, לימודים או <b>אחר</b> (לכל סיבה אחרת, עם פירוט בהערה) — מסמנים בשורה "יום שלם" בתחתית כל יום, והוא <b>לא נספר</b> במכסת החסימות.</span></div>
         ${ui.blockMsg ? `<p class="shortage">${escapeHtml(ui.blockMsg)}</p>` : ""}
         ${maxBlocks ? `<div class="banner ${Object.values(weekCounts).some(n=>n>maxBlocks)?"closed":"open"}">חסומות בתקופה: ${Object.keys(weekCounts).length ? Object.keys(weekCounts).sort().map(k=>`${Object.keys(weekCounts).length>1?`שבוע ${fmtDateHeb(k)}: `:""}${weekCounts[k]}/${maxBlocks}`).join(" · ") : `0/${maxBlocks}`}</div>` : ""}` : ""}
       ${(!readOnly && !isMokedTeam(team) && !guardBlocking) ? `<p class="muted">סמנו בכל יום את המשמרות שבהן אתם <b>כן</b> יכולים לעבוד. משמרת שלא תסומן תיחשב כלא זמינה עבורכם. ניתן גם לסמן טווח שעות מותאם נוסף שבו אתם זמינים.<br><b>חובה להתייחס לכל יום</b> — יום שלא מתאים לכם: "לא יכול" או "אחר" (אפשר לפרט בהערה).</p>` : ""}
