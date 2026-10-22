@@ -95,6 +95,23 @@
   .tmpl-table td.tmpl-pos{background:#f4f7fb;font-weight:600;}
   /* (2026-10-21, סרגיי) כל הטבלאות (בוקר/ערב/לילה/משימות) - עמודות ימים ברוחב זהה, אחת מתחת לשנייה */
   .tmpl-fixed{table-layout:fixed;}
+  .sched-mob{display:none;}
+  @media (max-width:700px){ .sched-desk{display:none;} .sched-mob{display:block;} }
+  .mg-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px;margin-bottom:6px;}
+  .mg-table th,.mg-table td{border:1px solid var(--border);padding:3px 2px;vertical-align:top;text-align:center;overflow-wrap:anywhere;}
+  .mg-table thead th{background:#f4f7fb;font-size:12px;}
+  .mg-table th.mg-day{width:44px;background:#f4f7fb;font-size:11px;vertical-align:middle;}
+  .mg-table tr.mg-row{border-top:2px solid #c9d4e2;}
+  .mg-sub{font-size:9.5px;font-weight:400;color:#6b7280;}
+  .mg-n{line-height:1.25;padding:2px 0;} .mg-n + .mg-n{border-top:1px dashed #e5e9f0;}
+  .mg-n .ach-tag{font-size:.62em;padding:0 3px;}
+  .mg-h{font-size:10px;color:#4b5563;white-space:nowrap;}
+  .mg-role{font-size:9px;background:#eef3fa;border-radius:6px;padding:0 3px;color:#1f4e8c;}
+  .mg-bad{color:#b42318;font-weight:700;} .mg-tight{background:#fff3a6;}
+  .mg-sh{color:#6b7280;font-style:italic;}
+  .mg-miss{color:#b42318;font-weight:700;font-size:11px;}
+  .mg-table td.mg-na{background:#2a2a2a;}
+  .mg-tasks td{background:#fff7ec;text-align:right;font-size:11px;}
   .tmpl-fixed th,.tmpl-fixed td{white-space:normal;overflow-wrap:anywhere;}
   .stask-cell{font-size:.9em;min-width:70px;}
   .tmpl-pos-hrs{font-size:.72em;font-weight:400;color:#4b5563;white-space:nowrap;line-height:1.35;}
@@ -164,6 +181,7 @@
   .tmpl-na{background:#0b2545!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
   /* סימון צהוב של "בדיוק 8 שעות מנוחה" - מוצג רק על המסך, לא בפלט (לבקשת סרגיי, 2026-10-07) */
   .tmpl-resttight{background:transparent!important;}
+  .sched-mob{display:none!important;} .sched-desk{display:block!important;}
 }
 </style>
 </head>
@@ -196,7 +214,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=107"></script>
+<script src="portal.js?v=108"></script>
 <script>
 (function(){
 "use strict";
@@ -992,9 +1010,9 @@ function renderAggregate(){
   let quotaSection = "";
   if(group.citySectors.length){
     if(isMoked){
-      quotaSection = renderMokedTemplateGrid(group, dates, ui, "view");
+      quotaSection = responsiveGrid(renderMokedTemplateGrid(group, dates, ui, "view"), group, dates, ui);
     } else {
-      quotaSection = renderTemplateGrid(group, dates, ui, "agg"); // "agg" = תצוגה כמו view, אבל שורות המשימות תמיד מוצגות
+      quotaSection = responsiveGrid(renderTemplateGrid(group, dates, ui, "agg"), group, dates, ui); // "agg" = תצוגה כמו view, אבל שורות המשימות תמיד מוצגות
     }
   } else {
     quotaSection = `<p class="muted">אין נתוני התקנים למוקד — מסך זה מציג ריכוז אילוצים בלבד, ללא בניית סידור.</p>`;
@@ -3086,13 +3104,61 @@ async function confirmPin(){
 }
 
 /* --------- חילופי משמרות (2026-10-11): עותק מקורי של הסידור שפורסם, ותיעוד ההחלפות שבוצעו --------- */
+/* תצוגה מותאמת לטלפון (2026-10-22, סרגיי: "בטלפון... לראות בצורה נוחה, עם כמה שפחות גלילות"): במסך צר הטבלה
+   "מתהפכת" - שורה לכל יום ועמודה לכל משמרת (בוקר / מתואמת / ערב / לילה), השמות אחד מתחת לשני בתוך התא - בלי גלילה
+   הצידה. במסך רחב ובהדפסה - הטבלה הרגילה. שתי הגרסאות נבנות, וה-CSS מציג את המתאימה (sched-desk / sched-mob). */
+const MG_ORDER = {morning:1, coordinated:2, evening:3, night:4};
+const MG_DOW = ["א׳","ב׳","ג׳","ד׳","ה׳","ו׳","ש׳"];
+function renderMobileGrid(group, dates, ui){
+  const workers = ui.workers || [], byId = ui.allWorkersById || {};
+  const wOf = id=>workers.find(x=>x.id===id) || byId[id];
+  const nameOf = id=>{ const w = wOf(id); return w ? w.name : "?"; };
+  const workersById = {}; workers.forEach(w=>workersById[w.id]=w);
+  const abd = {}; (ui.assignments||[]).forEach(a=>{ (abd[a.entry_date]=abd[a.entry_date]||[]).push(a); });
+  const rest = computeRestViolations(ui.allAssignments || ui.assignments || []);
+  return buildTemplateData(group, dates, S.quotas).map(sec=>{
+    if(!sec.buckets.length) return "";
+    const buckets = sec.buckets.slice().sort((a,b)=>(MG_ORDER[a.key]||9)-(MG_ORDER[b.key]||9) || a.minStart.localeCompare(b.minStart));
+    const stdOf = b=>{ const cnt = {}; Object.values(b.perDate).forEach(q=>{ if(q){ const k = `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`; cnt[k]=(cnt[k]||0)+1; } }); return Object.keys(cnt).sort((x,y)=>cnt[y]-cnt[x])[0]||""; };
+    const head = `<tr><th class="mg-day"></th>${buckets.map(b=>`<th>${escapeHtml(b.label.replace(/^משמרת\s+/,""))}<div class="mg-sub" dir="ltr">${escapeHtml(stdOf(b))}</div></th>`).join("")}</tr>`;
+    const rows = dates.map(d=>{
+      const dt = parseDate(d), dow = dt.getDay();
+      let extra = "";
+      if(dow===5 && SHABBAT_CITIES[sec.sector]){ const m = candleLightingMinutes(d, sec.sector); if(m!=null) extra = `🕯️${fmtMinutes(m)}`; }
+      if(dow===6 && SHABBAT_CITIES[sec.sector] && sec.sector!=="מוקד") extra = `מוצ"ש ${motzashStart(d, sec.sector)}`;
+      const cells = buckets.map(b=>{
+        const q = b.perDate[d]; if(!q) return `<td class="mg-na"></td>`;
+        const std = `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
+        let list = tmplAssignedList(abd, d, sec.sector, q.shift_type);
+        if(q.role_counts) list = list.slice().sort((x,y)=>(MOKED_ROLE_ORDER.indexOf(assignmentRole(x, workersById))+9)%9 - (MOKED_ROLE_ORDER.indexOf(assignmentRole(y, workersById))+9)%9);
+        const lines = list.map(a=>{
+          const w = wOf(a.worker_id), hrs = tmplHoursTxt2(group, d, sec.sector, q, a, abd);
+          const role = q.role_counts ? assignmentRole(a, workersById) : null;
+          const bad = rest.has(restKey(a)), tight = !bad && rest.tight && rest.tight.has(restKey(a));
+          return `<div class="mg-n${bad?" mg-bad":(tight?" mg-tight":"")}">${role?`<span class="mg-role">${escapeHtml(role)}</span> `:""}${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="ach-tag">אחמ"ש</span>`:""}${hrs!==std?` <span class="mg-h" dir="ltr">${escapeHtml(hrs)}</span>`:""}</div>`;
+        });
+        tmplShadowList(abd, d, sec.sector, q.shift_type).forEach(sh=>lines.push(`<div class="mg-n mg-sh">${escapeHtml(nameOf(sh.worker_id))} (ח)</div>`));
+        const miss = (q.required_count||0) - list.length;
+        if(miss>0) lines.push(`<div class="mg-miss">חוסר${miss>1?` ×${miss}`:""}</div>`);
+        return `<td>${lines.join("")}</td>`;
+      }).join("");
+      const tasks = (ui.schedTasks||[]).filter(t=>t.sector===sec.sector && t.date===d);
+      const taskRow = tasks.length ? `<tr class="mg-tasks"><td colspan="${buckets.length+1}">📌 ${tasks.map(t=>`<b>${escapeHtml(t.worker_name||"")}</b> — ${escapeHtml(t.title)}${t.start?` <span dir="ltr">(${escapeHtml(tmplHourNum(t.start))}${t.end?"-"+escapeHtml(tmplHourNum(t.end)):""})</span>`:""}`).join(" · ")}</td></tr>` : "";
+      return `<tr class="mg-row"><th class="mg-day">${MG_DOW[dow]}<br>${String(dt.getDate()).padStart(2,"0")}/${String(dt.getMonth()+1).padStart(2,"0")}${extra?`<div class="mg-sub">${extra}</div>`:""}</th>${cells}</tr>${taskRow}`;
+    }).join("");
+    return `<div class="tmpl-sector-head">${escapeHtml(sec.sector)}</div><table class="mg-table"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
+  }).join("");
+}
+function responsiveGrid(desktopHtml, group, dates, ui){
+  return `<div class="sched-desk">${desktopHtml}</div><div class="sched-mob">${renderMobileGrid(group, dates, ui)}</div>`;
+}
 /* צפייה בסידור (2026-10-22, סרגיי: "כל מי שצופה בסידור יראה את זה כמו הקב"ט") - אותה טבלה שהקב"ט רואה בטבלה המרוכזת
    (בוקר/ערב/לילה, גלילה הצידה בטלפון), במקום הפלט המתומצת להדפסה. למנהלים - גם שליחה בוואטסאפ/מייל. */
 function renderScheduleViewer(team){
   const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
   const isMoked = group.citySectors[0]==="מוקד";
   const grid = !group.citySectors.length ? `<p class="muted">אין נתוני התקנים להצגה.</p>`
-    : (isMoked ? renderMokedTemplateGrid(group, dates, ui, "view") : renderTemplateGrid(group, dates, ui, "view"));
+    : responsiveGrid(isMoked ? renderMokedTemplateGrid(group, dates, ui, "view") : renderTemplateGrid(group, dates, ui, "view"), group, dates, ui);
   return `${ui.workerView ? "" : `<div class="row no-print" style="margin-bottom:8px;"><button class="btn ok" data-action="share-open">📤 שליחה בוואטסאפ / מייל</button></div>`}
     <h3 style="margin:4px 0 8px;">${escapeHtml(group.label)} — ${fmtDateHeb(dates[0])} — ${fmtDateHeb(dates[dates.length-1])}</h3>
     ${grid}`;
