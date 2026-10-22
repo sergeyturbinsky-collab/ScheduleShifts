@@ -218,7 +218,8 @@ async function loadTasks(App, session){
   T.data = {loading:true};
   try{
     const team = App.teamById(session.team_id);
-    const periodStart = team ? App.currentPeriodStart(team) : App.fmtDate(new Date());
+    // (2026-10-22) אחרי פרסום הסידור - ההגשה לתקופה שאחריה כבר פתוחה, וזו התקופה שמוצגת כמשימה
+    const periodStart = team ? await App.submitPeriodStart(team) : App.fmtDate(new Date());
     const res = await App.apiRpc("worker_tasks", {p_token: session.token, p_period_start: periodStart});
     T.data = Object.assign({periodStart}, res || {});
   }catch(e){
@@ -4731,7 +4732,7 @@ function onClick(App, a, el){
   }
   if(a==="portal-mgr-resolve") return mgrResolve(App, el.dataset.id, el.dataset.res);
   if(a==="portal-go-submit"){
-    T.data = null;
+    T.data = null; App.S.pubAt = {};
     const s = loadSession(App);
     if(!s) return App.render();
     S.view = "submit";

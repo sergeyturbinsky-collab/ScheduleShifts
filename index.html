@@ -196,7 +196,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=103"></script>
+<script src="portal.js?v=104"></script>
 <script>
 (function(){
 "use strict";
@@ -734,7 +734,12 @@ function renderSubmitPeriod(){
   const ui = S.ui;
   const team = teamById(S.identity.teamId);
   if(!team) return `<div class="card">שגיאה: צוות לא נמצא. <span class="backlink" data-action="reset-identity">זיהוי מחדש</span></div>`;
-  if(!ui.periodStart) ui.periodStart = currentPeriodStart(team);
+  if(!ui.periodStart){
+    if(!ui.periodLoading){ ui.periodLoading = true; submitPeriodStart(team).then(p=>{ ui.periodStart = p; ui.periodLoading = false; render(); }).catch(()=>{ ui.periodStart = currentPeriodStart(team); ui.periodLoading = false; render(); }); }
+    return `<div class="card"><p>טוען...</p></div>`;
+  }
+  const prevP = shiftPeriod(ui.periodStart, team, -1);
+  if(S.pubAt[team.id+"|"+prevP]===undefined){ loadPubAt(team, prevP).then(render); return `<div class="card"><p>טוען...</p></div>`; }
   if(!ui.entries){ loadMySubmission(team); return `<div class="card"><p>טוען...</p></div>`; }
 
   const dates = periodDates(ui.periodStart, team);
@@ -814,6 +819,28 @@ function renderSubmitPeriod(){
   </div>`;
 }
 
+/* פתיחת ההגשה עם פרסום הסידור (2026-10-22, סרגיי): "מהרגע שהמשבץ לוחץ על פרסום הסידור, הסידור לשבוע הבא כבר נפתח
+   להגשה". כלומר - ההגשה לתקופה X נפתחת במוקדם מבין: מועד הפתיחה הרגיל של הצוות, או רגע פרסום הסידור של התקופה שלפניה.
+   הנעילה לא משתנה (בחיפה - רביעי 12:00). זמני הפרסום נטענים מ-schedule_publications ונשמרים ב-S.pubAt. */
+S.pubAt = {};
+async function loadPubAt(team, period, force){
+  const key = team.id+"|"+period;
+  if(!force && S.pubAt[key]!==undefined) return S.pubAt[key];
+  try{
+    const g = sectorGroupForTeam(team);
+    const rows = g.citySectors.length ? await apiGet("schedule_publications", `select=published_at&period_start=eq.${period}&sector=in.(${g.citySectors.map(x=>`"${x}"`).join(",")})`) : [];
+    const ts = (rows||[]).map(r=>new Date(r.published_at).getTime()).filter(x=>!isNaN(x));
+    S.pubAt[key] = ts.length ? Math.min(...ts) : null;
+  }catch(e){ S.pubAt[key] = null; }
+  return S.pubAt[key];
+}
+/* התקופה שמגישים לה עכשיו: התקופה הבאה הרגילה, ואם ההגשה אליה כבר ננעלה והסידור שלה פורסם - התקופה שאחריה */
+async function submitPeriodStart(team){
+  const cur = currentPeriodStart(team);
+  await loadPubAt(team, cur, true);
+  const nxt = shiftPeriod(cur, team, 1);
+  return (computeWindowState(team, cur).state!=="open" && computeWindowState(team, nxt).state==="open") ? nxt : cur;
+}
 function computeWindowState(team, periodStart){
   const base = addDays(parseDate(periodStart), -7); // יום ראשון של השבוע שלפני התקופה
   const now = new Date();
@@ -824,6 +851,9 @@ function computeWindowState(team, periodStart){
     d.setHours(h,m,0,0); openInstant = d.getTime();
     opensAt = `יום ${HEB_DOW[team.open_weekday]} ${team.open_time}`;
   }
+  // נפתח מוקדם - עם פרסום הסידור של התקופה הקודמת
+  const prevPub = S.pubAt[team.id+"|"+shiftPeriod(periodStart, team, -1)];
+  if(typeof prevPub==="number" && prevPub < openInstant){ openInstant = prevPub; opensAt = "עם פרסום הסידור הנוכחי"; }
   if(team.close_weekday!=null && team.close_time){
     const d = addDays(base, team.close_weekday);
     const [h,m] = team.close_time.split(":").map(Number);
@@ -3141,6 +3171,7 @@ async function clearSchedule(){
   ui.loaded = false; await loadAggregateData(team); render();
 }
 async function setSchedulePublished(publish, force){
+  S.pubAt = {}; // (2026-10-22) פרסום/ביטול משנה את מועד פתיחת ההגשה לתקופה הבאה
   const ui = S.ui;
   const team = teamById(ui.teamId);
   const group = sectorGroupForTeam(team);
@@ -4420,7 +4451,7 @@ document.addEventListener("input", function(e){
 });
 
 /* מה שהפורטל (portal.js) צריך מהקוד הראשי */
-const App = { SUPABASE_URL, SUPABASE_ANON_KEY, effQuota, logoStripHtml, S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
+const App = { submitPeriodStart, SUPABASE_URL, SUPABASE_ANON_KEY, effQuota, logoStripHtml, S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
 
 init();
 })();
