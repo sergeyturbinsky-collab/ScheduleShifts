@@ -293,6 +293,20 @@ async function swReg(){
   if(!reg) reg = await navigator.serviceWorker.register("sw.js");
   return reg;
 }
+/* התנתקות (2026-10-22, סרגיי): מסירים גם את המכשיר הזה מרשימת ההתראות של המשתמש, כדי שטלפון של מישהו אחר
+   לא ימשיך לקבל את ההתראות שלו. אם הפונקציה החדשה עוד לא קיימת בשרת - התנתקות רגילה. */
+async function logoutServer(App, kind, token){
+  let ep = "";
+  try{
+    if("serviceWorker" in navigator){
+      const reg = await Promise.race([navigator.serviceWorker.getRegistration(), new Promise(r=>setTimeout(()=>r(null), 2000))]);
+      const sub = reg && reg.pushManager ? await reg.pushManager.getSubscription() : null;
+      if(sub) ep = sub.endpoint;
+    }
+  }catch(e){}
+  try{ await App.apiRpc(kind==="manager" ? "manager_logout2" : "worker_logout2", {p_token: token, p_endpoint: ep}); }
+  catch(e){ App.apiRpc(kind==="manager" ? "manager_logout" : "worker_logout", {p_token: token}).catch(()=>{}); }
+}
 async function saveSub(App, session, sub){
   const j = sub.toJSON();
   await App.apiRpc("worker_push_subscribe", {p_token:session.token, p_endpoint:j.endpoint, p_p256dh:j.keys.p256dh, p_auth:j.keys.auth, p_ua:""});
@@ -4336,7 +4350,11 @@ async function checkMgrPush(App, ms){
     if(!pushSupported()){ MN.state = (isIOS() && !isStandalone()) ? "ios-install" : "unsupported"; return App.render(); }
     if(Notification.permission==="denied"){ MN.state = "denied"; return App.render(); }
     const reg = await swReg(); const sub = await reg.pushManager.getSubscription();
-    MN.state = (sub && Notification.permission==="granted" && await App.apiRpc("manager_push_status", {p_token:ms.token, p_endpoint:sub.endpoint})) ? "on" : "off";
+    if(sub && Notification.permission==="granted"){
+      const known = await App.apiRpc("manager_push_status", {p_token:ms.token, p_endpoint:sub.endpoint});
+      if(!known){ const j = sub.toJSON(); await App.apiRpc("manager_push_subscribe", {p_token:ms.token, p_endpoint:j.endpoint, p_p256dh:j.keys.p256dh, p_auth:j.keys.auth}); } // אחרי התנתקות / משתמש אחר במכשיר - רישום מחדש בשקט
+      MN.state = "on";
+    } else MN.state = "off";
   }catch(e){ MN.state = "off"; }
   App.render();
 }
@@ -4933,7 +4951,7 @@ function onClick(App, a, el){
   if(a==="portal-logout"){
     if(App.navReset) App.navReset();
     const s = loadSession(App);
-    if(s) App.apiRpc("worker_logout", {p_token: s.token}).catch(()=>{});
+    if(s) logoutServer(App, "worker", s.token);
     clearMgrMode(App);
     saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null; T.data = null; F.data = null; N.state = null; SW.list = null; SW.open = false; SW.msg = null; ST.list = null; ST.at = 0;
     return App.render();
@@ -4975,7 +4993,7 @@ function onClick(App, a, el){
   if(a==="portal-mgr-logout"){
     if(App.navReset) App.navReset();
     const ms = loadMgr(App);
-    if(ms) App.apiRpc("manager_logout", {p_token: ms.token}).catch(()=>{});
+    if(ms) logoutServer(App, "manager", ms.token);
     saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null; MN.state = null; INC.pendCount = undefined; INC.opts = null; C.data = null; C.homeCount = undefined; C.month = null; C.sel = null; C.edit = null; CW.data = null; CW.my = null; CW.week = null; CW.lastDone = null; U.data = null; U.error = null; U.loading = false;
     S.view = "home"; S.ui = {};
     return App.render();

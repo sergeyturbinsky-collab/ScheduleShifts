@@ -122,8 +122,10 @@
   /* חוסר 8 שעות מנוחה בין משמרות עוקבות של אותו עובד (ידני/אוטומטי כאחד) - לבקשת סרגיי, 2026-09-28 */
   .tmpl-restwarn{background:var(--danger-bg)!important;color:var(--danger)!important;font-weight:800;box-shadow:inset 0 0 0 2px var(--danger);}
   .tmpl-resttight{background:#fff3a6!important;}
+  .tmpl-longwarn{box-shadow:inset 0 0 0 2px #e8590c!important;background-color:#fff4e6;} .tmpl-longwarn-note{display:block;color:#c2410c;font-size:.78em;font-weight:700;}
   /* בפלט הסידור (מסך התצוגה להדפסה + ההדפסה עצמה) לא מוצגים סימוני מגבלות - לא אדום ולא צהוב (2026-10-07) */
-  #printArea .tmpl-restwarn, #printArea .tmpl-resttight{background:transparent!important;color:inherit!important;box-shadow:none!important;font-weight:inherit!important;}
+  #printArea .tmpl-longwarn-note{display:none;}
+  #printArea .tmpl-restwarn, #printArea .tmpl-resttight, #printArea .tmpl-longwarn{background:transparent!important;color:inherit!important;box-shadow:none!important;font-weight:inherit!important;}
   #printArea .tmpl-restwarn-note{display:none!important;}
   /* בפלט הסידור כל המשבצות באותו גודל: עמודות ימים ברוחב שווה (גם בין הטבלאות של בוקר/ערב/לילה) וגובה אחיד.
      לבקשת סרגיי (2026-10-08) */
@@ -214,7 +216,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=115"></script>
+<script src="portal.js?v=116"></script>
 <script>
 (function(){
 "use strict";
@@ -1720,6 +1722,7 @@ function slotKey(sector, shiftType){ return sector+"|"+shiftType; }
    (אותו מנגנון קיים - לחיצה על התא -> אותו עובד -> שעות מותאמות -> שעת התחלה מאוחרת יותר).
    ================================================================ */
 const REST_HOURS_REQUIRED = 8;
+const LONG_CHAIN_HOURS = 12; // אזהרה על רצף עבודה ארוך מזה (2026-10-22)
 /* טווח הזמן בפועל של שיבוץ נתון: שעות מותאמות אם הוגדרו, אחרת שעות התקן הרגילות לפי S.quotas.
    משמרת שחוצה חצות (סיום <= התחלה) - הסיום מחושב ליום הבא. */
 function shiftInterval(a){
@@ -1751,6 +1754,7 @@ function computeRestViolations(assignments){
   // bad.tight: שיבוצים שלפניהם בדיוק 8 שעות מנוחה (לא פחות - זה כבר אדום) - מסומנים בצהוב במסך בלבד,
   // לא בפלט ההדפסה. לבקשת סרגיי (2026-10-07).
   bad.tight = new Set();
+  bad.long = new Map(); bad.longList = [];
   Object.values(byWorker).forEach(list=>{
     list.sort((x,y)=> x.iv.start - y.iv.start);
     // משמרת בשעות מותאמות שחוצה 2 בלוקים נשמרת כ-2 שורות עם אותן שעות בדיוק - זו אותה משמרת, לא שתיים
@@ -1764,18 +1768,40 @@ function computeRestViolations(assignments){
     // עובד שממשיך ברצף ממשמרת למשמרת (למשל ערב שמסתיים ב-22:30 ולילה שמתחיל ב-22:30) - זו עבודה רציפה,
     // לא "מנוחה קצרה": לא מסמנים באדום, והמנוחה נמדדת מסוף הרצף (2026-10-21, סרגיי)
     let curEnd = uniq.length ? uniq[0].iv.end : null;
+    // רצף עבודה ארוך מ-12 שעות (2026-10-22, סרגיי: "לילה ואז בוקר") - מסומן בכתום בכל המשמרות של הרצף
+    let chain = uniq.length ? [uniq[0]] : [], chainStart = uniq.length ? uniq[0].iv.start : null;
+    const closeChain = ()=>{
+      if(!chain.length) return;
+      const hrs = (curEnd - chainStart) / 3600000;
+      if(hrs > LONG_CHAIN_HOURS + 0.01){
+        chain.forEach(x=>{ bad.long.set(restKey(x.a), hrs); (x.dups||[]).forEach(d=>bad.long.set(restKey(d), hrs)); });
+        bad.longList.push({worker_id: chain[0].a.worker_id, from: chain[0].a.entry_date, to: chain[chain.length-1].a.entry_date, hrs, start: chainStart});
+      }
+    };
     for(let i=1;i<uniq.length;i++){
       // רק משמרת עוקבת נחשבת המשך רציף: מתחילה כשהקודמת נגמרת (או לפני כן) ונגמרת אחריה, ואף אחת מהן לא "מתואמת"
       // (המקבילה לבוקר/ערב). למשל ערב שממשיך ללילה. חפיפה אחרת או פער קצר - נבדקים כרגיל (אדום)
       const prevType = uniq[i-1].a.shift_type, curType = uniq[i].a.shift_type;
-      if(+uniq[i].iv.start <= +curEnd && +uniq[i].iv.end > +curEnd && prevType!=="coordinated" && curType!=="coordinated" && prevType!==curType){ curEnd = uniq[i].iv.end; continue; }
+      if(+uniq[i].iv.start <= +curEnd && +uniq[i].iv.end > +curEnd && prevType!=="coordinated" && curType!=="coordinated" && prevType!==curType){ curEnd = uniq[i].iv.end; chain.push(uniq[i]); continue; }
+      closeChain(); chain = [uniq[i]]; chainStart = uniq[i].iv.start;
       const gapHours = (uniq[i].iv.start - curEnd) / 3600000;
       const target = gapHours < REST_HOURS_REQUIRED ? bad : (Math.abs(gapHours-REST_HOURS_REQUIRED) < 0.01 ? bad.tight : null);
       if(target){ target.add(restKey(uniq[i].a)); (uniq[i].dups||[]).forEach(d=>target.add(restKey(d))); }
       if(+uniq[i].iv.end > +curEnd) curEnd = uniq[i].iv.end;
     }
+    closeChain();
   });
   return bad;
+}
+/* סימון ופירוט של רצף עבודה ארוך מ-12 שעות */
+function longCls(rv, a){ return (a && rv.long && rv.long.has(restKey(a))) ? " tmpl-longwarn" : ""; }
+function longNote(rv, a){ const h = a && rv.long ? rv.long.get(restKey(a)) : null; return h ? `<span class="tmpl-longwarn-note">⚠ ${Math.round(h*10)/10} שעות ברצף</span>` : ""; }
+function longChainBanner(rv, dates, nameOf){
+  const inRange = (rv.longList||[]).filter(x=>dates.includes(x.from) || dates.includes(x.to));
+  if(!inRange.length) return "";
+  return `<div class="note-box no-print" style="border-color:#e8590c;background:#fff4e6;margin:8px 0;"><b>⚠ שיבוץ של יותר מ-${LONG_CHAIN_HOURS} שעות ברצף:</b>
+    ${inRange.sort((a,b)=>a.start-b.start).map(x=>`<div>• ${escapeHtml(nameOf(x.worker_id))} — ${fmtDateHeb(x.from)}${x.to!==x.from?`–${fmtDateHeb(x.to)}`:""}: ${Math.round(x.hrs*10)/10} שעות ברצף</div>`).join("")}
+    <span class="muted" style="font-size:.88em;">המשמרות מסומנות בכתום בטבלה. זו אזהרה בלבד — אפשר להשאיר אם זה מכוון.</span></div>`;
 }
 
 /* --------- מניעת שיבוץ אוטומטי עם פחות מ-8 שעות מנוחה, כברירת מחדל (לבקשת סרגיי, 2026-09-28) ---------
@@ -2137,7 +2163,7 @@ function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDa
       const restBad = restViolations.has(restKey(a));
       const restTight = !restBad && restViolations.tight && restViolations.tight.has(restKey(a));
       const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
-      return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${mode==="manual"?" tmpl-cell":""}" style="opacity:.8;font-style:italic;"${clickAttrs(d, cpos)}>${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
+      return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${mode==="manual"?" tmpl-cell":""}" style="opacity:.8;font-style:italic;"${clickAttrs(d, cpos)}>${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
     }).join("");
     return `<tr class="tmpl-mirror-row"><td class="tmpl-pos">סייר ${pos}<br><span class="muted" style="font-size:.75em;font-weight:400;">(מתואמת)</span>${tmplBucketHoursHtml(coordBucket)}</td>${cells}</tr>`;
   }).join("");
@@ -2189,14 +2215,14 @@ function renderTemplateGrid(group, dates, ui, mode){
           const hoursTxt = a ? tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate) : `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
           const restBad = a && restViolations.has(restKey(a));
           const restTight = a && !restBad && restViolations.tight.has(restKey(a));
-          const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
+          const restNote = (restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "") + longNote(restViolations, a);
           const shadowHtml = tmplShadowHtml(tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, a?[a.worker_id]:[], pos===1), q, id=>{ const x = workers.find(y=>y.id===id) || allWorkersById[id]; return x?x.name:"?"; });
           if(mode==="manual"){
-            const cls = "tmpl-cell" + (w? (restBad?" tmpl-restwarn":(restTight?" tmpl-resttight":"")) : " tmpl-missing");
+            const cls = "tmpl-cell" + (w? (restBad?" tmpl-restwarn":(restTight?" tmpl-resttight":"")) + longCls(restViolations, a) : " tmpl-missing");
             const label = (w? `${escapeHtml(w.name)}${achTagHtml(w)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}` : "חוסר") + shadowHtml;
             return `<td class="${cls}" data-action="tmpl-cell" data-sector="${escapeHtml(secData.sector)}" data-date="${d}" data-type="${q.shift_type}" data-pos="${pos}">${label}</td>`;
           }
-          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}">${escapeHtml(w.name)}${achTagHtml(w)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}${shadowHtml}</td>`;
+          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}">${escapeHtml(w.name)}${achTagHtml(w)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}${shadowHtml}</td>`;
           return `<td class="tmpl-missing">חוסר${shadowHtml}</td>`;
         }).join("");
         return `<tr><td class="tmpl-pos">סייר ${pos}${bucketHrs}</td>${cells}</tr>`;
@@ -2214,7 +2240,8 @@ function renderTemplateGrid(group, dates, ui, mode){
     return `<div class="tmpl-block"><div class="tmpl-sector-head">${escapeHtml(secData.sector)}</div>${bucketsHtml}${schedTasksBlock(secData.sector, dates, ui, mode)}</div>`;
   }).join("");
 
-  return blocksHtml || `<p class="muted">אין תקן מוגדר לגזרות אלו.</p>`;
+  const banner = mode==="manual" ? longChainBanner(restViolations, dates, id=>{ const x = workers.find(y=>y.id===id) || allWorkersById[id]; return x?x.name:"?"; }) : "";
+  return blocksHtml ? banner + blocksHtml : `<p class="muted">אין תקן מוגדר לגזרות אלו.</p>`;
 }
 
 /* פלט PDF מתומצת (2026-10-21, סרגיי: "שהפלט לא יתפרס על פני כל כך הרבה עמודים... כדוגמת טבלת האקסל"):
@@ -2457,8 +2484,8 @@ function renderMokedTemplateGrid(group, dates, ui, mode){
     return picked.map(a=>{
       const w = workersById[a.worker_id];
       const restBad = restViolations.has(restKey(a));
-      const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
-      return `<span class="${restBad?'tmpl-restwarn':''}">${escapeHtml(w?w.name:"?")}<br><span class="muted" style="font-size:.85em;">${tmplHoursTxt2(group,date,sector,q,a,assignmentsByDate)}</span>${restNote}</span>`;
+      const restNote = (restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "") + longNote(restViolations, a);
+      return `<span class="${restBad?'tmpl-restwarn':''}${longCls(restViolations, a)}">${escapeHtml(w?w.name:"?")}<br><span class="muted" style="font-size:.85em;">${tmplHoursTxt2(group,date,sector,q,a,assignmentsByDate)}</span>${restNote}</span>`;
     }).join(' \\ ');
   }
 
