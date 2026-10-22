@@ -4510,7 +4510,7 @@ function renderHome(App){
    בלי בינה מלאכותית חיצונית, בלי עלות. מוצגות התשובות לפי התפקיד (מאבטח/מוקדן או מנהל/קב"ט). שאלות נרשמות
    (help_log) כדי שאפשר יהיה לשפר את המאגר.
    ================================================================ */
-const HELP = { open:false, msgs:[], draft:"" };
+const HELP = { open:false, msgs:[], draft:"", busy:false, ai:null };
 // who: "w" = עובדים (מאבטח/מוקדן), "m" = מנהלים/קב"טים, "a" = כולם
 const HELP_KB = [
   // ---------- עובדים ----------
@@ -4527,7 +4527,7 @@ const HELP_KB = [
   {who:"w", q:"איך רואים את המשמרות שלי ואת הסידור המלא?", k:"צוות הצוות כולמ אחרימ משמרות שלי לראות סידור מלא מתי אני עובד שובצתי שיבוץ שלי פורסם",
    a:`במסך הבית מופיעות <b>"המשמרות שלי"</b> — רק מסידור שהקב"ט פרסם. לסידור של כל הגזרה: <b>📋 סידור מלא</b>. בטלפון הסידור מוצג כשורה לכל יום ועמודה לכל משמרת.`},
   {who:"w", q:"איך מבקשים חילוף משמרת?", k:"חילוף להחליף החלפה מחליף לא יכול להגיע משמרת אחרת",
-   a:`במשמרות שלך לוחצים על המשמרת ובוחרים <b>🔁 בקשת חילוף</b>. העובדים בגזרה והקב"ט מקבלים התראה, ומי שזמין יכול להציע את עצמו. החילוף נכנס לתוקף רק אחרי אישור.`},
+   a:`ב"המשמרות שלי" לוחצים <b>🔁 מבקש חילוף</b>, בוחרים את המשמרת (הערה לא חובה) ו"שלח בקשת חילוף". העובדים בגזרה רואים אותה תחת "🔁 מחפשים מחליף" ומקבלים התראה. מי שלוחץ <b>"לוקח את המשמרת"</b> — החילוף מתבצע מיד (אם אין מניעה: שומר שבת, פחות מ-8 שעות מנוחה, 7 ימים ברצף).`},
   {who:"a", q:"שכחתי את הקוד / המערכת ננעלה לי", k:"קוד שכחתי ננעל נעול נעילה סיסמה טעיתי כניסה להיכנס לא מצליח",
    a:`אחרי 3 טעויות בקוד הכניסה ננעלת ל-30 דקות. הקב"ט מקבל התראה ויכול <b>לפתוח את הנעילה מיד</b> מהמסך שלו. שכחת את הקוד? פנה לקב"ט — הוא רואה את הקוד שלך ב"ניהול עובדים".`},
   {who:"a", q:"איך מפעילים התראות בטלפון?", k:"התראות התראה פוש לא מקבל מגיעות הודעות להפעיל אייפון אנדרואיד מסך הבית להתקין מתקינים התקנה אייקון",
@@ -4669,28 +4669,54 @@ function helpPaint(){
   if(!HELP.open){ r.innerHTML = fab; return; }
   const ex = role==="m" ? "למשל: איך משבצים אוטומטית? מה אומר הצבע האדום? איך שולחים את הסידור בוואטסאפ?" : "למשל: עד מתי אפשר להגיש? שכחתי את הקוד. איך ממלאים דוח פעולה?";
   const msgs = `<div class="help-msg bot">שלום! 👋 כתבו כל שאלה על השימוש במערכת, במילים שלכם.<div class="help-ex">${ex}</div></div>`
-    + HELP.msgs.map(m=>m.me ? `<div class="help-msg me">${helpEsc(m.t)}</div>` : `<div class="help-msg bot">${m.h}</div>`).join("");
+    + HELP.msgs.map(m=>m.me ? `<div class="help-msg me">${helpEsc(m.t)}</div>` : `<div class="help-msg bot">${m.h}</div>`).join("")
+    + (HELP.busy ? `<div class="help-msg bot help-typing"><span></span><span></span><span></span></div>` : "");
   r.innerHTML = `${fab}<div class="help-panel" role="dialog" aria-label="שאלות ותשובות">
     <div class="help-head"><b>💬 שאלות ותשובות</b><span>${HELP.msgs.length?`<span class="help-x" data-help="clear" title="ניקוי השיחה">↺</span>`:""}<span class="help-x" data-help="toggle" title="סגירה">✕</span></span></div>
     <div class="help-body" id="helpBody">${msgs}</div>
-    <div class="help-input"><input type="text" id="helpInput" maxlength="300" placeholder="כתבו שאלה..." value="${helpEsc(HELP.draft)}" autocomplete="off" enterkeyhint="send">
+    <div class="help-input"><input type="text" id="helpInput" ${HELP.busy?"disabled":""} maxlength="300" placeholder="כתבו שאלה..." value="${helpEsc(HELP.draft)}" autocomplete="off" enterkeyhint="send">
       <button type="button" class="btn small" data-help="send">שלח</button></div>
   </div>`;
 }
-function helpAsk(q){
-  q = String(q||"").trim(); if(!q) return;
-  const role = helpRole(), res = helpSearch(q, role);
-  HELP.msgs.push({me:true, t:q});
+// תשובת Claude: טקסט פשוט -> HTML בטוח (רק **הדגשה** ושורות)
+function helpMd(t){ return helpEsc(t).replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>").replace(/\n/g, "<br>"); }
+function helpKeyword(q, role){
+  const res = helpSearch(q, role);
   if(res.length){
     // שאלה שנוגעת לשני נושאים - מקבלים את שתי התשובות
-    HELP.msgs.push({h: res.map(r=>`<div class="help-q">${helpEsc(r.e.q)}</div>${r.e.a}`).join(`<hr class="help-sep">`)});
+    HELP.msgs.push({h: res.map(r=>`<div class="help-q">${helpEsc(r.e.q)}</div>${r.e.a}`).join(`<hr class="help-sep">`),
+                    p: res.map(r=>r.e.q + ": " + r.e.a.replace(/<[^>]+>/g, "")).join("\n")});
   } else {
-    HELP.msgs.push({h:`לא מצאתי תשובה לשאלה הזו 🙏 נסו לנסח אחרת, עם המילה העיקרית (למשל "הגשה", "חילוף", "קוד", "התראות", "דוח פעולה"). אם עדיין לא מסתדר — פנו ${role==="m"?"לסרגיי":"לקב\"ט שלכם"}.`});
+    HELP.msgs.push({h:`לא מצאתי תשובה לשאלה הזו 🙏 נסו לנסח אחרת, עם המילה העיקרית (למשל "הגשה", "חילוף", "קוד", "התראות", "דוח פעולה"). אם עדיין לא מסתדר — פנו ${role==="m"?"לסרגיי":"לקב\"ט שלכם"}.`, p:"לא נמצאה תשובה"});
   }
-  if(HELP.msgs.length > 40) HELP.msgs = HELP.msgs.slice(-40);
-  HELP.draft = "";
   const App = window.__portalApp;
   try{ if(App) App.apiRpc("help_log", {p_question:q.slice(0,300), p_role:role, p_matched: res.length ? res[0].e.q : null}).catch(()=>{}); }catch(e){}
+}
+/* 2026-10-22: קודם שואלים את Claude (פונקציית help-ai בשרת, רק למשתמש מחובר). אם אין חיבור / אין מפתח / שגיאה - הבוט הפשוט עונה */
+async function helpAsk(q){
+  q = String(q||"").trim(); if(!q || HELP.busy) return;
+  const role = helpRole(), App = window.__portalApp;
+  const history = HELP.msgs.slice(-6).map(m=>m.me ? {role:"user", text:m.t} : {role:"assistant", text:m.p||""}).filter(m=>m.text);
+  HELP.msgs.push({me:true, t:q});
+  HELP.draft = "";
+  let done = false;
+  let sess = null; try{ sess = App ? (role==="m" ? loadMgr(App) : loadSession(App)) : null; }catch(e){}
+  if(App && App.SUPABASE_URL && sess && sess.token && HELP.ai !== false){
+    HELP.busy = true; helpPaint(); helpFocus();
+    try{
+      const ctl = new AbortController(); const tm = setTimeout(()=>ctl.abort(), 25000);
+      const res = await fetch(App.SUPABASE_URL + "/functions/v1/help-ai", {method:"POST", signal: ctl.signal,
+        headers:{"Content-Type":"application/json", apikey:App.SUPABASE_ANON_KEY, Authorization:"Bearer "+App.SUPABASE_ANON_KEY},
+        body: JSON.stringify({token: sess.token, who: role, question: q, history})});
+      clearTimeout(tm);
+      const j = res.ok ? await res.json().catch(()=>({})) : {};
+      if(!res.ok || (j.fallback && j.reason==="no key")) HELP.ai = false; // אין בוט AI בסביבה הזו (למשל בדמו) - לא מנסים שוב
+      if(j.answer){ HELP.msgs.push({h: helpMd(j.answer), p: j.answer}); done = true; }
+    }catch(e){}
+    HELP.busy = false;
+  }
+  if(!done) helpKeyword(q, role);
+  if(HELP.msgs.length > 40) HELP.msgs = HELP.msgs.slice(-40);
   helpPaint(); helpFocus();
 }
 if(document.readyState==="loading") document.addEventListener("DOMContentLoaded", helpPaint); else helpPaint();
@@ -4708,6 +4734,9 @@ const HELP_CSS = `
   .help-msg.me{background:#1f4e8c;color:#fff;margin-inline-start:auto;width:fit-content;}
   .help-q{font-weight:700;color:#1f4e8c;margin-bottom:4px;}
   .help-more{margin-top:8px;font-size:.85em;color:#6b7280;}
+  .help-typing span{display:inline-block;width:7px;height:7px;margin:0 2px;border-radius:50%;background:#9aa9bd;animation:helpDot 1s infinite ease-in-out;}
+  .help-typing span:nth-child(2){animation-delay:.15s;} .help-typing span:nth-child(3){animation-delay:.3s;}
+  @keyframes helpDot{0%,80%,100%{opacity:.25;transform:translateY(0);}40%{opacity:1;transform:translateY(-3px);}}
   .help-ex{margin-top:6px;font-size:.85em;color:#6b7280;}
   .help-sep{border:none;border-top:1px dashed #d5dde8;margin:10px 0;}
   .help-input{display:flex;gap:6px;padding:8px;border-top:1px solid #e5e9f0;background:#fff;}
