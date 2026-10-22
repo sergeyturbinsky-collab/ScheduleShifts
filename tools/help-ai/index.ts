@@ -18,13 +18,14 @@ const json = (o: unknown, status = 200) =>
 // המדריך העדכני נטען מהאתר (tools/help-ai/manual.md בריפו) כל 10 דקות, כך שעדכון שלו לא דורש פריסה מחדש של הפונקציה.
 // אם האתר לא זמין - משתמשים בעותק שבתוך הפונקציה (manual.ts).
 const MANUAL_URL = "https://sergeyturbinsky-collab.github.io/ScheduleShifts/tools/help-ai/manual.md";
-let manualCache = { text: MANUAL, at: 0 };
+let manualCache = { text: MANUAL, at: 0, src: "builtin" };
 async function getManual() {
   if (Date.now() - manualCache.at < 600e3) return manualCache.text;
   try {
     const r = await fetch(MANUAL_URL, { cache: "no-store" });
     const t = r.ok ? await r.text() : "";
-    manualCache = { text: t.length > 2000 && t.includes("##") ? t : manualCache.text, at: Date.now() };
+    const ok = t.length > 2000 && t.includes("##");
+    manualCache = { text: ok ? t : manualCache.text, at: Date.now(), src: ok ? "site" : manualCache.src };
   } catch (_) { manualCache.at = Date.now(); }
   return manualCache.text;
 }
@@ -60,9 +61,10 @@ async function whoAmI(who: string, token: string) {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
+    const b = await req.json();
+    if (b.action === "status") { await getManual(); return json({ key: !!Deno.env.get("ANTHROPIC_API_KEY"), manual: manualCache.src, manual_len: manualCache.text.length }); }
     const key = Deno.env.get("ANTHROPIC_API_KEY");
     if (!key) return json({ fallback: true, reason: "no key" });
-    const b = await req.json();
     const q = String(b.question || "").trim().slice(0, 400);
     if (!q) return json({ error: "empty" }, 400);
     const me = await whoAmI(b.who === "m" ? "m" : "w", String(b.token || ""));
