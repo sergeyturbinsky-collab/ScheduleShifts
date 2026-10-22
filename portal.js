@@ -4504,6 +4504,198 @@ function renderHome(App){
   return session ? renderWorkerHome(App, session) : renderLogin(App);
 }
 
+/* ================================================================
+   בוט שאלות ותשובות על תפעול המערכת (2026-10-22, סרגיי): עיגול קטן קבוע בפינת המסך (זז עם הגלילה, לא מסתיר את
+   התוכן). לחיצה פותחת חלון צ'אט קטן: כותבים שאלה במילים שלכם, והבוט מחפש במאגר התשובות (HELP_KB) לפי מילות מפתח -
+   בלי בינה מלאכותית חיצונית, בלי עלות. מוצגות התשובות לפי התפקיד (מאבטח/מוקדן או מנהל/קב"ט). שאלות נרשמות
+   (help_log) כדי שאפשר יהיה לשפר את המאגר.
+   ================================================================ */
+const HELP = { open:false, msgs:[], draft:"" };
+// who: "w" = עובדים (מאבטח/מוקדן), "m" = מנהלים/קב"טים, "a" = כולם
+const HELP_KB = [
+  // ---------- עובדים ----------
+  {who:"w", q:"איך מגישים משמרות / אילוצים?", k:"הגשה הגשת להגיש אילוצים משמרות סידור טופס זמינות לסמן",
+   a:`במסך הבית לוחצים <b>🗓️ משמרות</b>. נפתחת התקופה שפתוחה עכשיו להגשה. בכל יום מסמנים את המשמרות, ובסוף לוחצים <b>שמירה</b>.<br>
+      • בחיפה מסמנים רק את מה ש<b>לא</b> יכולים (✕) — עד 3 חסימות בשבוע. כל השאר נחשב פתוח לשיבוץ.<br>
+      • בגזרות האחרות מסמנים מה <b>כן</b> יכולים, וחובה להתייחס לכל יום.<br>
+      • במוקד מסמנים מה לא יכולים.<br>
+      אפשר לחזור ולעדכן עד שההגשה ננעלת.`},
+  {who:"w", q:"מתי ההגשה נפתחת ומתי ננעלת?", k:"עד מתי להגיש נסגר נסגרת נפתח נפתחת ננעל ננעלת נעילה פתיחה מועד הגשה עד מתי רביעי ראשון",
+   a:`ההגשה לשבוע הבא נפתחת <b>ברגע שהקב"ט מפרסם את הסידור של השבוע הנוכחי</b> (או במועד הפתיחה הקבוע), ונסגרת במועד הקבוע — <b>בחיפה ביום רביעי ב-12:00</b>. בראש טופס ההגשה כתוב תמיד אם הטופס פתוח ועד מתי. פספסת? הקב"ט יכול לפתוח לך הגשה ידנית.`},
+  {who:"w", q:"כמה משמרות אפשר לחסום?", k:"חסימות לחסום חסימה שלוש 3 כמה לא יכול מגבלה",
+   a:`בחיפה אפשר לסמן <b>עד 3 חסימות בשבוע</b>. כל משמרת שלא סומנה נחשבת פתוחה לשיבוץ. חופשה / מילואים / מחלה מסמנים ב"יום שלם" והם לא נספרים בחסימות. כדי לחסום משמרת אחרת — בטלו קודם סימון אחר.`},
+  {who:"w", q:"איך רואים את המשמרות שלי ואת הסידור המלא?", k:"משמרות שלי לראות סידור מלא מתי אני עובד שובצתי שיבוץ שלי פורסם",
+   a:`במסך הבית מופיעות <b>"המשמרות שלי"</b> — רק מסידור שהקב"ט פרסם. לסידור של כל הגזרה: <b>📋 סידור מלא</b>. בטלפון הסידור מוצג כשורה לכל יום ועמודה לכל משמרת.`},
+  {who:"w", q:"איך מבקשים חילוף משמרת?", k:"חילוף להחליף החלפה מחליף לא יכול להגיע משמרת אחרת",
+   a:`במשמרות שלך לוחצים על המשמרת ובוחרים <b>🔁 בקשת חילוף</b>. העובדים בגזרה והקב"ט מקבלים התראה, ומי שזמין יכול להציע את עצמו. החילוף נכנס לתוקף רק אחרי אישור.`},
+  {who:"a", q:"שכחתי את הקוד / המערכת ננעלה לי", k:"קוד שכחתי ננעל נעול נעילה סיסמה טעיתי כניסה להיכנס לא מצליח",
+   a:`אחרי 3 טעויות בקוד הכניסה ננעלת ל-30 דקות. הקב"ט מקבל התראה ויכול <b>לפתוח את הנעילה מיד</b> מהמסך שלו. שכחת את הקוד? פנה לקב"ט — הוא רואה את הקוד שלך ב"ניהול עובדים".`},
+  {who:"a", q:"איך מפעילים התראות בטלפון?", k:"התראות התראה פוש לא מקבל מגיעות הודעות להפעיל אייפון אנדרואיד מסך הבית להתקין מתקינים התקנה אפליקציה אייקון",
+   a:`<b>אנדרואיד:</b> פותחים את האתר בכרום ומאשרים "התראות" כשהמערכת מבקשת.<br><b>אייפון:</b> פותחים בספארי → כפתור השיתוף ⬆️ → <b>"הוסף למסך הבית"</b> → נכנסים מהאייקון החדש ומאשרים התראות (iOS 16.4 ומעלה).<br>אם נפתח מתוך וואטסאפ — לבחור "פתח בדפדפן".`},
+  {who:"w", q:"איך ממלאים דוח פעולה?", k:"דוח פעולה דו״ח אירוע דיווח אירוע למלא דוח סביו סייביו sayvu מספר אירוע",
+   a:`במסך הבית: <b>📝 דוח פעולה</b> → "דוח פעולה חדש". רוב הדוח בלחיצות. חובה: תאריך ושעה, <b>מספר אירוע בסביו (6 ספרות)</b>, כתובת, סוג האירוע, איך התקבל, ו<b>תיאור האירוע במלל חופשי</b>. אפשר לצרף עד 8 תמונות. יצאת באמצע — נשמר כטיוטה. הדוח המנוסח נשלח לקב"ט ולסרגיי.`},
+  {who:"w", q:"איך מדווחים על נזק או תאונה?", k:"נזק תאונה דיווח נזק רכב אופנוע ציוד נשבר",
+   a:`במסך הבית: <b>⚠️ דיווח נזק / תאונה</b>. בוחרים "נזק לציוד" או "תאונה/נזק לכלי רכב", ממלאים את הפרטים ומצרפים תמונות. אם מעורב צד ג׳ — ממלאים גם את פרטיו. הדיווח נשלח לקב"ט ולסרגיי.`},
+  {who:"w", q:"איך מבקשים חופשה / מילואים / מחלה?", k:"חופשה מילואים מחלה בקשה מנהלתית צו 3010 אישור מחלה ימי חופש",
+   a:`במסך הבית: <b>📋 מנהלתיות</b> → בוחרים חופשה / מילואים / מחלה, תאריכים, ומצרפים מסמכים (במילואים — צו מילואים, ובסוף גם טופס 3010; במחלה — אישור מחלה). אפשר להוסיף מסמכים גם אחרי השליחה. תקבל התראה כשהבקשה מאושרת או נדחית.`},
+  {who:"w", q:"איפה רואים את הציוד האישי שלי?", k:"ציוד אישי לוגיסטי מדים קסדה מעיל בקשת ציוד החלפה",
+   a:`במסך הבית: <b>🎒 לוגיסטי</b>. שם מופיעה רשימת הציוד שלך (הקב"ט מזין אותה — אי אפשר לערוך). צריך ציוד נוסף או החלפה? "בקשת ציוד" — בוחרים פריט, כמות, מידה וסיבה.`},
+  {who:"w", q:"איפה הלומדות והבחנים?", k:"לומדה בוחן מבחן הדרכה תרגיל סיכום בקרה קראתי",
+   a:`במסך הבית: <b>🎓 הדרכה</b> — לומדות ובחנים, סיכומי בקרת תרגיל (יש לקרוא ולאשר "קראתי") ותכנים מקב"ט ההדרכות. משימות פתוחות מופיעות גם ברשימת המשימות במסך הבית.`},
+  {who:"w", q:"מה זה משימה שאינה משמרת?", k:"משימה שאינה משמרת משימות שהוטלו עליי שובצתי למשימה ליווי תדריך השתלמות",
+   a:`הקב"ט יכול לשבץ אותך למשימה מחוץ למשמרת (למשל ליווי, תדריך, השתלמות), ליום אחד או לכמה ימים. היא מופיעה במסך הבית תחת <b>"📌 משימות שהוטלו עליי"</b> ומקבלים עליה התראה.`},
+
+  // ---------- מנהלים / קב"טים ----------
+  {who:"m", q:"איך בונים סידור עבודה?", k:"בונים לבנות סידור שיבוץ אוטומטי אוטומטית לשבץ משבצים ידני טבלה מרוכזת חוסר חוסרים נקה לנקות ניקוי למחוק מחיקה",
+   a:`<b>טבלה מרוכזת ובניית סידור</b> → בוחרים גזרה ותקופה.<br>• <b>שיבוץ אוטומטי</b> — טוען את ההגשות העדכניות, משבץ לפי זמינות והוגנות, מעדיף מנוחה מעל 8 שעות, אחמ"ש בכל משמרת, ובסוף מנסה לסגור חוסרים בהחלפה.<br>• <b>שיבוץ ידני</b> — לוחצים על משבצת ובוחרים עובד.<br>• <b>🗑 נקה סידור</b> — מוחק את כל השיבוצים בתקופה (אחרי אישור).<br>בסוף — <b>📢 פרסם סידור</b>.`},
+  {who:"m", q:"מה קורה כשמפרסמים סידור?", k:"פרסום לפרסם פרסם סידור עובדים רואים ביטול פרסום",
+   a:`אחרי <b>📢 פרסם</b> העובדים רואים את הסידור ב"המשמרות שלי" ומקבלים התראה, <b>וההגשה לשבוע הבא נפתחת מיד</b>. שינויים אחרי הפרסום מופיעים אצלם מיד. אם משבץ אחר כבר פרסם — המערכת תשאל אם להמשיך.`},
+  {who:"m", q:"איך שולחים את הסידור בוואטסאפ או במייל?", k:"וואטסאפ ווטסאפ מייל לשלוח שליחה תמונה pdf פלט הדפסה",
+   a:`מתחת לסידור: <b>📤 שליחה בוואטסאפ / מייל</b>. המערכת מכינה תמונה של הסידור ושואלת וואטסאפ או מייל. בטלפון נפתח חלון השיתוף עם התמונה מצורפת; במחשב התמונה מועתקת ונשמרת — מדביקים (Ctrl+V) בהודעה שנפתחה.`},
+  {who:"m", q:"מה המשמעות של אדום וצהוב בסידור?", k:"אדום צהוב טבלה מנוחה 8 שעות שמונה סימון אזהרה רצף צבע",
+   a:`<b>אדום</b> — פחות מ-8 שעות מנוחה בין משמרות (משמרת עוקבת, כמו ערב שממשיך ללילה, לא נחשבת).<br><b>צהוב</b> — בדיוק 8 שעות מנוחה (מותר, אבל גבולי).<br>שיבוץ אוטומטי לא משבץ מי שיגיע ל-7 ימים ברצף או לשבת רביעית ברצף.`},
+  {who:"m", q:"איך משבצים שעות מותאמות?", k:"שעות מותאמות שעה התחלה סיום לשנות שעות חוצה משמרות 16:30",
+   a:`בשיבוץ ידני לוחצים על התא של העובד → <b>שעות מותאמות</b> → בוחרים התחלה וסיום. שעות שחוצות שתי משמרות (למשל 16:30–04:30) מתפצלות אוטומטית לשתי המשמרות ומוצגות בשתיהן.`},
+  {who:"m", q:"איך מגדירים אחמ״ש?", k:"אחמש אחמ״ש אחמ\"ש סייר 1 הגדרת אחראי משמרת",
+   a:`ב<b>ניהול עובדים</b> מסמנים את העובד כאחמ"ש. בשיבוץ האוטומטי יש אחמ"ש בכל משמרת, והוא תמיד "סייר 1". בטבלה מופיעה לידו תגית אחמ"ש.`},
+  {who:"m", q:"איך משבצים משימה שאינה משמרת?", k:"משימה שאינה משמרת מתמשכת חד פעמית שורה משימות להוסיף שורה",
+   a:`בשיבוץ ידני, בתחתית הטבלה ("משימות — לא משמרת"): לוחצים על תא → בוחרים מאבטח → <b>חד פעמית</b> או <b>מתמשכת</b> (מתאריך עד תאריך — נשמרת לכל הימים באותה שורה) → כותבים מה המשימה ושעות. "➕ שורה / ➖ שורה" מוסיפים או מורידים שורות ליום.`},
+  {who:"m", q:"איך פותחים הגשה לעובד שפספס?", k:"פתח הגשה עבורו פספס איחר חריגה לפתוח הגשה לעובד",
+   a:`בטבלה המרוכזת, ברשימת מי שלא הגיש — לוחצים <b>"פתח הגשה עבורו"</b>. העובד יוכל להגיש גם אחרי הנעילה.`},
+  {who:"m", q:"איך פותחים נעילה לעובד?", k:"פתח נעילה נעול ננעל עובד קוד טעה",
+   a:`כשעובד טועה בקוד 3 פעמים — מקבלים התראה, ובראש מסך הבית מופיע <b>🔒 עובדים נעולים</b> עם לחצן <b>🔓 פתח נעילה</b>. אפשר גם מ"ניהול עובדים".`},
+  {who:"m", q:"איך מוסיפים עובד או משנים קוד?", k:"להוסיף עובד חדש קוד אישי למחוק עובד ניהול עובדים",
+   a:`<b>ניהול עובדים</b> → הוספה (שם, קוד אישי, תפקיד), שינוי קוד, סימון אחמ"ש / חפיפה / שומר שבת / יעד משמרות בשבוע, ומחיקה.`},
+  {who:"m", q:"איך מזינים ציוד אישי לעובד?", k:"ציוד אישי לעובדים להזין רשימת ציוד בקשות ציוד",
+   a:`<b>🎒 ציוד אישי לעובדים</b> → בוחרים עובד → כמות ומידה לכל פריט → שמירה. העובד רואה את הרשימה באיזור האישי. בקשות ציוד מהעובדים — ב"בקשות ציוד".`},
+  {who:"m", q:"איפה רואים דוחות פעולה, נזק ואירועים?", k:"דוחות פעולה נזק תאונה sayvu סביו אירוע חריג תחקיר",
+   a:`בכרטיס <b>🚨 דו"ח אירוע חריג</b>: תחקירי SAYVU, <b>📝 דוחות פעולה</b> של המאבטחים ו<b>⚠️ דיווחי נזק/תאונה</b>. חדשים מסומנים באדום עם מונה, ומקבלים עליהם התראה. מכל דוח אפשר להפיק PDF.`},
+  {who:"m", q:"איך מוסיפים משימה אישית עם תזכורת?", k:"משימות שלי משימה אישית תזכורת להזכיר",
+   a:`בכרטיס <b>📝 המשימות שלי</b> → "משימה חדשה" → מה צריך לעשות, תאריך יעד (לא חובה) ו<b>⏰ תזכורת עם התראה</b> בתאריך ושעה. רק את/ה רואה את המשימות.`},
+  {who:"m", q:"איך משתמשים ביומן המשותף?", k:"יומן משותף אירוע משתתפים התראה לכולם להוסיף ליומן",
+   a:`<b>📅 יומן משותף</b> → ➕ הוספה: סוג (אירוע/משימה), תאריך ושעות, אחראי, הערות, ו<b>משתתפים — יקבלו התראה</b> (הסימון הראשון "כולם" שולח לכולם). פריט אישי מופיע רק אצלך, אצל האחראי והמשתתפים.`},
+  {who:"m", q:"איך שולחים הודעה למאבטחים או להנהלה?", k:"הודעה למאבטחים הודעה להנהלה לשלוח הודעה פרסום",
+   a:`בכרטיס <b>✉️ הודעות</b>: "📢 הודעה למאבטחים" (מופיעה אצלם ב"עדכונים והודעות" עם התראה, ורואים כמה קראו) או "📨 הודעה להנהלה".`},
+  {who:"m", q:"איך רואים מי מחובר למערכת?", k:"מחובר מחוברים התחברות סטטוס מי נכנס התראות פעילות",
+   a:`(מנהל מערכת) <b>ניהול מערכת → 👥 סטטוס התחברות</b>: לכל משתמש — מחובר עם/בלי התראות או לא מחובר, וכניסה אחרונה.`}
+];
+function helpNorm(t){
+  return String(t||"").toLowerCase().replace(/[֑-ׇ]/g,"").replace(/[״"׳'`]/g,"")
+    .replace(/ך/g,"כ").replace(/ם/g,"מ").replace(/ן/g,"נ").replace(/ף/g,"פ").replace(/ץ/g,"צ")
+    .replace(/[^א-תa-z0-9 ]+/g," ").replace(/\s+/g," ").trim();
+}
+const HELP_STOP = new Set(["איך","מה","מי","למה","איפה","אני","את","של","על","עם","זה","יש","אין","לי","כן","לא","או","גם","רק","אם","כל","היא","הוא","אפשר","צריך","רוצה","אפשרות","בבקשה","שאלה","the"]);
+function helpTokens(t){
+  const out = new Set();
+  helpNorm(t).split(" ").forEach(w=>{
+    if(!w || HELP_STOP.has(w)) return;
+    out.add(w);
+    // הסרת אותיות שימוש בתחילת מילה (ו/ה/ב/ל/מ/ש/כ) - "בהגשה" -> "הגשה"
+    let x = w; for(let i=0;i<2 && x.length>3 && "והבלמשכ".includes(x[0]);i++){ x = x.slice(1); out.add(x); }
+  });
+  return out;
+}
+let HELP_IDX = null;
+function helpIndex(){
+  if(HELP_IDX) return HELP_IDX;
+  const docs = HELP_KB.map(e=>({e, k:helpTokens(e.k), q:helpTokens(e.q)}));
+  const df = {};
+  docs.forEach(d=>{ new Set([...d.k, ...d.q]).forEach(t=>{ df[t] = (df[t]||0) + 1; }); });
+  return HELP_IDX = {docs, df, n: docs.length};
+}
+// ניקוד: מילה נדירה במאגר שווה יותר ממילה שמופיעה בהרבה תשובות; מילות מפתח שוות יותר מכותרת השאלה; התאמה חלקית (תחילת מילה) - חצי
+function helpSearch(q, role){
+  const qt = helpTokens(q); if(!qt.size) return [];
+  const {docs, df, n} = helpIndex();
+  const idf = t=>Math.log(1 + n / (df[t] || 0.5));
+  return docs.filter(d=>d.e.who==="a" || d.e.who===role || role==="m").map(d=>{
+    let sc = 0;
+    qt.forEach(t=>{
+      if(d.k.has(t)) sc += 1.0 * idf(t);
+      else if(d.q.has(t)) sc += 0.5 * idf(t);
+      else if(t.length>=3){ const hit = [...d.k, ...d.q].find(k=>k.length>=3 && (k.startsWith(t) || t.startsWith(k))); if(hit) sc += 0.5 * idf(hit); }
+    });
+    if(d.e.who===role) sc *= 1.1;
+    return {e:d.e, sc};
+  }).filter(x=>x.sc>=1.2).sort((a,b)=>b.sc-a.sc).filter((x,i,arr)=>i===0 || x.sc >= arr[0].sc*0.45).slice(0,3);
+}
+function helpEsc(t){ return String(t==null?"":t).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function helpRole(){ const App = window.__portalApp; try{ return App && loadMgr(App) ? "m" : "w"; }catch(e){ return "w"; } }
+/* הבוט יושב מחוץ ל-#app (שורש משלו), כך ש-render() של המערכת לא מוחק את מה שמקלידים ולא מקפיץ את הגלילה */
+function helpRoot(){
+  let r = document.getElementById("helpRoot");
+  if(!r){
+    r = document.createElement("div"); r.id = "helpRoot"; r.className = "no-print"; document.body.appendChild(r);
+    r.addEventListener("click", e=>{
+      const el = e.target.closest("[data-help]"); if(!el) return;
+      const a = el.dataset.help;
+      if(a==="toggle"){ HELP.open = !HELP.open; helpPaint(); if(HELP.open) helpFocus(); }
+      else if(a==="send"){ const i = document.getElementById("helpInput"); helpAsk(i ? i.value : HELP.draft); }
+      else if(a==="ask"){ helpAsk(el.dataset.q); }
+      else if(a==="clear"){ HELP.msgs = []; helpPaint(); helpFocus(); }
+    });
+    r.addEventListener("input", e=>{ if(e.target.id==="helpInput") HELP.draft = e.target.value; });
+    r.addEventListener("keydown", e=>{ if(e.key==="Enter" && e.target.id==="helpInput"){ e.preventDefault(); helpAsk(e.target.value); } if(e.key==="Escape"){ HELP.open = false; helpPaint(); } });
+  }
+  return r;
+}
+function helpFocus(){ setTimeout(()=>{ const b = document.getElementById("helpBody"); if(b) b.scrollTop = b.scrollHeight; const i = document.getElementById("helpInput"); if(i && window.innerWidth > 700) i.focus(); }, 30); }
+function helpPaint(){
+  const r = helpRoot(), role = helpRole();
+  const fab = `<button type="button" class="help-fab" data-help="toggle" title="שאלות ותשובות על המערכת" aria-label="עזרה">${HELP.open?"✕":"?"}</button>`;
+  if(!HELP.open){ r.innerHTML = fab; return; }
+  const sugg = HELP_KB.filter(e=>e.who==="a" || e.who===role).slice(0, 8);
+  const msgs = `<div class="help-msg bot">שלום! 👋 כתבו שאלה על השימוש במערכת במילים שלכם, או בחרו נושא:</div>
+      <div class="help-sugg">${sugg.map(e=>`<span class="help-chip" data-help="ask" data-q="${helpEsc(e.q)}">${helpEsc(e.q)}</span>`).join("")}</div>`
+    + HELP.msgs.map(m=>m.me ? `<div class="help-msg me">${helpEsc(m.t)}</div>` : `<div class="help-msg bot">${m.h}</div>`).join("");
+  r.innerHTML = `${fab}<div class="help-panel" role="dialog" aria-label="שאלות ותשובות">
+    <div class="help-head"><b>💬 שאלות ותשובות</b><span>${HELP.msgs.length?`<span class="help-x" data-help="clear" title="ניקוי השיחה">↺</span>`:""}<span class="help-x" data-help="toggle" title="סגירה">✕</span></span></div>
+    <div class="help-body" id="helpBody">${msgs}</div>
+    <div class="help-input"><input type="text" id="helpInput" maxlength="300" placeholder="כתבו שאלה..." value="${helpEsc(HELP.draft)}" autocomplete="off" enterkeyhint="send">
+      <button type="button" class="btn small" data-help="send">שלח</button></div>
+  </div>`;
+}
+function helpAsk(q){
+  q = String(q||"").trim(); if(!q) return;
+  const role = helpRole(), res = helpSearch(q, role);
+  HELP.msgs.push({me:true, t:q});
+  if(res.length){
+    const [first, ...rest] = res;
+    let h = `<div class="help-q">${helpEsc(first.e.q)}</div>${first.e.a}`;
+    if(rest.length) h += `<div class="help-more">אולי התכוונת גם ל:</div>${rest.map(r=>`<span class="help-chip" data-help="ask" data-q="${helpEsc(r.e.q)}">${helpEsc(r.e.q)}</span>`).join("")}`;
+    HELP.msgs.push({h});
+  } else {
+    HELP.msgs.push({h:`לא מצאתי תשובה מדויקת לשאלה הזו 🙏 נסו לנסח במילים אחרות או לבחור נושא מהרשימה למעלה. אם עדיין לא מסתדר — פנו ${role==="m"?"לסרגיי":"לקב\"ט שלכם"}.`});
+  }
+  if(HELP.msgs.length > 40) HELP.msgs = HELP.msgs.slice(-40);
+  HELP.draft = "";
+  const App = window.__portalApp;
+  try{ if(App) App.apiRpc("help_log", {p_question:q.slice(0,300), p_role:role, p_matched: res.length ? res[0].e.q : null}).catch(()=>{}); }catch(e){}
+  helpPaint(); helpFocus();
+}
+if(document.readyState==="loading") document.addEventListener("DOMContentLoaded", helpPaint); else helpPaint();
+const HELP_CSS = `
+  .help-fab{position:fixed;left:14px;bottom:16px;z-index:900;width:44px;height:44px;border-radius:50%;border:none;
+    background:#1f4e8c;color:#fff;font-size:22px;font-weight:800;box-shadow:0 3px 10px rgba(0,0,0,.25);cursor:pointer;opacity:.88;line-height:44px;padding:0;}
+  .help-fab:hover{opacity:1;}
+  .help-panel{position:fixed;left:14px;bottom:68px;z-index:901;width:min(360px, calc(100vw - 28px));max-height:min(520px, calc(100vh - 110px));
+    background:#fff;border:1px solid #c9d4e2;border-radius:14px;box-shadow:0 8px 28px rgba(0,0,0,.22);display:flex;flex-direction:column;overflow:hidden;direction:rtl;}
+  .help-head{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;background:#1f4e8c;color:#fff;}
+  .help-x{cursor:pointer;font-weight:700;padding:0 4px;}
+  .help-body{flex:1;overflow-y:auto;padding:10px;background:#f6f9fd;font-size:.92em;}
+  .help-msg{border-radius:12px;padding:8px 10px;margin:6px 0;line-height:1.5;max-width:92%;}
+  .help-msg.bot{background:#fff;border:1px solid #dfe6ef;}
+  .help-msg.me{background:#1f4e8c;color:#fff;margin-inline-start:auto;width:fit-content;}
+  .help-q{font-weight:700;color:#1f4e8c;margin-bottom:4px;}
+  .help-more{margin-top:8px;font-size:.85em;color:#6b7280;}
+  .help-sugg{margin-top:8px;}
+  .help-chip{display:inline-block;border:1px solid #c9d4e2;background:#fff;border-radius:999px;padding:4px 10px;margin:3px 0 0 4px;cursor:pointer;font-size:.85em;color:#1f4e8c;}
+  .help-chip:hover{background:#eef4fb;}
+  .help-input{display:flex;gap:6px;padding:8px;border-top:1px solid #e5e9f0;background:#fff;}
+  .help-input input{flex:1;min-width:0;}
+  @media print{ .help-fab,.help-panel{display:none!important;} }
+`;
+
 /* ---------- אירועים ---------- */
 function onInput(App, e){
   const t = e.target;
@@ -4784,7 +4976,7 @@ function onClick(App, a, el){
 (function addStyles(){
   if(document.getElementById("portalStyles")) return;
   const st = document.createElement("style"); st.id = "portalStyles";
-  st.textContent = `${AR_CSS}
+  st.textContent = `${AR_CSS}${HELP_CSS}
   .dmg-table{width:100%;border-collapse:collapse;} .dmg-table th,.dmg-table td{border:1px solid var(--border);padding:6px 8px;text-align:right;vertical-align:top;} .dmg-table th{background:#f4f7fb;width:34%;font-weight:600;}
   .dmg-imgs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;} .dmg-imgs img{width:96px;height:96px;object-fit:cover;border-radius:6px;border:1px solid var(--border);}
   .areq-file{position:relative;display:inline-block;} .areq-pdf{display:inline-flex;align-items:center;justify-content:center;width:96px;height:96px;border:1px solid var(--border);border-radius:6px;background:#f7f9fc;font-weight:700;text-decoration:none;}
