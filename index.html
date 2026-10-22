@@ -248,7 +248,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=121"></script>
+<script src="portal.js?v=122"></script>
 <script>
 (function(){
 "use strict";
@@ -1859,8 +1859,15 @@ function computeRestViolations(assignments){
     for(let i=1;i<uniq.length;i++){
       // רק משמרת עוקבת נחשבת המשך רציף: מתחילה כשהקודמת נגמרת (או לפני כן) ונגמרת אחריה, ואף אחת מהן לא "מתואמת"
       // (המקבילה לבוקר/ערב). למשל ערב שממשיך ללילה. חפיפה אחרת או פער קצר - נבדקים כרגיל (אדום)
-      const prevType = uniq[i-1].a.shift_type, curType = uniq[i].a.shift_type;
-      if(+uniq[i].iv.start <= +curEnd && +uniq[i].iv.end > +curEnd && prevType!=="coordinated" && curType!=="coordinated" && prevType!==curType){ curEnd = uniq[i].iv.end; chain.push(uniq[i]); continue; }
+      const curType = uniq[i].a.shift_type;
+      // (2026-10-22, סרגיי: "עובד שמתחיל ב-07 וממשיך עד 19 - לא חריגה של 8 שעות מנוחה")
+      // א. משמרת שהיא הזנב של רצף העבודה הנוכחי באותה גזרה (מתחילה אחריו ונגמרת בדיוק איתו - למשל בוקר 07-19
+      //    וערב 15-19, אותה עבודה שנשמרה בשתי שורות) - חלק מאותו רצף. משמרת שמתחילה באותה שעה (במקביל) נשארת אדומה.
+      if(+uniq[i].iv.start > +uniq[i-1].iv.start && +uniq[i].iv.start < +curEnd && +uniq[i].iv.end === +curEnd && chain.some(x=>x.a.sector===uniq[i].a.sector)){ chain.push(uniq[i]); continue; }
+      // ב. המשך רציף: גם כשהשורה הקודמת היא "מתואם" עם כפיל רגיל באותן שעות (למשל אחמ"ש בחיפה: מתואם+ערב
+      //    16:30-22:30 ואז לילה מ-22:30) - נבדק לפי סוגי המשמרת של כל השורות באותן שעות, לא רק הראשונה
+      const prevTypes = [uniq[i-1].a].concat(uniq[i-1].dups||[]).map(x=>x.shift_type);
+      if(+uniq[i].iv.start > +uniq[i-1].iv.start && +uniq[i].iv.start <= +curEnd && +uniq[i].iv.end > +curEnd && curType!=="coordinated" && prevTypes.some(t=>t!=="coordinated" && t!==curType)){ curEnd = uniq[i].iv.end; chain.push(uniq[i]); continue; }
       closeChain(); chain = [uniq[i]]; chainStart = uniq[i].iv.start;
       const gapHours = (uniq[i].iv.start - curEnd) / 3600000;
       const target = gapHours < REST_HOURS_REQUIRED ? bad : (Math.abs(gapHours-REST_HOURS_REQUIRED) < 0.01 ? bad.tight : null);
