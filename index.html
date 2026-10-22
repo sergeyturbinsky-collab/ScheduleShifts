@@ -270,7 +270,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=129"></script>
+<script src="portal.js?v=130"></script>
 <script>
 (function(){
 "use strict";
@@ -3438,7 +3438,7 @@ function renderOriginalPrint(team){
 function renderSwapHistoryBox(group, dates, teamId){
   const ui = S.ui;
   const key = group.citySectors.join(",") + "|" + dates[0];
-  if(ui.swapHistKey !== key){
+  if(ui.swapHistKey !== key && !ui.workerView){
     ui.swapHistKey = key; ui.swapHist = null;
     apiRpc("swap_history", {p_sectors: group.citySectors, p_from: dates[0], p_to: dates[dates.length-1]})
       .then(r=>{ ui.swapHist = r || []; render(); }).catch(()=>{ ui.swapHist = []; });
@@ -3456,7 +3456,9 @@ function renderSwapHistoryBox(group, dates, teamId){
       <div class="flexbar" style="justify-content:space-between;gap:6px;"><b>🔁 בקשות חילוף פתוחות (${open.length})</b>
         <button class="btn small" data-action="portal-pv" data-page="swap-mgr"${teamId?` data-id="${teamId}"`:""}>לטיפול בבקשות</button></div>
       ${open.map(r=>`<div style="margin-top:4px;">• <b>${escapeHtml(r.worker_name)}</b> — ${fmtDateHeb(r.entry_date)} · ${escapeHtml(SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${escapeHtml(r.sector)}${r.note?` <span class="muted">(${escapeHtml(r.note)})</span>`:""}</div>`).join("")}</div>` : "";
-  const histBtn = hist.length ? `<button class="btn small secondary" data-action="swap-hist-toggle">${ui.showSwapHist?"▲ הסתר היסטוריית החלפות":`📜 היסטוריית החלפות בתקופה (${hist.length})`}</button>` : "";
+  // תיעוד ההחלפות - רק להנהלה (2026-10-22): לא בצפייה של עובד בסידור המלא ולא לעובד עם הרשאת עריכה
+  const mgmt = !S.ui.workerView && !(typeof S.pin==="string" && S.pin.startsWith("wrk:"));
+  const histBtn = (mgmt && hist.length) ? `<button class="btn small secondary" data-action="swap-hist-toggle">${ui.showSwapHist?"▲ הסתר היסטוריית החלפות":`📜 היסטוריית החלפות בתקופה (${hist.length})`}</button>` : "";
   const histHtml = (ui.showSwapHist && hist.length) ? `<div class="muted" style="font-size:.9em;line-height:1.9;margin-top:6px;">${hist.map(r=>`<div>✔ ${fmtDateHeb(r.entry_date)} · ${escapeHtml(SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${escapeHtml(r.sector)}: ${escapeHtml(r.from_name)} ← <b>${escapeHtml(r.to_name||"")}</b> <span style="font-size:.85em;">(${r.by_kind==="m"?"סומן ע״י "+escapeHtml(r.by_name||""):"לקח בעצמו"})</span></div>`).join("")}</div>` : "";
   if(!openHtml && !histBtn) return "";
   return `<div class="no-print" style="margin:8px 0;">${openHtml}${histBtn}${histHtml}</div>`;

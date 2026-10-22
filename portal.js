@@ -143,7 +143,7 @@ function swShiftTxt(App, r){ return `${App.fmtDateHeb(r.entry_date)} · ${App.es
 /* משמרות שמחפשות מחליף במסגרת של העובד + תיעוד החלפות (2026-10-11) */
 function renderSwapBoard(App){
   const esc = App.escapeHtml, B = SW.board || {};
-  const open = B.open || [], hist = B.history || [];
+  const open = B.open || [];
   let h = "";
   if(open.length) h += `<h4 style="margin:14px 0 6px;">🔁 מחפשים מחליף</h4><div class="portal-tasks">${open.map(r=>`<div class="portal-task portal-unread">
       <span class="portal-task-icon">🔁</span>
@@ -153,7 +153,7 @@ function renderSwapBoard(App){
         : SW.confirm===r.id ? `<button class="btn small ok" data-action="portal-swap-take" data-id="${r.id}" ${SW.busy?"disabled":""}>כן, אני לוקח</button> <button class="btn small secondary" data-action="portal-swap-take-no">לא</button>`
         : `<button class="btn small ok" data-action="portal-swap-take-ask" data-id="${r.id}">לוקח את המשמרת</button>`}
     </div>`).join("")}</div>`;
-  if(hist.length) h += `<h4 style="margin:14px 0 6px;">תיעוד החלפות</h4><div class="muted" style="font-size:.9em;line-height:1.9;">${hist.map(r=>`<div>✔ ${swShiftTxt(App, r)}: ${esc(r.from_name)} ← <b>${esc(r.to_name||"")}</b></div>`).join("")}</div>`;
+  // (2026-10-22, סרגיי) תיעוד ההחלפות - רק להנהלה. העובדים רואים רק משמרות שעדיין מחכות למחליף.
   return h;
 }
 function renderSwapPanel(App, session, rows){
