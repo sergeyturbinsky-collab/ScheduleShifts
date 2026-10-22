@@ -3525,6 +3525,40 @@ function renderLoginStatus(App, ms, wrap, loading){
 }
 
 /* ================================================================
+   המשמרות שלי - במסך המנהל (2026-10-22, סרגיי: "שאני אראה גם את המשמרות שאני משובץ אליהן, בנפרד מהמשימות").
+   מנהל שרשום גם כעובד (אותו שם בדיוק) רואה את המשמרות הקרובות שלו. השרת: mgr_my_shifts.
+   ================================================================ */
+const MSH = { data:null, at:0, loading:false, tok:null };
+function mshLoad(App, ms){
+  if(MSH.tok !== ms.token){ MSH.tok = ms.token; MSH.data = null; MSH.at = 0; }
+  if(MSH.loading || (MSH.data && Date.now()-MSH.at < 60000)) return;
+  MSH.loading = true;
+  const from = App.fmtDate(App.addDays(new Date(), -1)), to = App.fmtDate(App.addDays(new Date(), 35));
+  App.apiRpc("mgr_my_shifts", {p_token:ms.token, p_from:from, p_to:to})
+    .then(d=>{ MSH.data = d || {worker:false, shifts:[]}; MSH.at = Date.now(); MSH.loading = false; App.render(); })
+    .catch(()=>{ MSH.data = MSH.data || {worker:false, shifts:[]}; MSH.at = Date.now(); MSH.loading = false; });
+}
+function renderMgrShiftsCard(App, ms){
+  mshLoad(App, ms);
+  const d = MSH.data; if(!d || !d.worker) return "";
+  const esc = App.escapeHtml, today = App.fmtDate(new Date());
+  const startMin = a=>{ const h = hoursOf(App, a); const m = h.match(/^(\d\d):(\d\d)/); return m ? (+m[1])*60 + (+m[2]) : 0; };
+  const rows = (d.shifts||[]).filter(a=>a.entry_date >= today).sort((x,y)=> String(x.entry_date).localeCompare(String(y.entry_date)) || startMin(x)-startMin(y));
+  const body = !rows.length ? `<p class="muted" style="margin:0;">אין משמרות קרובות.</p>` : `<div style="overflow-x:auto;"><table>
+      <thead><tr><th>תאריך</th><th>משמרת</th><th>שעות</th><th>גזרה</th><th></th></tr></thead>
+      <tbody>${rows.map(a=>{
+        const q = quotaFor(App, a), label = App.SHIFT_LABELS[a.shift_type] || (q&&q.label) || a.shift_type;
+        const notes = [];
+        if(a.split_with) notes.push(`⇄ פיצול משמרת עם ${esc(a.split_with)}`);
+        if(a.shadow_of_name) notes.push(`חפיפה (ח) עם ${esc(a.shadow_of_name)}`);
+        if(a.filled_role) notes.push(`בתקן ${esc(a.filled_role)}`);
+        if(!a.published) notes.push(`<span style="color:#8a5a00;">טרם פורסם</span>`);
+        return `<tr${a.entry_date===today?' style="background:#eef6ff;"':""}><td>${App.fmtDateHeb(a.entry_date)}${a.entry_date===today?" <b>(היום)</b>":""}</td><td>${esc(label)}</td><td dir="ltr">${esc(hoursOf(App, a))}</td><td>${esc(a.sector)}</td><td class="muted">${notes.join(" · ")}</td></tr>`;
+      }).join("")}</tbody></table></div>`;
+  return `<div class="card"><h3 style="margin-top:0;">🗓️ המשמרות שלי</h3>${body}</div>`;
+}
+
+/* ================================================================
    עובדים נעולים (2026-10-22, סרגיי): קב"ט/סרגיי רואים במסך הבית מי ננעל אחרי 3 טעויות בקוד ופותחים לו את הנעילה
    בלחיצה (admin_unlock_worker_code עם הסשן). כשעובד ננעל - הקב"ט מקבל התראה. השרת: mgr_locked_workers.
    ================================================================ */
@@ -4657,6 +4691,7 @@ function renderManagerHome(App, ms){
   if(!ms.is_admin) return `${head}
   <div class="mgr-cols"><div class="mgr-main">
   ${renderLockCard(App, ms)}
+  ${renderMgrShiftsCard(App, ms)}
   ${renderTodoCard(App, ms)}
   ${mainHtml}
   </div><div class="mgr-side">${renderCalWeekSide(App, ms)}</div></div>`;
@@ -4685,6 +4720,7 @@ function renderManagerHome(App, ms){
     ${big("unit", "🏢", "ניהול היחידה", "גזרות, אירועים, דוחות, לוגיסטי, הודעות וניהול")}
   </div>
   <div class="team-tile" data-action="portal-pv" data-page="login-status" style="margin-bottom:12px;text-align:center;"><div style="font-size:1.15em;font-weight:800;">🟢 סטטוס מחוברים</div><div class="muted" style="font-size:.85em;margin-top:4px;">מי התחבר למערכת, לפי גזרות — מחוברים, התראות וכניסה אחרונה</div></div>
+  ${renderMgrShiftsCard(App, ms)}
   ${renderLockCard(App, ms)}
   ${renderTodoCard(App, ms)}
   ${renderCalWeekSide(App, ms)}`;
