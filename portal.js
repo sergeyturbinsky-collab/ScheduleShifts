@@ -119,7 +119,7 @@ async function loadShifts(App, session){
   const from = App.fmtDate(App.addDays(new Date(), -1));
   const to = App.fmtDate(App.addDays(new Date(), 35));
   try{
-    P.shifts = (await App.apiRpc("worker_my_shifts", {p_token: session.token, p_from: from, p_to: to})) || [];
+    P.shifts = (await App.apiRpc("worker_my_shifts2", {p_token: session.token, p_from: from, p_to: to}).catch(()=>App.apiRpc("worker_my_shifts", {p_token: session.token, p_from: from, p_to: to}))) || [];
     P.shiftsError = null;
   }catch(e){
     if(/session/i.test(e.message)){ saveSession(App, null); P.shifts=null; }
@@ -203,6 +203,7 @@ function renderMyShifts(App, session){
       const label = App.SHIFT_LABELS[a.shift_type] || (q&&q.label) || a.shift_type;
       const notes = [];
       if(a.shadow_of_name) notes.push(`חפיפה (ח) עם ${esc(a.shadow_of_name)}`);
+      if(a.split_with) notes.push(`⇄ פיצול משמרת עם ${esc(a.split_with)}`);
       if(a.filled_role && a.filled_role!==session.role) notes.push(`בתקן ${esc(a.filled_role)}`);
       const req = openReq[swKey(a)];
       if(req) notes.push(`<span style="color:#8a5a00;font-weight:600;">⏳ ביקשת חילוף</span> <button class="btn small secondary" data-action="portal-swap-cancel" data-id="${req.id}">בטל בקשה</button>`);

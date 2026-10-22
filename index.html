@@ -54,6 +54,9 @@
   /* מסכי לוח המשמרות (טבלה מרוכזת / שיבוץ ידני) - רוחב גדול יותר כדי שהלוח יוצג רחב, לבקשת סרגיי (2026-10-07) */
   main:has(.tmpl-table){max-width:min(1800px,98vw);}
   .tmpl-shadow{display:block;margin-top:3px;padding-top:3px;border-top:1px dashed #bbb;}
+  .tmpl-split{border-top-style:solid;border-top-color:#9bb8d8;}
+  .tmpl-choice{display:flex;flex-direction:column;gap:8px;}
+  .tmpl-choice .btn{text-align:right;line-height:1.35;}
   .card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px;box-shadow:0 1px 3px rgba(20,60,110,.06);}
   h2{font-size:17px;margin:0 0 12px;color:var(--primary-dark);}
   h3{font-size:15px;margin:14px 0 8px;color:var(--primary-dark);}
@@ -245,7 +248,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=120"></script>
+<script src="portal.js?v=121"></script>
 <script>
 (function(){
 "use strict";
@@ -2173,10 +2176,83 @@ function tmplCellShadows(assignmentsByDate, date, sector, shiftType, hostIds, is
   return tmplShadowList(assignmentsByDate, date, sector, shiftType).filter(sh=> hostIds.includes(sh.shadow_of) || (isFirstCell && !regularIds.has(sh.shadow_of)));
 }
 function tmplShadowHtml(shadows, q, nameOf){
-  return shadows.map(sh=>`<span class="tmpl-shadow">${escapeHtml(nameOf(sh.worker_id))} (ח)<br><span class="muted" style="font-size:.85em;">${tmplHoursTxt(q, sh)}</span></span>`).join("");
+  return shadows.map(sh=> sh.split
+    ? `<span class="tmpl-shadow tmpl-split" title="פיצול משמרת">⇄ ${escapeHtml(nameOf(sh.worker_id))}<br><span class="muted" style="font-size:.85em;">${tmplHoursTxt(q, sh)}</span></span>`
+    : `<span class="tmpl-shadow">${escapeHtml(nameOf(sh.worker_id))} (ח)<br><span class="muted" style="font-size:.85em;">${tmplHoursTxt(q, sh)}</span></span>`).join("");
 }
 function tmplShadowText(shadows, q, nameOf){
-  return shadows.map(sh=>` + ${nameOf(sh.worker_id)} (ח) ${tmplHoursTxt(q, sh)}`).join("");
+  return shadows.map(sh=> sh.split ? ` / ${nameOf(sh.worker_id)} ${tmplHoursTxt(q, sh)}` : ` + ${nameOf(sh.worker_id)} (ח) ${tmplHoursTxt(q, sh)}`).join("");
+}
+/* ---------- פיצול משמרת - לבקשת סרגיי (2026-10-22) ----------
+   כשבקוביה כבר משובץ עובד ובוחרים עובד נוסף - שואלים אם להחליף אותו או להוסיף את החדש לצידו
+   (מישהו עושה חצי משמרת ומישהו אחר את החצי השני). העובד שנוסף נשמר כמו חפיפה (shadow_of = העובד
+   שבקוביה, לא תופס מקום נוסף בתקן) עם split = true, ולכל אחד שעות משלו. */
+function restoreShadowRpc(sector, date, shiftType, workerId, hostId, split){
+  return split
+    ? apiRpc("rpc_assignment_set_split", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:workerId, p_split_of:hostId})
+    : apiRpc("rpc_assignment_set_shadow", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:workerId, p_shadow_of:hostId});
+}
+function minToHHMM(m){ m = ((m%1440)+1440)%1440; return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0"); }
+function tmplNameOf(id){ const x=(S.ui.workers||[]).find(y=>y.id===id)||(S.ui.allWorkersById||{})[id]; return x?x.name:"?"; }
+/* מסך הביניים: להחליף או להוסיף (מוצג רק כשבקוביה כבר משובץ עובד אחר) */
+function tmplAddOrReplaceHtml(c, w, slot){
+  const ui = S.ui;
+  if(ui.tmplCellChoice) return "";
+  const host = tmplCellHost(c);
+  if(!host || !w || host.worker_id===w.id) return "";
+  const hostName = escapeHtml(tmplNameOf(host.worker_id)), newName = escapeHtml(w.name);
+  const q = slot ? {start_time:String(slot.start), end_time:String(slot.end)} : null;
+  const hrs = q ? ` <span class="muted" dir="ltr">(${tmplHoursTxt(q, host)})</span>` : "";
+  return `
+    <p>בקוביה הזו כבר משובץ/ת <b>${hostName}</b>${hrs}. מה לעשות עם <b>${newName}</b>?</p>
+    <div class="tmpl-choice">
+      <button class="btn" data-action="tmpl-choice-split">➕ להוסיף את ${newName} — פיצול משמרת<br><span style="font-size:.85em;font-weight:400;">${hostName} עושה חלק מהשעות ו${newName} את השאר</span></button>
+      <button class="btn secondary" data-action="tmpl-choice-replace">🔄 להחליף — להוריד את ${hostName}<br><span style="font-size:.85em;font-weight:400;">ולשבץ את ${newName} במקומו/ה</span></button>
+      ${w.shadow_trainee ? `<button class="btn secondary" data-action="tmpl-hours-shadow">👥 חפיפה (הכשרה) עם ${hostName}</button>` : ""}
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn secondary" data-action="tmpl-hours-back">חזרה לרשימה</button>
+    </div>`;
+}
+/* טופס השעות של הפיצול: מי ראשון, שעת התחלה, שעת ההחלפה ושעת סיום */
+function tmplSplitFormHtml(c, w, slot){
+  const host = tmplCellHost(c);
+  if(!host || !slot) return `<p class="shortage">אין עובד משובץ בקוביה הזו</p>`;
+  const st = String(host.custom_start||slot.start).slice(0,5), en = String(host.custom_end||slot.end).slice(0,5);
+  const [a,b] = rangeMin(st, en);
+  const mid = minToHHMM(Math.round((a+b)/2/30)*30);
+  const hostName = escapeHtml(tmplNameOf(host.worker_id)), newName = escapeHtml(w?w.name:"");
+  return `
+    <p><b>פיצול משמרת</b> בין ${hostName} ל${newName}</p>
+    <div class="field"><label>מי עושה את החלק הראשון?</label>
+      <select id="splitOrder"><option value="host">${hostName} ואחריו/ה ${newName}</option><option value="new">${newName} ואחריו/ה ${hostName}</option></select></div>
+    <div class="row">
+      <div class="field"><label>תחילת המשמרת</label><input type="time" id="splitStart" value="${st}"></div>
+      <div class="field"><label>שעת ההחלפה</label><input type="time" id="splitAt" value="${mid}"></div>
+      <div class="field"><label>סוף המשמרת</label><input type="time" id="splitEnd" value="${en}"></div>
+    </div>
+    <p class="muted">הראשון/ה עובד/ת מתחילת המשמרת עד שעת ההחלפה, והשני/ה משעת ההחלפה עד הסוף. שניהם מופיעים באותה קוביה, ואצל כל אחד מהם במשמרות שלו כתוב עם מי הוא מתחלק.</p>
+    <div class="row" style="margin-top:8px;">
+      <button class="btn" data-action="tmpl-split-confirm">שמירה</button>
+      <button class="btn secondary" data-action="tmpl-choice-back">חזרה</button>
+    </div>`;
+}
+async function tmplSplitConfirm(){
+  const ui = S.ui, c = ui.tmplCell; if(!c) return;
+  const host = tmplCellHost(c), newId = ui.tmplPickedWorker;
+  const team = teamById(ui.teamId), group = sectorGroupForTeam(team);
+  const slot = buildSlots([c.date], group, S.quotas).find(s=>s.sector===c.sector && s.shiftType===c.type);
+  if(!host || !slot || !newId){ ui.tmplCellMsg = "אין עובד משובץ בקוביה הזו"; return render(); }
+  const st = document.getElementById("splitStart").value, sp = document.getElementById("splitAt").value, en = document.getElementById("splitEnd").value;
+  const order = document.getElementById("splitOrder").value;
+  if(!st || !sp || !en){ ui.tmplCellMsg = "יש למלא את כל השעות"; return render(); }
+  const [a,b] = rangeMin(st, en); let m = timeToMinutes(sp); if(m < a) m += 1440;
+  if(!(m > a && m < b)){ ui.tmplCellMsg = "שעת ההחלפה צריכה להיות בין תחילת המשמרת לסופה"; return render(); }
+  const sS = String(slot.start).slice(0,5), sE = String(slot.end).slice(0,5);
+  const norm = (x,y)=> (x===sS && y===sE) ? [null,null] : [x,y];
+  const first = norm(st, sp), second = norm(sp, en);
+  const hostH = order==="host" ? first : second, newH = order==="host" ? second : first;
+  return tmplSaveShadowChange(c, {addShadow:{workerId:newId, hostId:host.worker_id, cs:newH[0], ce:newH[1], split:true}, hostHours:{workerId:host.worker_id, cs:hostH[0], ce:hostH[1]}});
 }
 /* כנ"ל, אך מסונן לתפקיד נתון (למוקד: אחמ"ש/מוקדן) - התפקיד נלקח מהעובד עצמו (roster_workers.role), לא מהשיבוץ */
 /* התפקיד שהשיבוץ ממלא בפועל: filled_role אם הוגדר (למשל אחמ"ש ששובץ לתקן מוקדן - 2026-10-07), אחרת התפקיד של העובד */
@@ -2350,7 +2426,7 @@ function renderCompactPrintGrid(group, dates, ui){
           if(!q || pos>q.required_count) return `<td class="cpt-na"></td>`;
           const a = tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type)[pos-1];
           const shadows = tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, a?[a.worker_id]:[], pos===1)
-            .map(sh=>` + ${escapeHtml(nameOf(sh.worker_id))} (ח)`).join("");
+            .map(sh=> sh.split ? ` / ${escapeHtml(nameOf(sh.worker_id))} <span class="cpt-hrs" dir="ltr">(${tmplHoursTxt(q, sh)})</span>` : ` + ${escapeHtml(nameOf(sh.worker_id))} (ח)`).join("");
           if(!a) return `<td class="cpt-missing">חוסר${shadows}</td>`;
           const w = workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id];
           const hrs = tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate);
@@ -2653,7 +2729,10 @@ function tmplShadowInfoHtml(c){
   const shadows = tmplCellShadowsFor(c);
   if(!shadows.length) return "";
   const nameOf = id=>{ const x=(S.ui.workers||[]).find(y=>y.id===id)||(S.ui.allWorkersById||{})[id]; return x?x.name:"?"; };
-  return `<p class="muted">בחפיפה בתא הזה: ${shadows.map(sh=>`${escapeHtml(nameOf(sh.worker_id))} (ח) <button class="btn small secondary" data-action="tmpl-remove-shadow" data-worker="${sh.worker_id}">הסר חפיפה</button>`).join(" ")}</p>`;
+  const sp = shadows.filter(sh=>sh.split), tr = shadows.filter(sh=>!sh.split);
+  const hm = sh=> sh.custom_start ? ` <span dir="ltr">${String(sh.custom_start).slice(0,5)}-${String(sh.custom_end||"").slice(0,5)}</span>` : "";
+  return (sp.length ? `<p class="muted">בפיצול משמרת בקוביה הזו: ${sp.map(sh=>`${escapeHtml(nameOf(sh.worker_id))}${hm(sh)} <button class="btn small secondary" data-action="tmpl-remove-shadow" data-worker="${sh.worker_id}">הסר מהפיצול</button>`).join(" ")}</p>` : "")
+       + (tr.length ? `<p class="muted">בחפיפה בתא הזה: ${tr.map(sh=>`${escapeHtml(nameOf(sh.worker_id))} (ח) <button class="btn small secondary" data-action="tmpl-remove-shadow" data-worker="${sh.worker_id}">הסר חפיפה</button>`).join(" ")}</p>` : "");
 }
 
 function renderTmplCellOverlay(){
@@ -2693,11 +2772,11 @@ function renderTmplCellOverlay(){
         <h3>${escapeHtml(w?w.name:"")} · ${escapeHtml(c.sector)} · ${fmtDateHeb(c.date)}</h3>
         ${streakNoticeHtml(ui.tmplPickedWorker, c.date, c.type)}
         ${partialNoticeHtml(w, slot)}
-        ${ui.tmplHoursMode!=="custom" ? `
+        ${tmplAddOrReplaceHtml(c, w, slot) || (ui.tmplCellChoice==="split" ? tmplSplitFormHtml(c, w, slot) : ui.tmplHoursMode!=="custom" ? `
           <div class="row">
             <button class="btn" data-action="tmpl-hours-standard">משמרת סטנדרטית</button>
             <button class="btn secondary" data-action="tmpl-hours-custom">שעות מותאמות</button>
-            ${tmplShadowButton(c, w)}
+            ${ui.tmplCellChoice==="replace" ? `<button class="btn secondary" data-action="tmpl-choice-back">חזרה</button>` : tmplShadowButton(c, w)}
           </div>
         ` : `
           <div class="row">
@@ -2709,7 +2788,7 @@ function renderTmplCellOverlay(){
             <button class="btn" data-action="tmpl-hours-confirm">אישור</button>
             <button class="btn secondary" data-action="tmpl-hours-back">חזרה</button>
           </div>
-        `}
+        `)}
         <div class="row" style="margin-top:10px;">
           <button class="btn secondary" data-action="tmpl-cell-close">ביטול</button>
         </div>
@@ -2835,11 +2914,11 @@ function renderMokedCellOverlay(){
         <h3>${escapeHtml(w?w.name:"")} · ${escapeHtml(c.role)} · ${fmtDateHeb(c.date)}</h3>
         ${streakNoticeHtml(ui.tmplPickedWorker, c.date, c.type)}
         ${partialNoticeHtml(w, slot)}
-        ${ui.tmplHoursMode!=="custom" ? `
+        ${tmplAddOrReplaceHtml(c, w, slot) || (ui.tmplCellChoice==="split" ? tmplSplitFormHtml(c, w, slot) : ui.tmplHoursMode!=="custom" ? `
           <div class="row">
             <button class="btn" data-action="tmpl-hours-standard">משמרת סטנדרטית</button>
             <button class="btn secondary" data-action="tmpl-hours-custom">שעות מותאמות</button>
-            ${tmplShadowButton(c, w)}
+            ${ui.tmplCellChoice==="replace" ? `<button class="btn secondary" data-action="tmpl-choice-back">חזרה</button>` : tmplShadowButton(c, w)}
           </div>
         ` : `
           <div class="row">
@@ -2851,7 +2930,7 @@ function renderMokedCellOverlay(){
             <button class="btn" data-action="tmpl-hours-confirm">אישור</button>
             <button class="btn secondary" data-action="tmpl-hours-back">חזרה</button>
           </div>
-        `}
+        `)}
         <div class="row" style="margin-top:10px;">
           <button class="btn secondary" data-action="tmpl-cell-close">ביטול</button>
         </div>
@@ -2944,7 +3023,7 @@ async function setAssignmentListPreservingHours(sector, date, shiftType, list, m
   const drop = opts.dropShadowIds || [];
   const addId = opts.addShadow ? opts.addShadow.workerId : null;
   const shadowEntries = slotRows.filter(a=>a.shadow_of && !list.includes(a.worker_id) && !drop.includes(a.worker_id) && a.worker_id!==addId)
-    .map(a=>({workerId:a.worker_id, hostId:a.shadow_of, cs:a.custom_start, ce:a.custom_end}));
+    .map(a=>({workerId:a.worker_id, hostId:a.shadow_of, cs:a.custom_start, ce:a.custom_end, split:!!a.split}));
   if(opts.addShadow) shadowEntries.push(opts.addShadow);
   const fullList = list.concat(shadowEntries.map(x=>x.workerId).filter(id=>!list.includes(id)));
   await apiRpc("rpc_assignment_set", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_ids:fullList, p_method:method});
@@ -2959,7 +3038,7 @@ async function setAssignmentListPreservingHours(sector, date, shiftType, list, m
     if(prevRole[wid]) await apiRpc("rpc_assignment_set_role", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:wid, p_role:prevRole[wid]});
   }
   for(const sh of shadowEntries){
-    await apiRpc("rpc_assignment_set_shadow", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:sh.workerId, p_shadow_of:sh.hostId});
+    await restoreShadowRpc(sector, date, shiftType, sh.workerId, sh.hostId, sh.split);
     if(sh.cs || sh.ce) await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:sh.workerId, p_custom_start:sh.cs||null, p_custom_end:sh.ce||null});
   }
 }
@@ -2996,8 +3075,9 @@ async function tmplSaveShadowChange(c, opts){
   let list = tmplAssignedList(assignmentsByDate, c.date, c.sector, c.type).map(a=>a.worker_id);
   if(opts.addShadow) list = list.filter(id=>id!==opts.addShadow.workerId); // עובד שהיה רגיל במשבצת עובר לחפיפה
   try{
-    await setAssignmentListPreservingHours(c.sector, c.date, c.type, list, "manual", null, null, null, opts);
-    ui.tmplCell = null; ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCustomStart=null; ui.tmplCustomEnd=null; ui.tmplCellMsg = null; ui.tmplShowOtherSectors=false; ui.tmplRoleOverride=null;
+    const hh = opts.hostHours; // פיצול: שעות חדשות לעובד שבקוביה (null = משמרת מלאה)
+    await setAssignmentListPreservingHours(c.sector, c.date, c.type, list, "manual", hh?hh.workerId:null, hh?hh.cs:null, hh?hh.ce:null, opts);
+    ui.tmplCell = null; ui.tmplPickedWorker=null; ui.tmplCellChoice=null; ui.tmplHoursMode=null; ui.tmplCustomStart=null; ui.tmplCustomEnd=null; ui.tmplCellMsg = null; ui.tmplShowOtherSectors=false; ui.tmplRoleOverride=null;
     ui.loaded = false;
     await loadAggregateData(teamById(ui.teamId));
   }catch(e){
@@ -3268,7 +3348,7 @@ function renderMobileGrid(group, dates, ui){
           const bad = rest.has(restKey(a)), tight = !bad && rest.tight && rest.tight.has(restKey(a));
           return `<div class="mg-n${bad?" mg-bad":(tight?" mg-tight":"")}">${role?`<span class="mg-role">${escapeHtml(role)}</span> `:""}${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="ach-tag">אחמ"ש</span>`:""}${hrs!==std?` <span class="mg-h" dir="ltr">${escapeHtml(hrs)}</span>`:""}</div>`;
         });
-        tmplShadowList(abd, d, sec.sector, q.shift_type).forEach(sh=>lines.push(`<div class="mg-n mg-sh">${escapeHtml(nameOf(sh.worker_id))} (ח)</div>`));
+        tmplShadowList(abd, d, sec.sector, q.shift_type).forEach(sh=>lines.push(sh.split ? `<div class="mg-n mg-sh">⇄ ${escapeHtml(nameOf(sh.worker_id))} <span class="mg-h" dir="ltr">${escapeHtml(tmplHoursTxt(q, sh))}</span></div>` : `<div class="mg-n mg-sh">${escapeHtml(nameOf(sh.worker_id))} (ח)</div>`));
         const miss = (q.required_count||0) - list.length;
         if(miss>0) lines.push(`<div class="mg-miss">חוסר${miss>1?` ×${miss}`:""}</div>`);
         return `<td>${lines.join("")}</td>`;
@@ -3754,7 +3834,7 @@ async function runAutoAssign(){
       await apiRpc("rpc_assignment_set", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_ids: fullList, p_method:"auto"});
       // rpc_assignment_set מוחק ומכניס מחדש את כל שורות המשבצת - משחזרים חפיפות ושעות מותאמות של שיבוצים קיימים
       for(const a of alreadyAll.filter(x=>x.id)){
-        if(a.shadow_of) await apiRpc("rpc_assignment_set_shadow", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:a.worker_id, p_shadow_of:a.shadow_of});
+        if(a.shadow_of) await restoreShadowRpc(slot.sector, slot.date, slot.shiftType, a.worker_id, a.shadow_of, a.split);
         if(a.custom_start || a.custom_end) await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:a.worker_id, p_custom_start:a.custom_start, p_custom_end:a.custom_end});
         if(a.filled_role) await apiRpc("rpc_assignment_set_role", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:a.worker_id, p_role:a.filled_role});
       }
@@ -3840,7 +3920,7 @@ async function repairShortages(team){
         await apiRpc("rpc_assignment_set", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:type, p_worker_ids:ids, p_method:"auto"});
         for(const a of prev){
           if(!ids.includes(a.worker_id) && !a.shadow_of) continue;
-          if(a.shadow_of) await apiRpc("rpc_assignment_set_shadow", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:type, p_worker_id:a.worker_id, p_shadow_of:a.shadow_of});
+          if(a.shadow_of) await restoreShadowRpc(sector, date, type, a.worker_id, a.shadow_of, a.split);
           if(a.custom_start || a.custom_end) await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:type, p_worker_id:a.worker_id, p_custom_start:a.custom_start, p_custom_end:a.custom_end});
           if(a.filled_role) await apiRpc("rpc_assignment_set_role", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:type, p_worker_id:a.worker_id, p_role:a.filled_role});
         }
@@ -4492,7 +4572,7 @@ function onAppClick(e){
     if(!workerId){ // חוסר/נקה - מיידי
       return c.role ? assignRoleAtPosition(c.sector, c.date, c.type, c.role, c.ridx, null) : assignAtPosition(c.sector, c.date, c.type, c.pos, null);
     }
-    ui.tmplPickedWorker = workerId; ui.tmplHoursMode = null; ui.tmplCellMsg = null; ui.tmplRoleOverride = null; ui.tmplCustomStart = null; ui.tmplCustomEnd = null;
+    ui.tmplPickedWorker = workerId; ui.tmplHoursMode = null; ui.tmplCellMsg = null; ui.tmplRoleOverride = null; ui.tmplCustomStart = null; ui.tmplCustomEnd = null; ui.tmplCellChoice = null;
     return render();
   }
   // אחמ"ש שנבחר למלא תקן מוקדן (שיבוץ ידני) - ראו assignRoleOverrideWorker. שלב 1: בוחרים עובד,
@@ -4501,10 +4581,14 @@ function onAppClick(e){
     const c = ui.tmplCell; if(!c) return;
     const workerId = el.dataset.worker||null;
     if(!workerId) return;
-    ui.tmplPickedWorker = workerId; ui.tmplHoursMode = null; ui.tmplCellMsg = null; ui.tmplRoleOverride = true;
+    ui.tmplPickedWorker = workerId; ui.tmplHoursMode = null; ui.tmplCellMsg = null; ui.tmplRoleOverride = true; ui.tmplCellChoice = null;
     return render();
   }
-  if(a==="tmpl-hours-back"){ ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCellMsg=null; ui.tmplRoleOverride=null; return render(); }
+  if(a==="tmpl-hours-back"){ ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCellMsg=null; ui.tmplRoleOverride=null; ui.tmplCellChoice=null; return render(); }
+  if(a==="tmpl-choice-split"){ ui.tmplCellChoice = "split"; ui.tmplCellMsg = null; return render(); }
+  if(a==="tmpl-choice-replace"){ ui.tmplCellChoice = "replace"; ui.tmplCellMsg = null; return render(); }
+  if(a==="tmpl-choice-back"){ ui.tmplCellChoice = null; ui.tmplCellMsg = null; return render(); }
+  if(a==="tmpl-split-confirm") return tmplSplitConfirm();
   if(a==="tmpl-hours-standard"){
     const c = ui.tmplCell; if(!c) return;
     if(ui.tmplRoleOverride) return assignRoleAtPosition(c.sector, c.date, c.type, c.role, c.ridx, ui.tmplPickedWorker, null, null);
@@ -4537,6 +4621,20 @@ function onAppClick(e){
   }
   if(a==="tmpl-remove-shadow"){
     const c = ui.tmplCell; if(!c) return;
+    // הסרה מפיצול משמרת: השעות של מי שנשאר מתרחבות חזרה על החלק של מי שהוסר (פיצול 2026-10-22)
+    const sh = (ui.assignments||[]).find(x=>x.entry_date===c.date && x.sector===c.sector && x.shift_type===c.type && x.worker_id===el.dataset.worker);
+    const host = sh && sh.split ? (ui.assignments||[]).find(x=>x.entry_date===c.date && x.sector===c.sector && x.shift_type===c.type && x.worker_id===sh.shadow_of) : null;
+    if(host){
+      const slot = buildSlots([c.date], sectorGroupForTeam(teamById(ui.teamId)), S.quotas).find(s=>s.sector===c.sector && s.shiftType===c.type);
+      if(slot){
+        const sS = String(slot.start).slice(0,5), sE = String(slot.end).slice(0,5);
+        let hs = String(host.custom_start||sS).slice(0,5), he = String(host.custom_end||sE).slice(0,5);
+        const ps = String(sh.custom_start||sS).slice(0,5), pe = String(sh.custom_end||sE).slice(0,5);
+        if(he===ps) he = pe; else if(pe===hs) hs = ps;
+        const full = hs===sS && he===sE;
+        return tmplSaveShadowChange(c, {dropShadowIds:[el.dataset.worker], hostHours:{workerId:host.worker_id, cs:full?null:hs, ce:full?null:he}});
+      }
+    }
     return tmplSaveShadowChange(c, {dropShadowIds:[el.dataset.worker]});
   }
   if(a==="tmpl-hours-confirm"){
