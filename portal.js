@@ -1541,29 +1541,46 @@ function eqmLoadWorkers(App, ms){
   if(!EQM.workers && !EQM.wLoading){ EQM.wLoading = true; App.apiRpc("mgr_equipment_workers", {p_token:ms.token}).then(x=>{ EQM.workers = x||[]; EQM.wLoading = false; App.render(); }).catch(e=>{ EQM.workers = []; EQM.wLoading = false; }); }
   return EQM.workers;
 }
-function eqmWaitSummary(){
-  const names = (EQM.items||[]).filter(it=>EQM.waitSel && EQM.waitSel.has(it.id)).map(it=>it.name);
-  return names.length ? "⏳ " + names.join(", ") : "בחרו פריטים שהעובד ממתין להם";
-}
-function eqmWaitingHtml(App, ms, open){
+/* סטטוס לכל פריט (2026-10-22, סרגיי): ✅ קיבל / ❌ לא קיבל / 📦 הוזמן. "לא קיבל" ו"הוזמן" = רשימת המתנה;
+   כל מה שהוזמן מוצג לקב"ט כמשימה מרוכזת בלוגיסטי (לפי פריט ומידה), עד שמסמנים "קיבל". */
+const EQ_STATUS = { received:"✅ קיבל", not_received:"❌ לא קיבל", ordered:"📦 הוזמן" };
+function eqmWaitingHtml(App, ms){
   const esc = App.escapeHtml, ws = eqmLoadWorkers(App, ms);
   if(!ws) return "";
   const list = ws.filter(w=>w.waiting && w.waiting.length);
   if(!list.length) return `<p class="muted" style="margin:8px 0 0;">⏳ רשימת המתנה לציוד: אין כרגע עובדים שממתינים לציוד.</p>`;
+  const day = d=>d ? esc(dmgFmtDate(d).split(" ")[0]) : "";
+  const wLink = (w, inner)=>`<span class="eqw-name" data-action="portal-pv" data-page="equip-edit" data-id="${w.id}" data-name="${esc(w.name)}">${inner}</span>`;
+  // משימה מרוכזת: כל מה שהוזמן, לפי פריט ומידה
+  const ord = {};
+  list.forEach(w=>w.waiting.filter(x=>x.status==="ordered").forEach(x=>{
+    const g = ord[x.item_id] = ord[x.item_id] || {name:x.name, n:0, sizes:{}, people:[]};
+    g.n++; const sz = x.size || "—"; g.sizes[sz] = (g.sizes[sz]||0) + 1; g.people.push({w, size:x.size, at:x.ordered_at});
+  }));
+  const ordKeys = Object.keys(ord), ordN = ordKeys.reduce((s,k)=>s+ord[k].n, 0);
+  const orderTask = ordN ? `<details class="eqw-list eqo-task"${EQM.ordOpen?" open":""}>
+      <summary data-action="portal-eqo-toggle">📦 משימה: הזמנות ציוד שממתינות להגעה — ${ordN} פריטים</summary>
+      <p class="muted" style="margin:6px 0;font-size:.85em;">כשהציוד מגיע ונמסר — פותחים את העובד ומסמנים "✅ קיבל".</p>
+      ${ordKeys.map(k=>{ const g = ord[k]; const sz = Object.keys(g.sizes).filter(s=>s!=="—");
+        return `<div class="portal-task" style="display:block;"><b>${esc(g.name)}</b> × ${g.n}${sz.length?` <span class="muted">(${sz.map(s=>`${esc(s)}${g.sizes[s]>1?` ×${g.sizes[s]}`:""}`).join(", ")})</span>`:""}
+          <div style="font-size:.88em;margin-top:3px;">${g.people.map(x=>wLink(x.w, `${esc(x.w.name)}${x.size?` (${esc(x.size)})`:""}${x.at?` <span class="muted">· הוזמן ${day(x.at)}</span>`:""}`)).join(" · ")}</div></div>`; }).join("")}
+    </details>` : "";
   const nItems = list.reduce((s,w)=>s+w.waiting.length, 0);
-  const since = d=>d ? ` <span class="muted" style="font-size:.85em;">(מ-${esc(dmgFmtDate(d).split(" ")[0])})</span>` : "";
-  return `<details class="eqw-list"${EQM.waitOpen?" open":""}>
+  const waitList = `<details class="eqw-list"${EQM.waitOpen?" open":""}>
     <summary data-action="portal-eqw-toggle">⏳ רשימת המתנה לציוד — ${list.length} עובדים · ${nItems} פריטים</summary>
     ${list.map(w=>`<div class="portal-task" data-action="portal-pv" data-page="equip-edit" data-id="${w.id}" data-name="${esc(w.name)}">
       <span class="portal-task-icon">⏳</span>
-      <span><b>${esc(w.name)}</b> — ${w.waiting.map(x=>`${esc(x.name)}${x.size?` (${esc(x.size)})`:""}${since(x.since)}`).join(", ")}</span></div>`).join("")}
+      <span><b>${esc(w.name)}</b> — ${w.waiting.map(x=>`${esc(x.name)}${x.size?` (${esc(x.size)})`:""} <span class="eqs-tag eqs-${x.status}">${x.status==="ordered"?"📦 הוזמן":"❌ לא קיבל"}</span>${x.since?` <span class="muted" style="font-size:.85em;">(מ-${day(x.since)})</span>`:""}`).join(", ")}</span></div>`).join("")}
   </details>`;
+  return orderTask + waitList;
 }
 document.addEventListener("change", e=>{
-  const t = e.target; if(!t || !t.dataset || !t.dataset.eqmWait || !EQM.waitSel) return;
-  const id = parseInt(t.dataset.eqmWait, 10);
-  if(t.checked) EQM.waitSel.add(id); else EQM.waitSel.delete(id);
-  const s = document.getElementById("eqwSummary"); if(s) s.textContent = eqmWaitSummary();
+  const t = e.target; if(!t || !t.dataset || !t.dataset.eqmStatus || !EQM.statusSel) return;
+  const id = parseInt(t.dataset.eqmStatus, 10);
+  EQM.statusSel[id] = t.value || null;
+  t.className = "eqs-sel" + (t.value ? " eqs-" + t.value : "");
+  // סימון "קיבל" לפריט שהכמות שלו 0 - הכמות עולה ל-1
+  if(t.value==="received"){ const q = document.querySelector(`[data-eqm-qty="${id}"]`); if(q && !(parseInt(q.value,10)>0)) q.value = 1; }
 }, true);
 function renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs){
   const esc = App.escapeHtml;
@@ -1577,11 +1594,11 @@ function renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs){
     const teamName = id=>{ const t = App.teamById(id); return t ? ((t.sectors&&t.sectors.length) ? t.sectors.join(" / ") : t.name) : ""; };
     return wrap(`<h2 style="margin-top:4px;">🎒 ציוד אישי לעובדים</h2>
       <p class="muted">לחצו על עובד כדי להזין או לעדכן את הציוד שברשותו. המאבטח רואה את הרשימה באיזור האישי (לוגיסטי) ולא יכול לערוך אותה.</p>${msgs}
-      ${eqmWaitingHtml(App, ms, true)}
+      ${eqmWaitingHtml(App, ms)}
       ${Object.keys(byTeam).map(tid=>`${Object.keys(byTeam).length>1?`<h3 style="margin:12px 0 4px;">${esc(teamName(tid))}</h3>`:""}
         ${byTeam[tid].map(w=>`<div class="portal-task" data-action="portal-pv" data-page="equip-edit" data-id="${w.id}" data-name="${esc(w.name)}">
           <span class="portal-task-icon">${w.items?"🎒":"➕"}</span>
-          <span><b>${esc(w.name)}</b> · ${w.items?`${w.items} פריטים`:'<span class="muted">עדיין לא הוזן</span>'}${(w.waiting&&w.waiting.length)?` <span class="eqw-badge">⏳ ממתין ל-${w.waiting.length}</span>`:""}${w.updated_at?` <span class="muted" style="font-size:.85em;">· עודכן ${esc(dmgFmtDate(w.updated_at))}</span>`:""}</span></div>`).join("")}`).join("") || `<p class="muted">אין עובדים.</p>`}`);
+          <span><b>${esc(w.name)}</b> · ${w.items?`${w.items} פריטים`:'<span class="muted">עדיין לא הוזן</span>'}${(w.waiting&&w.waiting.length)?` <span class="eqw-badge">⏳ ממתין ל-${w.waiting.length}${w.waiting.some(x=>x.status==="ordered")?` · 📦 ${w.waiting.filter(x=>x.status==="ordered").length} הוזמנו`:""}</span>`:""}${w.updated_at?` <span class="muted" style="font-size:.85em;">· עודכן ${esc(dmgFmtDate(w.updated_at))}</span>`:""}</span></div>`).join("")}`).join("") || `<p class="muted">אין עובדים.</p>`}`);
   }
   if(pg==="equip-edit"){
     if(!EQM.edit || EQM.edit.worker_id !== a.id){
@@ -1590,7 +1607,9 @@ function renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs){
     }
     if(!EQM.items) return loading();
     const cur = {}; (EQM.edit.equipment||[]).forEach(e=>cur[e.item_id] = e);
-    if(!EQM.waitSel || EQM.waitFor !== EQM.edit.worker_id){ EQM.waitFor = EQM.edit.worker_id; EQM.waitSel = new Set((EQM.edit.equipment||[]).filter(e=>e.waiting).map(e=>e.item_id)); }
+    if(!EQM.statusSel || EQM.statusFor !== EQM.edit.worker_id){ EQM.statusFor = EQM.edit.worker_id; EQM.statusSel = {}; (EQM.edit.equipment||[]).forEach(e=>{ EQM.statusSel[e.item_id] = e.status || (e.waiting ? "not_received" : null); }); }
+    const statusCell = it=>{ const v = EQM.statusSel[it.id] || "";
+      return `<select data-eqm-status="${it.id}" class="eqs-sel${v?" eqs-"+v:""}"><option value="">—</option>${Object.keys(EQ_STATUS).map(k=>`<option value="${k}" ${v===k?"selected":""}>${EQ_STATUS[k]}</option>`).join("")}</select>`; };
     const sizeCell = (it, c)=>{
       if(!it.has_size) return '<span class="muted">-</span>';
       const opts = Array.isArray(it.size_options) && it.size_options.length ? it.size_options : null;
@@ -1599,20 +1618,14 @@ function renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs){
       return `<select data-eqm-size="${it.id}" style="width:90px;"><option value="">—</option>${all.map(o=>`<option value="${esc(o)}" ${c.size===o?"selected":""}>${esc(o)}</option>`).join("")}</select>`;
     };
     return wrap(`<h2 style="margin-top:4px;">🎒 ציוד אישי — ${esc(EQM.edit.name)}</h2>
-      <p class="muted">כמה יש לעובד מכל פריט, ומידה אם רלוונטי. פריט שאין לו — 0.</p>
-      <div style="overflow-x:auto;"><table>
-        <thead><tr><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th></tr></thead>
+      <p class="muted">כמה יש לעובד מכל פריט, מידה אם רלוונטי, וסטטוס: ✅ קיבל · ❌ לא קיבל (ממתין) · 📦 הוזמן. "לא קיבל" ו"הוזמן" נכנסים לרשימת ההמתנה, ו"הוזמן" — גם למשימת ההזמנות המרוכזת בלוגיסטי.</p>
+      <div style="overflow-x:auto;"><table class="eqm-table">
+        <thead><tr><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th><th>סטטוס</th></tr></thead>
         <tbody>${EQM.items.map(it=>{ const c = cur[it.id] || {};
           return `<tr><td style="text-align:right;">${esc(it.name)}</td>
             <td><input type="number" min="0" max="50" data-eqm-qty="${it.id}" value="${c.quantity!=null?c.quantity:0}" style="width:70px;"></td>
-            <td>${sizeCell(it, c)}</td></tr>`; }).join("")}</tbody>
+            <td>${sizeCell(it, c)}</td><td>${statusCell(it)}</td></tr>`; }).join("")}</tbody>
       </table></div>
-      <div class="field" style="margin-top:12px;"><label>⏳ ממתין ל...</label>
-        <details class="eqw-pick"><summary id="eqwSummary">${esc(eqmWaitSummary())}</summary>
-          <div class="eqw-opts">${EQM.items.map(it=>`<label><input type="checkbox" data-eqm-wait="${it.id}" ${EQM.waitSel.has(it.id)?"checked":""}> ${esc(it.name)}</label>`).join("")}</div>
-        </details>
-        <p class="muted" style="margin:4px 0 0;font-size:.85em;">פריטים שהעובד ממתין לקבל. הם יופיעו ב"רשימת המתנה לציוד" בעמוד הלוגיסטי, ואצל העובד. כשהפריט נמסר — מורידים את הסימון.</p>
-      </div>
       <div class="row" style="margin-top:10px;"><button class="btn ok" data-action="portal-eqm-save" data-id="${EQM.edit.worker_id}" ${EQM.busy?"disabled":""}>${EQM.busy?"שומר...":"💾 שמירה"}</button></div>${msgs}`);
   }
   return null;
@@ -1620,11 +1633,11 @@ function renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs){
 async function eqmSave(App, el){
   const ms = loadMgr(App); if(!ms || EQM.busy || !EQM.items) return;
   const items = EQM.items.map(it=>{ const q = document.querySelector(`[data-eqm-qty="${it.id}"]`), sz = document.querySelector(`[data-eqm-size="${it.id}"]`);
-    return {item_id: it.id, quantity: Math.max(0, Math.min(50, parseInt(q&&q.value,10)||0)), size: sz ? sz.value : null, waiting: !!(EQM.waitSel && EQM.waitSel.has(it.id))}; });
+    return {item_id: it.id, quantity: Math.max(0, Math.min(50, parseInt(q&&q.value,10)||0)), size: sz ? sz.value : null, status: (EQM.statusSel && EQM.statusSel[it.id]) || ""}; });
   EQM.busy = true; PV.error = null; PV.msg = null; App.render();
   try{
     await App.apiRpc("mgr_worker_equipment_save", {p_token:ms.token, p_worker_id:el.dataset.id, p_items:items});
-    EQM.busy = false; EQM.workers = null; EQM.edit = null; EQM.waitSel = null; PV.msg = "רשימת הציוד נשמרה — העובד רואה אותה באיזור האישי.";
+    EQM.busy = false; EQM.workers = null; EQM.edit = null; EQM.statusSel = null; PV.msg = "רשימת הציוד נשמרה — העובד רואה אותה באיזור האישי.";
   }catch(e){ EQM.busy = false; PV.error = e.message; }
   App.render();
 }
@@ -1650,9 +1663,9 @@ function renderLogisticsInner(App, session){
       <tbody>${owned.map(it=>`<tr><td style="text-align:right;">${esc(it.name)}</td><td>${eqById[it.id].quantity}</td><td>${esc(eqById[it.id].size||"-")}</td></tr>`).join("")}</tbody>
     </table></div>` : `<p class="muted">הקב"ט עדיין לא הזין את רשימת הציוד שלך.</p>`}
     ${(()=>{ const wt = L.items.filter(it=>eqById[it.id] && eqById[it.id].waiting);
-      return wt.length ? `<h3>⏳ ממתין ל...</h3><p class="muted" style="margin-top:-6px;">ציוד שהקב"ט רשם שאת/ה ממתין/ה לקבל.</p>
+      return wt.length ? `<h3>⏳ ממתין ל...</h3><p class="muted" style="margin-top:-6px;">ציוד שהקב"ט רשם שאת/ה ממתין/ה לקבל. "📦 הוזמן" — הציוד הוזמן ובדרך.</p>
         <ul style="margin:0;padding-inline-start:20px;line-height:1.9;">${wt.map(it=>{ const e = eqById[it.id];
-          return `<li><b>${esc(it.name)}</b>${e.size?` (${esc(e.size)})`:""}${e.waiting_since?` <span class="muted" style="font-size:.85em;">· מ-${esc(App.fmtDateHeb(String(e.waiting_since).slice(0,10)))}</span>`:""}</li>`; }).join("")}</ul>` : ""; })()}
+          return `<li><b>${esc(it.name)}</b>${e.size?` (${esc(e.size)})`:""} <span class="eqs-tag eqs-${e.status==="ordered"?"ordered":"not_received"}">${e.status==="ordered"?"📦 הוזמן":"❌ טרם התקבל"}</span>${e.waiting_since?` <span class="muted" style="font-size:.85em;">· מ-${esc(App.fmtDateHeb(String(e.waiting_since).slice(0,10)))}</span>`:""}</li>`; }).join("")}</ul>` : ""; })()}
 
     <h3>בקשת החלפה / ציוד נוסף</h3>
     <p class="muted" style="margin-top:-6px;">הבקשה נשלחת למנהל שלך. הוא מסמן אם הפריט הוחלף או שנופק לך פריט נוסף, והרשימה שלך מתעדכנת לבד.</p>
@@ -4684,7 +4697,7 @@ const HELP_KB = [
    a:`המשמרות מופיעות רק אחרי ש<b>הקב"ט מפרסם</b> את הסידור — עד אז "המשמרות שלי" ריק. כשהסידור מתפרסם מקבלים התראה. אם הוא פורסם ועדיין לא רואים — לרענן את הדף.`},
   // ---------- מנהלים / קב"טים ----------
   {who:"m", q:"איך בונים סידור עבודה?", k:"בונים לבנות סידור שיבוץ אוטומטי אוטומטית לשבץ משבצים ידני טבלה מרוכזת חוסר חוסרים נקה לנקות ניקוי למחוק מוחקים מחק מחיקה כל הסידור",
-   a:`<b>טבלה מרוכזת ובניית סידור</b> → בוחרים גזרה ותקופה.<br>• <b>שיבוץ אוטומטי</b> — טוען את ההגשות העדכניות, משבץ לפי זמינות והוגנות, מעדיף מנוחה מעל 8 שעות, אחמ"ש בכל משמרת, ובסוף מנסה לסגור חוסרים בהחלפה.<br>• <b>שיבוץ ידני</b> — לוחצים על משבצת ובוחרים עובד.<br>• <b>🗑 נקה סידור</b> — מוחק את כל השיבוצים בתקופה (אחרי אישור).<br>בסוף — <b>📢 פרסם סידור</b>.`},
+   a:`<b>טבלה מרוכזת ובניית סידור</b> → בוחרים גזרה ותקופה.<br>• <b>שיבוץ אוטומטי</b> — טוען את ההגשות העדכניות, משבץ לפי זמינות והוגנות (בחיפה — עדיפות לכל משמרת ל-3 הראשונים שהגישו את הסידור), מעדיף מנוחה מעל 8 שעות, אחמ"ש בכל משמרת, ובסוף מנסה לסגור חוסרים בהחלפה.<br>• <b>שיבוץ ידני</b> — לוחצים על משבצת ובוחרים עובד.<br>• <b>🗑 נקה סידור</b> — מוחק את כל השיבוצים בתקופה (אחרי אישור).<br>בסוף — <b>📢 פרסם סידור</b>.`},
   {who:"m", q:"מה קורה כשמפרסמים סידור?", k:"פרסום לפרסם פרסם סידור עובדים רואים ביטול פרסום",
    a:`אחרי <b>📢 פרסם</b> העובדים רואים את הסידור ב"המשמרות שלי" ומקבלים התראה, <b>וההגשה לשבוע הבא נפתחת מיד</b>. שינויים אחרי הפרסום מופיעים אצלם מיד. אם משבץ אחר כבר פרסם — המערכת תשאל אם להמשיך.`},
   {who:"m", q:"איך שולחים את הסידור בוואטסאפ או במייל?", k:"וואטסאפ ווטסאפ מייל לשלוח שליחה תמונה pdf פלט הדפסה",
@@ -4703,8 +4716,8 @@ const HELP_KB = [
    a:`כשעובד טועה בקוד 3 פעמים — מקבלים התראה, ובראש מסך הבית מופיע <b>🔒 עובדים נעולים</b> עם לחצן <b>🔓 פתח נעילה</b>. אפשר גם מ"ניהול עובדים".`},
   {who:"m", q:"איך מוסיפים עובד או משנים קוד?", k:"להוסיף עובד חדש קוד אישי למחוק עובד ניהול עובדים",
    a:`<b>ניהול עובדים</b> → הוספה (שם, קוד אישי, תפקיד), שינוי קוד, סימון אחמ"ש / חפיפה / שומר שבת / יעד משמרות בשבוע, ומחיקה.`},
-  {who:"m", q:"איך מזינים ציוד אישי לעובד?", k:"ציוד אישי לעובדים להזין רשימת ציוד בקשות ציוד ממתין המתנה רשימת המתנה חגורה מידה",
-   a:`<b>🎒 ציוד אישי לעובדים</b> → בוחרים עובד → כמות ומידה לכל פריט (לחגורה — מידות 36–56) → אפשר לסמן <b>⏳ ממתין ל...</b> (בחירה מרובה) → שמירה. כל הממתינים מופיעים ב"⏳ רשימת המתנה לציוד" בכרטיס הלוגיסטי. העובד רואה את הרשימה באיזור האישי. בקשות ציוד מהעובדים — ב"בקשות ציוד".`},
+  {who:"m", q:"איך מזינים ציוד אישי לעובד?", k:"ציוד אישי לעובדים להזין רשימת ציוד בקשות ציוד ממתין המתנה רשימת המתנה חגורה מידה קיבל הוזמן הזמנה סטטוס",
+   a:`<b>🎒 ציוד אישי לעובדים</b> → בוחרים עובד → כמות ומידה לכל פריט (לחגורה — מידות 36–56) → לכל פריט סטטוס: <b>✅ קיבל / ❌ לא קיבל / 📦 הוזמן</b> → שמירה. "לא קיבל" ו"הוזמן" מופיעים ב"⏳ רשימת המתנה לציוד", וכל מה שהוזמן — ב"📦 משימה: הזמנות ציוד" המרוכזת בכרטיס הלוגיסטי. העובד רואה את הרשימה באיזור האישי. בקשות ציוד מהעובדים — ב"בקשות ציוד".`},
   {who:"m", q:"איפה רואים דוחות פעולה, נזק ואירועים?", k:"מאבטחים מילאו שמילאו דוח דוחות פעולה נזק תאונה sayvu סביו אירוע חריג תחקיר",
    a:`בכרטיס <b>🚨 דו"ח אירוע חריג</b>: תחקירי SAYVU, <b>📝 דוחות פעולה</b> של המאבטחים ו<b>⚠️ דיווחי נזק/תאונה</b>. חדשים מסומנים באדום עם מונה, ומקבלים עליהם התראה. מכל דוח אפשר להפיק PDF.`},
   {who:"m", q:"איך מוסיפים משימה אישית עם תזכורת?", k:"משימות שלי משימה אישית תזכורת להזכיר",
@@ -5114,6 +5127,7 @@ function onClick(App, a, el){
   }
   if(a==="portal-pv-back") return pvBack(App);
   if(a==="portal-eqw-toggle"){ EQM.waitOpen = !(el.parentElement && el.parentElement.open); return; }
+  if(a==="portal-eqo-toggle"){ EQM.ordOpen = !(el.parentElement && el.parentElement.open); return; }
   if(a==="portal-ls-filter"){ LS.filter = el.dataset.k; return App.render(); }
   if(a==="portal-ls-refresh"){ LS.data = null; return App.render(); }
   if(a.indexOf("portal-todo-")===0) return todoAction(App, a, el);
@@ -5163,7 +5177,11 @@ function onClick(App, a, el){
   .eqw-list{margin-top:10px;border:1px solid #f0c36d;background:#fff8e6;border-radius:10px;padding:8px 10px;} .eqw-list summary{cursor:pointer;font-weight:700;color:#8a5a00;}
   .eqw-list .portal-task{background:#fff;margin-top:6px;}
   .eqw-badge{display:inline-block;background:#fff3cd;color:#8a5a00;border-radius:999px;padding:1px 8px;font-size:.82em;font-weight:600;}
-  .eqw-pick{border:1px solid var(--border);border-radius:8px;padding:6px 10px;background:#fff;} .eqw-pick summary{cursor:pointer;}
+  .eqo-task{border-color:#7aa7e6;background:#eef5ff;} .eqo-task summary{color:#0d4a94;}
+  .eqw-name{cursor:pointer;text-decoration:underline;text-decoration-color:#9bb6d8;}
+  .eqs-tag{display:inline-block;border-radius:999px;padding:0 7px;font-size:.8em;font-weight:600;} .eqs-tag.eqs-ordered{background:#dbeafe;color:#0d4a94;} .eqs-tag.eqs-not_received{background:#fde8e7;color:#b42318;}
+  .eqs-sel{max-width:110px;} .eqs-sel.eqs-received{background:#e6f7ec;} .eqs-sel.eqs-not_received{background:#fde8e7;} .eqs-sel.eqs-ordered{background:#dbeafe;}
+  .eqm-table td, .eqm-table th{padding:5px 4px;}
   .eqw-opts{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:4px 10px;margin-top:8px;} .eqw-opts label{display:flex;gap:6px;align-items:center;font-weight:normal;color:#1f2937;font-size:.95em;}
   .logout-bottom{text-align:center;margin:26px 0 8px;} .logout-bottom .btn{min-width:200px;}
   .dmg-table{width:100%;border-collapse:collapse;} .dmg-table th,.dmg-table td{border:1px solid var(--border);padding:6px 8px;text-align:right;vertical-align:top;} .dmg-table th{background:#f4f7fb;width:34%;font-weight:600;}

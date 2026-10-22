@@ -245,7 +245,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=118"></script>
+<script src="portal.js?v=119"></script>
 <script>
 (function(){
 "use strict";
@@ -1496,8 +1496,9 @@ async function loadAggregateData(team){
         exc.forEach(e=>ui.exceptionWorkerIds.add(e.worker_id));
       }catch(e){}
       // --- הערות חופשיות (אופציונלי) שהעובד כתב בעת ההגשה - מוצגות לרואה הטבלה המרוכזת, ראו renderPivot. לבקשת סרגיי (2026-10-06). ---
-      const subs = await apiGet("constraint_submissions", `select=id,worker_id,note&period_start=eq.${ui.periodStart}&worker_id=in.(${workerIds.join(",")})`);
-      subs.forEach(s=>{ ui.submittedWorkerIds.add(s.worker_id); if(s.note && s.note.trim()) ui.workerNotes[s.worker_id] = s.note; });
+      const subs = await apiGet("constraint_submissions", `select=id,worker_id,note,created_at&period_start=eq.${ui.periodStart}&worker_id=in.(${workerIds.join(",")})`);
+      ui.submittedAt = {};
+      subs.forEach(s=>{ ui.submittedWorkerIds.add(s.worker_id); ui.submittedAt[s.worker_id] = s.created_at; if(s.note && s.note.trim()) ui.workerNotes[s.worker_id] = s.note; });
       if(subs.length){
         const subIds = subs.map(s=>s.id);
         const entries = await apiGet("constraint_entries", `select=submission_id,entry_date,shift_type,custom_start,custom_end&submission_id=in.(${subIds.join(",")})`);
@@ -3497,10 +3498,20 @@ async function runAutoAssign(){
       else { ok.push(w); if(wouldBeTightRest(w.id, newInterval, workerIntervals)) tight.add(w.id); }
     });
     tightBySlot.set(slot, tight);
+    if(earlyPriority && !earlyBySlot.has(slot)){
+      const subAt = ui.submittedAt || {};
+      earlyBySlot.set(slot, new Set(candidates.filter(w=>subAt[w.id]).sort((a,b)=>String(subAt[a.id]).localeCompare(String(subAt[b.id]))).slice(0, 3).map(w=>w.id)));
+    }
     return {ok, bad, newInterval};
   }
   // מיון עם העדפה למי שלא יגיע לבדיוק 8 שעות מנוחה (צהוב) - ואז לפי המיון הרגיל
-  const tl = (slot, cmp)=>(a,b)=>{ const t = tightBySlot.get(slot); return (t ? (t.has(a.id)?1:0)-(t.has(b.id)?1:0) : 0) || cmp(a,b); };
+  // חיפה (2026-10-22, סרגיי): "לכל משמרת תהיה עדיפות לשלושת האנשים הראשונים שהגישו אותה בסידור עבודה" -
+  // מבין הזמינים למשמרת, שלושת מי שהגישו ראשונים את טופס ההגשה לתקופה (constraint_submissions.created_at - ההגשה
+  // הראשונה, עדכון מאוחר לא מוריד מקום) קודמים לכל השאר; אחריהם - מנוחה והוגנות כרגיל.
+  const earlyPriority = guardBlockingAt(team, ui.periodStart);
+  const earlyBySlot = new Map(); // slot -> Set(workerId)
+  const earlyRank = (slot, w)=>{ const e = earlyBySlot.get(slot); return e && e.has(w.id) ? 0 : 1; };
+  const tl = (slot, cmp)=>(a,b)=>{ const t = tightBySlot.get(slot); return (earlyRank(slot, a) - earlyRank(slot, b)) || (t ? (t.has(a.id)?1:0)-(t.has(b.id)?1:0) : 0) || cmp(a,b); };
   function recordChosenInterval(workerId, newInterval){
     if(!newInterval) return;
     (workerIntervals[workerId] = workerIntervals[workerId]||[]).push(newInterval);
