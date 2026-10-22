@@ -216,7 +216,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=116"></script>
+<script src="portal.js?v=117"></script>
 <script>
 (function(){
 "use strict";
@@ -2508,7 +2508,7 @@ function renderMokedTemplateGrid(group, dates, ui, mode){
             const firstRole = bucket.roles.find(r=> q.role_counts && (q.role_counts[r]||0)>0);
             const shadowHtml = tmplShadowHtml(tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, picked.map(a=>a.worker_id), role===firstRole && ridx===1), q, id=>{ const x=workersById[id]; return x?x.name:"?"; });
             if(mode==="manual"){
-              const cls = "tmpl-cell" + (picked.length? (anyRestBad?" tmpl-restwarn":(anyRestTight?" tmpl-resttight":"")) : " tmpl-missing");
+              const cls = "tmpl-cell" + (picked.length? (anyRestBad?" tmpl-restwarn":(anyRestTight?" tmpl-resttight":"")) + (picked.some(a=>restViolations.long.has(restKey(a)))?" tmpl-longwarn":"") : " tmpl-missing");
               const label = (picked.length ? cellText(picked, q, secData.sector, d) : "חוסר") + shadowHtml;
               return `<td class="${cls}" data-action="tmpl-cell" data-sector="${escapeHtml(secData.sector)}" data-date="${d}" data-type="${q.shift_type}" data-role="${escapeHtml(role)}" data-ridx="${ridx}">${label}</td>`;
             }
@@ -2530,7 +2530,8 @@ function renderMokedTemplateGrid(group, dates, ui, mode){
     return `<div class="tmpl-block"><div class="tmpl-sector-head">${escapeHtml(secData.sector)}</div>${bucketsHtml}</div>`;
   }).join("");
 
-  return blocksHtml || `<p class="muted">אין תקן מוגדר למוקד.</p>`;
+  const banner = mode==="manual" ? longChainBanner(restViolations, dates, id=>{ const x = workersById[id]; return x?x.name:"?"; }) : "";
+  return blocksHtml ? banner + blocksHtml : `<p class="muted">אין תקן מוגדר למוקד.</p>`;
 }
 
 /* טופס מוקטן "הוסף עובד חדש", מוטמע בתוך overlay של תא שיבוץ (גיאוגרפי או מוקד) - כדי שאפשר יהיה
