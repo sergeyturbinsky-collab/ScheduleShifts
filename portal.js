@@ -286,6 +286,58 @@ function renderTraining(App, session){
 const N = { state:null, checking:false, busy:false, error:null };
 function isIOS(){ return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform==="MacIntel" && navigator.maxTouchPoints>1); }
 function isStandalone(){ return (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone===true; }
+/* ---------- התקנת האפליקציה כתנאי כניסה מהנייד (2026-10-22, סרגיי) ----------
+   אנדרואיד: לפני הפעלת ההתראות - שלב 1 "התקנת האפליקציה" (חלון ההתקנה של כרום בלחיצה, או הסבר ידני כשהדפדפן
+   לא מציע). אחרי שהותקנה (או כשנפתחים מהאייקון) - ממשיכים. אייפון: ההתראות עובדות רק מהאפליקציה המותקנת, ולכן
+   ההתקנה ממילא חובה שם - מסך הסבר מפורט (ספארי, "הוסף למסך הבית", גרסת iOS). במחשב - בלי שינוי. */
+function isAndroid(){ return /android/i.test(navigator.userAgent); }
+function isInAppBrowser(){ const u = navigator.userAgent; return /; wv\)|FBAN|FBAV|Instagram|Line\/|WhatsApp|Telegram/i.test(u); }
+function iosVersion(){ const m = navigator.userAgent.match(/OS (\d+)_(\d+)/); return m ? parseFloat(m[1] + "." + m[2]) : null; }
+function iosNotSafari(){ return /CriOS|FxiOS|EdgiOS|OPiOS|GSA\/|FBAN|FBAV|Instagram|WhatsApp/i.test(navigator.userAgent); }
+function appInstalledFlag(){ try{ return !!localStorage.getItem("cst_app_installed"); }catch(e){ return false; } }
+function deviceName(){ return isIOS() ? "iPhone" : isAndroid() ? "Android" : "מחשב"; }
+const IG = { waited:false, timer:null, listening:false, msg:null };
+function installGate(App, name, logoutAct){
+  if(DEMO || !isAndroid() || isStandalone() || appInstalledFlag()) return null;
+  if(!IG.listening){ IG.listening = true; window.addEventListener("bip-ready", ()=>App.render()); }
+  if(!window.__bip && !IG.waited && !IG.timer) IG.timer = setTimeout(()=>{ IG.waited = true; App.render(); }, 2500);
+  const esc = App.escapeHtml;
+  const head = `<div class="card"><div class="flexbar" style="justify-content:space-between;"><h2 style="margin:0;">שלום, ${esc(name)}</h2>${homeBackBtn(App)}</div></div>`;
+  let body;
+  if(isInAppBrowser()) body = `<p>הקישור נפתח בתוך אפליקציה (וואטסאפ / פייסבוק וכו'), ומשם אי אפשר להתקין.</p>
+      <ol style="padding-inline-start:20px;line-height:2;"><li>לוחצים על <b>⋮</b> (שלוש הנקודות) למעלה</li><li>בוחרים <b>"פתח בכרום"</b> / <b>"פתיחה בדפדפן"</b></li><li>שם מופיע לחצן ההתקנה</li></ol>
+      <button class="btn secondary" data-action="portal-copy-link">📋 העתקת הקישור</button>`;
+  else if(window.__bip) body = `<p>כדי להשתמש באיזור האישי מהטלפון צריך להתקין את האפליקציה. זה לוקח כמה שניות, והאייקון <b>"איזור אישי"</b> יופיע במסך הבית.</p>
+      <button class="btn ok" data-action="portal-install-app" style="font-size:1.15em;padding:13px 24px;">📲 התקנת האפליקציה</button>
+      <p class="muted" style="font-size:.85em;margin-top:8px;">כשהטלפון שואל — לבחור <b>"התקנה"</b>.</p>`;
+  else if(!IG.waited) body = `<p class="muted">בודק את הטלפון...</p>`;
+  else body = `<p>כדי להשתמש באיזור האישי מהטלפון צריך להוסיף את האפליקציה למסך הבית:</p>
+      <ol style="padding-inline-start:20px;line-height:2;"><li>לוחצים על <b>⋮</b> (שלוש הנקודות) למעלה בכרום</li><li>בוחרים <b>"התקנת אפליקציה"</b> או <b>"הוספה למסך הבית"</b></li><li>לוחצים <b>"התקנה"</b> / <b>"הוספה"</b></li></ol>
+      <p class="muted" style="font-size:.85em;">האפליקציה כבר מותקנת? אפשר לפתוח אותה מהאייקון "איזור אישי" במסך הבית, או ללחוץ כאן:</p>
+      <button class="btn ok" data-action="portal-install-done">✅ התקנתי — המשך</button>`;
+  return head + `<div class="card" style="border:2px solid #0c3a6e;"><h3 style="margin-top:0;">📲 שלב 1 מתוך 2: התקנת האפליקציה</h3>${body}
+    ${IG.msg?`<p class="shortage" style="margin-top:8px;">${esc(IG.msg)}</p>`:""}
+    <p class="muted" style="font-size:.85em;margin-top:10px;">אחרי ההתקנה — שלב 2: הפעלת התראות.</p></div>`;
+}
+async function installApp(App){
+  const e = window.__bip; if(!e) return App.render();
+  IG.msg = null;
+  try{
+    e.prompt();
+    const r = await e.userChoice;
+    if(r && r.outcome==="accepted"){ try{ localStorage.setItem("cst_app_installed", String(Date.now())); }catch(x){} window.__bip = null; }
+    else IG.msg = "ההתקנה בוטלה — כדי להמשיך צריך ללחוץ שוב ולבחור \"התקנה\".";
+  }catch(x){ window.__bip = null; IG.waited = true; }
+  App.render();
+}
+/* רישום מאיפה נכנסים (אפליקציה/דפדפן ומכשיר) לסטטוס מחוברים - פעם בכמה שעות לכל כניסה */
+function noteClient(App, kind, token){
+  if(DEMO || !token) return;
+  const k = "cst_nc_" + kind + "_" + String(token).slice(0, 12), mode = isStandalone() ? "app" : "browser";
+  try{ const last = JSON.parse(localStorage.getItem(k) || "null"); if(last && last.m===mode && Date.now()-last.t < 6*3600e3) return;
+    localStorage.setItem(k, JSON.stringify({m:mode, t:Date.now()})); }catch(e){}
+  App.apiRpc("note_client", {p_kind:kind, p_token:token, p_mode:mode, p_device:deviceName()}).catch(()=>{});
+}
 function pushSupported(){ return ("serviceWorker" in navigator) && ("PushManager" in window) && ("Notification" in window); }
 function b64ToU8(b64){
   const pad = "=".repeat((4 - b64.length % 4) % 4);
@@ -350,18 +402,39 @@ async function enablePush(App, session){
 }
 /* חובה (לבקשת סרגיי, 2026-10-08): עד שההתראות מופעלות במכשיר, המאבטח רואה רק את מסך ההפעלה */
 function pushGate(App, session){
-  if(DEMO || N.state==="on") return null;
+  const ig = installGate(App, session.name, "portal-logout"); if(ig) return ig;
+  if(DEMO || N.state==="on"){ noteClient(App, "worker", session.token); return null; }
   if(N.state===null || N.checking){ if(N.state===null) checkPush(App, session); }
   return pushGateHtml(App, session.name, N, {logout:"portal-logout", enable:"portal-push-enable", recheck:"portal-push-recheck",
     intro:"כדי להשתמש באיזור האישי צריך להפעיל התראות לטלפון. כך תדע מיד על סידור שפורסם, בקרה, לומדה, בקשת חילוף או הודעה חדשה."});
 }
 /* מנהלים - חובה כמו לעובדים (לבקשת סרגיי, 2026-10-11): עד שההתראות מופעלות, רואים רק את מסך ההפעלה */
 function mgrPushGate(App, ms){
-  if(DEMO || MN.state==="on") return null;
+  const ig = installGate(App, ms.name, "portal-mgr-logout"); if(ig) return ig;
+  if(DEMO || MN.state==="on"){ noteClient(App, "manager", ms.token); return null; }
   if(MN.state===null){ MN.state = "checking"; checkMgrPush(App, ms); }
   return pushGateHtml(App, ms.name, {state: MN.state, checking: MN.state==="checking", busy: MN.busy, error: MN.error},
     {logout:"portal-mgr-logout", enable:"portal-mgr-push-enable", recheck:"portal-mgr-push-recheck",
      intro:"כדי להשתמש באיזור המנהלים צריך להפעיל התראות לטלפון. כך תדע מיד כשעובד מבקש חילוף, כשמשמרת מוחלפת ועל כל עדכון רלוונטי."});
+}
+/* אייפון (2026-10-22, סרגיי: "לאייפון - תבנה מה שצריך"): אפל לא מאפשרת לאתר לחצן התקנה, אז מסבירים צעד-צעד,
+   עם ציור של כפתור השיתוף. דפדפן שאינו ספארי (כרום/וואטסאפ וכו') - קודם לעבור לספארי; iOS ישן מ-16.4 - לעדכן. */
+function iosInstallHtml(App){
+  const shareIcon = `<svg width="20" height="24" viewBox="0 0 20 24" style="vertical-align:-5px;" aria-hidden="true"><path d="M10 1v14M5 6l5-5 5 5" fill="none" stroke="#0a84ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 10H3v12h14V10h-3" fill="none" stroke="#0a84ff" stroke-width="2" stroke-linejoin="round"/></svg>`;
+  const addIcon = `<svg width="22" height="22" viewBox="0 0 22 22" style="vertical-align:-5px;" aria-hidden="true"><rect x="1.5" y="1.5" width="19" height="19" rx="5" fill="none" stroke="#333" stroke-width="1.8"/><path d="M11 6.5v9M6.5 11h9" stroke="#333" stroke-width="1.8" stroke-linecap="round"/></svg>`;
+  const v = iosVersion();
+  const step = (n, html)=>`<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border);"><span style="background:#0c3a6e;color:#fff;border-radius:50%;min-width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;font-weight:800;">${n}</span><div style="line-height:1.6;">${html}</div></div>`;
+  if(iosNotSafari()) return `<p>באייפון מתקינים את האפליקציה רק מ<b>ספארי</b>. הקישור נפתח עכשיו בדפדפן אחר (כרום / וואטסאפ וכו').</p>
+      ${step(1, `לוחצים על <b>"העתקת הקישור"</b> כאן למטה`)}${step(2, `פותחים את <b>ספארי</b> ומדביקים את הקישור בשורת הכתובת`)}${step(3, `ממשיכים לפי ההוראות שיופיעו שם`)}
+      <button class="btn ok" data-action="portal-copy-link" style="margin-top:10px;">📋 העתקת הקישור</button>`;
+  return `<p>באייפון האיזור האישי עובד (כולל התראות) רק כשהוא מותקן במסך הבית. זה לוקח חצי דקה:</p>
+      ${v && v < 16.4 ? `<p class="shortage">גרסת האייפון שלך (iOS ${v}) ישנה מדי להתראות. צריך לעדכן: הגדרות ← כללי ← עדכון תוכנה. אחרי העדכון — לחזור לכאן.</p>` : ""}
+      ${step(1, `לוחצים על כפתור השיתוף ${shareIcon} בתחתית המסך של ספארי (באייפד — למעלה)`)}
+      ${step(2, `גוללים מעט למטה ובוחרים ${addIcon} <b>"הוסף למסך הבית"</b>`)}
+      ${step(3, `לוחצים <b>"הוסף"</b> למעלה בצד`)}
+      ${step(4, `סוגרים את ספארי ופותחים את <b>"איזור אישי"</b> מהאייקון החדש במסך הבית`)}
+      ${step(5, `נכנסים שוב עם הקוד האישי ולוחצים <b>"הפעלת התראות"</b> ← <b>"אפשר"</b>`)}
+      <p class="muted" style="font-size:.85em;margin-top:8px;">אין "הוסף למסך הבית"? צריך לוודא שהקישור נפתח בספארי ולא מתוך וואטסאפ.</p>`;
 }
 function pushGateHtml(App, name, N, act){
   const esc = App.escapeHtml;
@@ -372,13 +445,7 @@ function pushGateHtml(App, name, N, act){
     </div></div>`;
   if(N.state===null || N.checking) return head + `<div class="card"><p class="muted">בודק התראות במכשיר...</p></div>`;
   let body;
-  if(N.state==="ios-install") body = `<p>באייפון ההתראות עובדות רק כשהאיזור האישי מותקן במסך הבית:</p>
-      <ol style="padding-inline-start:20px;line-height:2;">
-        <li>לוחצים על כפתור השיתוף <b>⬆️</b> בתחתית ספארי</li>
-        <li>בוחרים <b>"הוסף למסך הבית"</b> ואז <b>"הוסף"</b></li>
-        <li>פותחים את האיזור האישי <b>מהאייקון החדש</b> במסך הבית, נכנסים שוב ומפעילים התראות</li>
-      </ol>
-      <p class="muted" style="font-size:.85em;">נדרש iOS 16.4 ומעלה. אם אין "הוסף למסך הבית" — לפתוח את הקישור בספארי (לא מתוך וואטסאפ).</p>`;
+  if(N.state==="ios-install") body = iosInstallHtml(App);
   else if(N.state==="unsupported") body = `<p>הדפדפן הזה לא תומך בהתראות.</p>
       <ul style="padding-inline-start:20px;line-height:2;">
         <li><b>אנדרואיד:</b> לפתוח את הקישור בכרום</li>
@@ -397,7 +464,8 @@ function pushGateHtml(App, name, N, act){
       ${N.error?`<p class="shortage" style="margin-top:8px;">${esc(N.error)}</p>`:""}
       <p style="margin-top:10px;font-weight:800;">המערכת לא אוספת מהטלפון מידע אישי או מיקום</p>
       <p class="muted" style="font-size:.85em;margin-top:4px;">כשהטלפון שואל — לבחור <b>"אפשר"</b>.</p>`;
-  return head + `<div class="card" style="border:2px solid #0c3a6e;"><h3 style="margin-top:0;">📲 חובה להפעיל התראות לטלפון</h3>${body}</div>`;
+  const title = N.state==="ios-install" ? "📲 התקנת האפליקציה במסך הבית" : isAndroid() ? "🔔 שלב 2 מתוך 2: הפעלת התראות" : "📲 חובה להפעיל התראות לטלפון";
+  return head + `<div class="card" style="border:2px solid #0c3a6e;"><h3 style="margin-top:0;">${title}</h3>${body}</div>`;
 }
 
 /* משימות שהמשבץ הקצה למאבטח מתוך טבלת השיבוץ (לא משמרת) - 2026-10-20, לבקשת סרגיי.
@@ -3419,13 +3487,16 @@ function renderLoginStatus(App, ms, wrap, loading){
   const ws = LS.data.workers||[], mgs = LS.data.managers||[], all = ws.concat(mgs);
   const cnt = st=>all.filter(u=>lsState(u)===st).length;
   const ago = iso=>{ if(!iso) return ""; const d = (Date.now()-new Date(iso).getTime())/864e5; return d<1 ? "היום" : d<2 ? "אתמול" : `לפני ${Math.floor(d)} ימים`; };
-  const dev = ua=>!ua ? "" : /iPhone|iPad/i.test(ua) ? "📱 אייפון" : /Android/i.test(ua) ? "📱 אנדרואיד" : /Windows|Macintosh|Linux/i.test(ua) ? "💻 מחשב" : "";
+  const devOf = u=>{ const d = u.device || (!u.ua ? "" : /iPhone|iPad/i.test(u.ua) ? "iPhone" : /Android/i.test(u.ua) ? "Android" : /Windows|Macintosh|Linux/i.test(u.ua) ? "מחשב" : "");
+    const dn = d==="iPhone" ? "📱 אייפון" : d==="Android" ? "📱 אנדרואיד" : d ? "💻 מחשב" : "";
+    const md = u.app_mode==="app" ? `<span class="ls-b app">📲 אפליקציה מותקנת</span>` : u.app_mode==="browser" ? `<span class="ls-b br">🌐 דפדפן</span>` : "";
+    return [md, dn ? `<span class="muted" style="font-size:.8em;">${dn}</span>` : ""].filter(Boolean).join(" "); };
   const badge = {ok:`<span class="ls-b ok">🟢 מחובר + התראות</span>`, nopush:`<span class="ls-b warn">🟡 מחובר, בלי התראות</span>`, off:`<span class="ls-b off">⚪ לא מחובר</span>`};
   const ord = {ok:0, nopush:1, off:2};
   const f = LS.filter;
   const show = u=> f==="all" || lsState(u)===f;
-  const row = u=>`<div class="ls-row"><span class="ls-name">${esc(u.name)}${u.role?` <span class="muted" style="font-size:.8em;">${esc(u.role)}</span>`:""}</span>${badge[lsState(u)]}${dev(u.ua)?` <span class="muted" style="font-size:.8em;">${dev(u.ua)}</span>`:""}
-      <span class="muted ls-when">${u.last_at ? `כניסה אחרונה: ${esc(fmtDT(App, u.last_at))} (${ago(u.last_at)})${u.logins>1?` · ${u.logins} כניסות`:""}` : "לא נרשמה כניסה"}${u.push_ok_at?` · התראה אחרונה נמסרה ${ago(u.push_ok_at)}`:""}</span></div>`;
+  const row = u=>`<div class="ls-row"><span class="ls-name">${esc(u.name)}${u.role?` <span class="muted" style="font-size:.8em;">${esc(u.role)}</span>`:""}</span>${badge[lsState(u)]} ${devOf(u)}
+      <span class="muted ls-when">${u.last_at ? `כניסה אחרונה: ${esc(fmtDT(App, u.last_at))} (${ago(u.last_at)})${u.logins>1?` · ${u.logins} כניסות`:""}` : "לא נרשמה כניסה"}${u.seen_at?` · פעיל לאחרונה ${ago(u.seen_at)}`:""}${u.push_ok_at?` · התראה אחרונה נמסרה ${ago(u.push_ok_at)}`:""}</span></div>`;
   const groups = []; const gIdx = {};
   const add = (title, u)=>{ if(!(title in gIdx)){ gIdx[title] = groups.length; groups.push({title, list:[]}); } groups[gIdx[title]].list.push(u); };
   mgs.forEach(u=>add("מנהלים וקב\"טים", u));
@@ -3441,12 +3512,12 @@ function renderLoginStatus(App, ms, wrap, loading){
   const chip = (k, label)=>`<span class="ar-chip${f===k?" on":""}" data-action="portal-ls-filter" data-k="${k}">${label}</span>`;
   return wrap(`<style>.ls-row{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:7px 0;border-bottom:1px solid var(--border);}
       .ls-name{font-weight:600;min-width:140px;} .ls-when{font-size:.82em;flex-basis:100%;} .ls-b{font-size:.8em;border-radius:999px;padding:1px 8px;font-weight:700;}
-      .ls-b.ok{background:#e3f4e8;color:#1b7f3b;} .ls-b.warn{background:#fff3cd;color:#7a5200;} .ls-b.off{background:#f1f3f5;color:#6b7280;}
+      .ls-b.ok{background:#e3f4e8;color:#1b7f3b;} .ls-b.warn{background:#fff3cd;color:#7a5200;} .ls-b.off{background:#f1f3f5;color:#6b7280;} .ls-b.app{background:#e7f0fb;color:#0c3a6e;} .ls-b.br{background:#f1f3f5;color:#444;}
       .ls-sum{width:100%;border-collapse:collapse;font-size:.9em;margin:6px 0 10px;} .ls-sum th,.ls-sum td{border:1px solid var(--border);padding:5px 6px;text-align:center;} .ls-sum td:first-child{text-align:right;font-weight:600;}
       .ls-sum .ls-tot td{font-weight:800;background:#f6f8fa;} .ls-g{border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin:8px 0;} .ls-g summary{cursor:pointer;padding:4px 0;}</style>
     <div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;"><h2 style="margin:0;">🟢 סטטוס מחוברים</h2>
       <span><button class="btn small secondary" data-action="portal-ls-openall">${LS.openAll?"➖ לסגור הכל":"➕ לפתוח הכל"}</button> <button class="btn small secondary" data-action="portal-ls-refresh">🔄 רענון</button></span></div>
-    <p class="muted" style="font-size:.85em;margin:4px 0 8px;">"מחובר" = נכנס לאיזור האישי והכניסה עדיין בתוקף (30 יום). "התראות" = הפעיל התראות במכשיר. לחיצה על שם גזרה פותחת את הרשימה שלה.</p>
+    <p class="muted" style="font-size:.85em;margin:4px 0 8px;">"מחובר" = נכנס לאיזור האישי והכניסה עדיין בתוקף (30 יום). "התראות" = הפעיל התראות במכשיר. "אפליקציה מותקנת"/"דפדפן" = מאיפה נכנס לאחרונה (נרשם מהיום). לחיצה על שם גזרה פותחת את הרשימה שלה.</p>
     ${summary}
     <div class="ar-chips" style="margin-bottom:6px;">${chip("all", `הכל (${all.length})`)}${chip("ok", `🟢 מחוברים + התראות (${cnt("ok")})`)}${chip("nopush", `🟡 בלי התראות (${cnt("nopush")})`)}${chip("off", `⚪ לא מחוברים (${cnt("off")})`)}</div>
     ${groups.map(grpHtml).join("")}
@@ -5025,6 +5096,16 @@ function onClick(App, a, el){
   if(a==="portal-pick"){ P.selectedId = el.dataset.id; P.code=""; P.error=null; if(DEMO) return doLogin(App); return App.render(); }
   if(a==="portal-unpick"){ P.selectedId = null; P.code=""; P.error=null; return App.render(); }
   if(a==="portal-login") return doLogin(App);
+  if(a==="portal-install-app") return installApp(App);
+  if(a==="portal-install-done"){ try{ localStorage.setItem("cst_app_installed", String(Date.now())); }catch(e){} return App.render(); }
+  if(a==="portal-copy-link"){ const url = location.origin + location.pathname;
+    const done = ()=>{ el.textContent = "✅ הקישור הועתק"; };
+    const manual = ()=>{ if(el.nextElementSibling && el.nextElementSibling.classList.contains("copy-fallback")) return;
+      el.insertAdjacentHTML("afterend", `<input class="copy-fallback" readonly value="${App.escapeHtml(url)}" style="width:100%;margin-top:8px;direction:ltr;">`);
+      const i = el.nextElementSibling; i.focus(); i.select(); };
+    if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done).catch(manual);
+    else manual();
+    return; }
   if(a==="portal-push-recheck"){ N.state = null; return App.render(); }
   if(a==="portal-mgr-push-recheck"){ MN.state = null; return App.render(); }
   if(a==="portal-push-enable"){ const ss = loadSession(App); if(ss && !N.busy) enablePush(App, ss); return; }

@@ -223,6 +223,12 @@
   </div>
   <div id="headerActions"></div>
 </header>
+<script>
+/* התקנת האפליקציה במסך הבית (2026-10-22, סרגיי): כרום באנדרואיד שולח "אפשר להתקין" רק פעם אחת בטעינת הדף -
+   שומרים אותו כאן מוקדם, כדי שלחצן "התקנת האפליקציה" במסך הכניסה יוכל להקפיץ את חלון ההתקנה. */
+window.addEventListener("beforeinstallprompt", function(e){ e.preventDefault(); window.__bip = e; window.dispatchEvent(new Event("bip-ready")); });
+window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("cst_app_installed", String(Date.now())); }catch(e){} window.__bip = null; window.dispatchEvent(new Event("bip-ready")); });
+</script>
 <main id="app"></main>
 <footer>מערכת פנימית · חברת אבטחה</footer>
 
@@ -248,7 +254,7 @@
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 3000); });
 })();
 </script>
-<script src="portal.js?v=124"></script>
+<script src="portal.js?v=125"></script>
 <script>
 (function(){
 "use strict";
