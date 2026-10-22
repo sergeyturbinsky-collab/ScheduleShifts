@@ -3349,11 +3349,11 @@ function tdLoad(App, ms, force){
 function tdSync(){
   if(!TD.form) return;
   const v = id=>{ const x = document.getElementById(id); return x ? x.value : undefined; };
-  ["title","notes","due","remind"].forEach(k=>{ const x = v("td_"+k); if(x!==undefined) TD.form[k] = x; });
+  ["title","notes","due","tfrom","tto","remind"].forEach(k=>{ const x = v("td_"+k); if(x!==undefined) TD.form[k] = x; });
 }
-function tdDefaultRemind(due){
+function tdDefaultRemind(due, tfrom){
   const p = n=>String(n).padStart(2,"0");
-  let d = due ? new Date(due+"T08:00") : new Date(Date.now()+86400000);
+  let d = due ? new Date(due+"T"+(tfrom||"08:00")) : new Date(Date.now()+86400000);
   if(!due) d.setHours(8,0,0,0);
   if(d.getTime() < Date.now()) d = new Date(Date.now()+3600000);
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
@@ -3368,7 +3368,9 @@ function renderTodoCard(App, ms){
       <div class="field"><label>מה צריך לעשות</label><input type="text" id="td_title" maxlength="300" value="${esc(f.title||"")}" placeholder="למשל: לבדוק ציוד בעמדה, לחזור לאלירן"></div>
       <div class="field"><label>פרטים <span class="muted">(לא חובה)</span></label><textarea id="td_notes" rows="2" maxlength="3000">${esc(f.notes||"")}</textarea></div>
       <div class="row">
-        <div class="field"><label>עד תאריך <span class="muted">(לא חובה)</span></label><input type="date" id="td_due" value="${esc(f.due||"")}"></div>
+        <div class="field"><label>תאריך <span class="muted">(לא חובה)</span></label><input type="date" id="td_due" value="${esc(f.due||"")}"></div>
+        <div class="field"><label>משעה <span class="muted">(לא חובה)</span></label><input type="time" id="td_tfrom" value="${esc(f.tfrom||"")}"></div>
+        <div class="field"><label>עד שעה <span class="muted">(לא חובה)</span></label><input type="time" id="td_tto" value="${esc(f.tto||"")}"></div>
         <div class="field"><label>תזכורת</label>
           ${f.remindOn ? `<input type="datetime-local" id="td_remind" value="${esc(f.remind||"")}">
              <span class="backlink" style="margin:4px 0 0;" data-action="portal-todo-remind-toggle">✖ בלי תזכורת</span>`
@@ -3383,7 +3385,9 @@ function renderTodoCard(App, ms){
       </div></div>` : "";
   const chips = t=>{
     const out = [];
-    if(t.due) out.push(`<span class="todo-chip${String(t.due)<today?" late":""}">📅 עד ${esc(fmtD(App, t.due))}</span>`);
+    const tm = t.time_from ? ` · <span dir="ltr">${esc(t.time_from)}${t.time_to?`–${esc(t.time_to)}`:""}</span>` : (t.time_to ? ` · עד <span dir="ltr">${esc(t.time_to)}</span>` : "");
+    if(t.due) out.push(`<span class="todo-chip${String(t.due)<today?" late":""}">📅 ${esc(fmtD(App, t.due))}${tm}</span>`);
+    else if(tm) out.push(`<span class="todo-chip">🕒${tm.replace(" · "," ")}</span>`);
     if(t.remind_at) out.push(`<span class="todo-chip${t.reminded_at?" rang":""}">${t.reminded_at?"🔔":"⏰"} ${esc(fmtDT(App, t.remind_at))}</span>`);
     return out.join("");
   };
@@ -3436,10 +3440,10 @@ async function todoAction(App, a, el){
   if(a==="portal-todo-cancel"){ TD.form = null; TD.error = null; return App.render(); }
   if(a==="portal-todo-edit"){
     const t = all.find(x=>x.id===id); if(!t) return;
-    TD.form = {id:t.id, title:t.title, notes:t.notes||"", due:t.due||"", remindOn:!!t.remind_at, remind:t.remind_at?toLocalInput(t.remind_at):""};
+    TD.form = {id:t.id, title:t.title, notes:t.notes||"", due:t.due||"", tfrom:t.time_from||"", tto:t.time_to||"", remindOn:!!t.remind_at, remind:t.remind_at?toLocalInput(t.remind_at):""};
     TD.error = null; window.scrollTo(0,0); return App.render();
   }
-  if(a==="portal-todo-remind-toggle"){ tdSync(); TD.form.remindOn = !TD.form.remindOn; if(TD.form.remindOn && !TD.form.remind) TD.form.remind = tdDefaultRemind(TD.form.due); return App.render(); }
+  if(a==="portal-todo-remind-toggle"){ tdSync(); TD.form.remindOn = !TD.form.remindOn; if(TD.form.remindOn && !TD.form.remind) TD.form.remind = tdDefaultRemind(TD.form.due, TD.form.tfrom); return App.render(); }
   if(a==="portal-todo-show-done"){ TD.showDone = !TD.showDone; return App.render(); }
   if(a==="portal-todo-del-ask"){ TD.delAsk = id; return App.render(); }
   if(a==="portal-todo-del-no"){ TD.delAsk = null; return App.render(); }
@@ -3456,7 +3460,9 @@ async function todoAction(App, a, el){
         remindIso = dt.toISOString();
       }
       TD.busy = true; TD.error = null; App.render();
-      await App.apiRpc("mgr_todo_save", {p_token:ms.token, p_id:f.id||null, p_title:f.title, p_notes:f.notes||null, p_due:f.due||null, p_remind_at:remindIso});
+      const base = {p_token:ms.token, p_id:f.id||null, p_title:f.title, p_notes:f.notes||null, p_due:f.due||null, p_remind_at:remindIso};
+      try{ await App.apiRpc("mgr_todo_save2", Object.assign({}, base, {p_time_from:f.tfrom||null, p_time_to:f.tto||null})); }
+      catch(e2){ if(/mgr_todo_save2|function|404/i.test(e2.message)) await App.apiRpc("mgr_todo_save", base); else throw e2; }
       TD.form = null;
     }
     else if(a==="portal-todo-done" || a==="portal-todo-undo"){ TD.busy = true; await App.apiRpc("mgr_todo_done", {p_token:ms.token, p_id:id, p_done: a==="portal-todo-done"}); }
