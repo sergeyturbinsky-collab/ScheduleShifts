@@ -575,6 +575,7 @@ function renderWorkerHome(App, session){
         <div style="margin-top:10px;"><button class="btn secondary" data-action="portal-full-schedule">📋 סידור מלא</button></div>
       </div>
       ${renderWorkerSchedTasks(App, session)}
+      ${renderWorkerTodos(App, session)}
       <div class="card">
         <h3>משימות פתוחות</h3>
         ${renderTasks(App, session)}
@@ -3338,7 +3339,7 @@ async function calClick(App, a, el){
    (cron כל דקה: mgr_todo_reminders_due → push_outbox → push-send). השרת: mgr_todo_list/_save/_done/_remove.
    ================================================================ */
 const MHS = { section: (()=>{ try{ return sessionStorage.getItem("cst_mh_section")||""; }catch(e){ return ""; } })() };
-const TD = { data:null, loading:false, token:null, form:null, busy:false, error:null, showDone:false, delAsk:null };
+const TD = { data:null, loading:false, token:null, form:null, busy:false, error:null, showDone:false, delAsk:null, showSent:true, sentAsk:null };
 function tdLoad(App, ms, force){
   if(TD.token !== ms.token){ TD.token = ms.token; TD.data = null; TD.form = null; TD.showDone = false; }
   if(TD.loading || (TD.data && !force)) return;
@@ -3350,6 +3351,7 @@ function tdSync(){
   if(!TD.form) return;
   const v = id=>{ const x = document.getElementById(id); return x ? x.value : undefined; };
   ["title","notes","due","tfrom","tto","remind","to"].forEach(k=>{ const x = v("td_"+k); if(x!==undefined) TD.form[k] = x; });
+  const tr = document.getElementById("td_track"); if(tr) TD.form.track = tr.checked;
 }
 function tdDefaultRemind(due, tfrom){
   const p = n=>String(n).padStart(2,"0");
@@ -3365,10 +3367,16 @@ function renderTodoCard(App, ms){
   const d = TD.data, open = d ? d.open||[] : [], done = d ? d.done||[] : [];
   const f = TD.form;
   const form = f ? `<div class="todo-form">
-      ${(d && d.can_assign && !f.id) ? `<div class="field"><label>למי המשימה</label><select id="td_to">
+      ${(d && d.can_assign && !f.id) ? (()=>{
+        // (2026-10-23, סרגיי) לכל אחד: מנהלים וקב"טים, ועובדים לפי גזרה
+        const wg = {}; (d.workers||[]).forEach(w=>{ (wg[w.team||"ללא גזרה"] = wg[w.team||"ללא גזרה"] || []).push(w); });
+        return `<div class="field"><label>למי המשימה</label><select id="td_to" data-action="portal-todo-to">
           <option value="">לי (משימה שלי)</option>
-          ${(d.people||[]).map(p=>`<option value="${p.id}"${f.to===p.id?" selected":""}>${esc(p.name)}</option>`).join("")}
-        </select><span class="muted" style="font-size:.82em;">משימה למישהו אחר מופיעה רק ב"המשימות שלי" שלו (והוא מקבל התראה). את/ה לא תראה/י אותה ברשימה שלך.</span></div>` : ""}
+          <optgroup label="👔 מנהלים וקב&quot;טים">${(d.people||[]).map(p=>`<option value="m:${p.id}"${f.to==="m:"+p.id?" selected":""}>${esc(p.name)}</option>`).join("")}</optgroup>
+          ${Object.keys(wg).map(g=>`<optgroup label="👷 עובדים — ${esc(g)}">${wg[g].map(w=>`<option value="w:${w.id}"${f.to==="w:"+w.id?" selected":""}>${esc(w.name)}</option>`).join("")}</optgroup>`).join("")}
+        </select></div>
+        ${f.to ? `<label class="portal-opt" style="margin:-4px 0 8px;"><input type="checkbox" id="td_track" ${f.track!==false?"checked":""}> 👁 <b>מעקב</b> — המשימה תופיע גם אצלי ב"משימות ששלחתי", עם הסטטוס שלה, ואקבל התראה כשתבוצע</label>
+          <p class="muted" style="font-size:.82em;margin:-4px 0 8px;">בלי מעקב — המשימה מופיעה רק אצל מי שמקבל אותה.</p>` : ""}`; })() : ""}
       <div class="field"><label>מה צריך לעשות</label><input type="text" id="td_title" maxlength="300" value="${esc(f.title||"")}" placeholder="למשל: לבדוק ציוד בעמדה, לחזור לאלירן"></div>
       <div class="field"><label>פרטים <span class="muted">(לא חובה)</span></label><textarea id="td_notes" rows="2" maxlength="3000">${esc(f.notes||"")}</textarea></div>
       <div class="row">
@@ -3428,12 +3436,23 @@ function renderTodoCard(App, ms){
       <h3 style="margin:0;">📝 המשימות שלי${open.length?` <span class="muted" style="font-size:.8em;font-weight:400;">(${open.length})</span>`:""}</h3>
       ${f ? "" : `<button class="btn small" data-action="portal-todo-new">➕ משימה חדשה</button>`}
     </div>
-    <p class="muted" style="font-size:.82em;margin:4px 0 0;">רק את/ה רואה את המשימות האלה.${d && d.can_assign ? " אפשר גם לשבץ משימה למנהל אחר — בטופס \"משימה חדשה\"." : ""}</p>
+    <p class="muted" style="font-size:.82em;margin:4px 0 0;">רק את/ה רואה את המשימות האלה.${d && d.can_assign ? " אפשר גם לשבץ משימה לכל מנהל או עובד — בטופס \"משימה חדשה\"." : ""}</p>
     ${TD.sentMsg ? `<p style="color:#1b7f3b;font-weight:600;margin:6px 0 0;">${esc(TD.sentMsg)}</p>` : ""}
     ${form}
     ${!d ? `<p class="muted">טוען...</p>` : d.error ? `<p class="shortage">${esc(d.error)}</p>`
       : (open.length ? open.map(row).join("") : (f ? "" : `<p class="muted" style="margin:8px 0 0;">אין משימות פתוחות.</p>`))}
     ${!f && TD.error ? `<p class="shortage">${esc(TD.error)}</p>` : ""}
+    ${(d && (d.sent||[]).length) ? (()=>{ const sent = d.sent, openN = sent.filter(t=>!t.done_at && !t.removed_at).length;
+      const st = t=> t.removed_at ? `<span class="todo-chip">🗑 בוטלה</span>` : t.done_at ? `<span class="todo-chip" style="background:#e3f4e8;color:#1b7f3b;font-weight:600;">✅ בוצעה ${esc(fmtDT(App, t.done_at))}</span>` : `<span class="todo-chip" style="background:#fff3cd;color:#7a5200;font-weight:600;">⏳ פתוחה</span>`;
+      return `<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px;">
+        <span class="backlink" data-action="portal-todo-sent-toggle">${TD.showSent?"▲":"▼"} 📤 משימות ששלחתי (במעקב) — ${openN} פתוחות מתוך ${sent.length}</span>
+        ${TD.showSent ? sent.map(t=>`<div class="todo-row${t.done_at||t.removed_at?" done":""}"><div style="flex:1;min-width:0;">
+            <div style="font-weight:600;">${esc(t.title)} <span class="muted" style="font-weight:400;font-size:.88em;">← ${t.to_kind==="w"?"👷":"👔"} ${esc(t.to_name||"")}</span></div>
+            ${t.notes?`<div class="muted" style="font-size:.86em;white-space:pre-wrap;">${esc(t.notes)}</div>`:""}
+            <div>${st(t)}${chips(Object.assign({}, t, {remind_at:null}))}</div></div>
+            ${(!t.done_at && !t.removed_at) ? (TD.sentAsk===t.id ? `<span style="white-space:nowrap;"><button class="btn small" style="background:#b42318;border-color:#b42318;" data-action="portal-todo-sent-cancel" data-id="${t.id}">לבטל</button> <button class="btn small secondary" data-action="portal-todo-sent-cancel-no">לא</button></span>`
+              : `<button class="btn small secondary" data-action="portal-todo-sent-cancel-ask" data-id="${t.id}" title="ביטול המשימה אצל המקבל">ביטול</button>`) : ""}
+          </div>`).join("") : ""}</div>`; })() : ""}
     ${done.length ? `<div style="margin-top:8px;"><span class="backlink" data-action="portal-todo-show-done">${TD.showDone?"▲ הסתר":"▼"} משימות שבוצעו (${done.length})</span>
       ${TD.showDone ? done.map(doneRow).join("") : ""}</div>` : ""}
   </div>`;
@@ -3442,6 +3461,10 @@ async function todoAction(App, a, el){
   const ms = loadMgr(App); if(!ms) return;
   const id = el && el.dataset ? el.dataset.id : null;
   const all = TD.data ? (TD.data.open||[]).concat(TD.data.done||[]) : [];
+  if(a==="portal-todo-to") return; // נבחר דרך "change" (ראו onChangeTraining) - לחיצה על הרשימה לא מרעננת את המסך
+  if(a==="portal-todo-sent-cancel-ask"){ TD.sentAsk = id; return App.render(); }
+  if(a==="portal-todo-sent-cancel-no"){ TD.sentAsk = null; return App.render(); }
+  if(a==="portal-todo-sent-toggle"){ TD.showSent = !TD.showSent; return App.render(); }
   if(a==="portal-todo-new"){ TD.form = {remindOn:false}; TD.error = null; return App.render(); }
   if(a==="portal-todo-cancel"){ TD.form = null; TD.error = null; return App.render(); }
   if(a==="portal-todo-edit"){
@@ -3468,8 +3491,9 @@ async function todoAction(App, a, el){
       TD.busy = true; TD.error = null; App.render();
       const base = {p_token:ms.token, p_id:f.id||null, p_title:f.title, p_notes:f.notes||null, p_due:f.due||null, p_remind_at:remindIso};
       if(!f.id && f.to){
-        await App.apiRpc("mgr_todo_assign", {p_token:ms.token, p_to:f.to, p_title:f.title, p_notes:f.notes||null, p_due:f.due||null, p_time_from:f.tfrom||null, p_time_to:f.tto||null, p_remind_at:remindIso});
-        const who = ((TD.data && TD.data.people)||[]).find(p=>p.id===f.to);
+        const [kind, toId] = f.to.split(":");
+        await App.apiRpc("mgr_todo_assign2", {p_token:ms.token, p_to_kind:kind, p_to:toId, p_title:f.title, p_notes:f.notes||null, p_due:f.due||null, p_time_from:f.tfrom||null, p_time_to:f.tto||null, p_remind_at:remindIso, p_track:f.track!==false});
+        const who = (kind==="w" ? (TD.data && TD.data.workers) : (TD.data && TD.data.people) || []).find(p=>p.id===toId);
         TD.form = null; TD.busy = false; TD.error = null; TD.sentMsg = `✅ המשימה נשלחה ל${who?who.name:""}`;
         setTimeout(()=>{ TD.sentMsg = null; App.render(); }, 6000);
         tdLoad(App, ms, true); return App.render();
@@ -3479,6 +3503,7 @@ async function todoAction(App, a, el){
       TD.form = null;
     }
     else if(a==="portal-todo-done" || a==="portal-todo-undo"){ TD.busy = true; await App.apiRpc("mgr_todo_done", {p_token:ms.token, p_id:id, p_done: a==="portal-todo-done"}); }
+    else if(a==="portal-todo-sent-cancel"){ TD.busy = true; TD.sentAsk = null; await App.apiRpc("mgr_todo_sent_cancel", {p_token:ms.token, p_id:id}); }
     else if(a==="portal-todo-del"){ TD.busy = true; TD.delAsk = null; await App.apiRpc("mgr_todo_remove", {p_token:ms.token, p_id:id}); }
     TD.busy = false; TD.error = null;
     tdLoad(App, ms, true);
@@ -3505,7 +3530,10 @@ function renderLoginStatus(App, ms, wrap, loading){
   if(LS.data.error) return wrap(`<p class="shortage">${esc(LS.data.error)}</p>`);
   const ws = LS.data.workers||[], mgs = LS.data.managers||[], all = ws.concat(mgs);
   const cnt = st=>all.filter(u=>lsState(u)===st).length;
-  const ago = iso=>{ if(!iso) return ""; const d = (Date.now()-new Date(iso).getTime())/864e5; return d<1 ? "היום" : d<2 ? "אתמול" : `לפני ${Math.floor(d)} ימים`; };
+  // לפי תאריך בלוח השנה (2026-10-23, סרגיי: "כתוב 22/10 ובסוגריים היום") - לא לפי 24 שעות אחורה
+  const ago = iso=>{ if(!iso) return ""; const a = new Date(iso), n = new Date();
+    const d = Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - new Date(a.getFullYear(), a.getMonth(), a.getDate())) / 864e5);
+    return d<=0 ? "היום" : d===1 ? "אתמול" : `לפני ${d} ימים`; };
   const devOf = u=>{ const d = u.device || (!u.ua ? "" : /iPhone|iPad/i.test(u.ua) ? "iPhone" : /Android/i.test(u.ua) ? "Android" : /Windows|Macintosh|Linux/i.test(u.ua) ? "מחשב" : "");
     const dn = d==="iPhone" ? "📱 אייפון" : d==="Android" ? "📱 אנדרואיד" : d ? "💻 מחשב" : "";
     const md = u.app_mode==="app" ? `<span class="ls-b app">📲 אפליקציה מותקנת</span>` : u.app_mode==="browser" ? `<span class="ls-b br">🌐 דפדפן</span>` : "";
@@ -3541,6 +3569,47 @@ function renderLoginStatus(App, ms, wrap, loading){
     <div class="ar-chips" style="margin-bottom:6px;">${chip("all", `הכל (${all.length})`)}${chip("ok", `🟢 מחוברים + התראות (${cnt("ok")})`)}${chip("nopush", `🟡 בלי התראות (${cnt("nopush")})`)}${chip("off", `⚪ לא מחוברים (${cnt("off")})`)}</div>
     ${groups.map(grpHtml).join("")}
     ${!all.filter(show).length ? `<p class="muted">אין משתמשים בסינון הזה.</p>` : ""}`);
+}
+
+/* ================================================================
+   משימות שקיבלתי - אצל העובד (2026-10-23, סרגיי): משימות שסרגיי/מנהל היחידה שיבצו לעובד. העובד מסמן "בוצע".
+   השרת: worker_todo_list / worker_todo_done.
+   ================================================================ */
+const WT = { data:null, at:0, loading:false, tok:null, busy:false, showDone:false };
+function wtLoad(App, session, force){
+  if(WT.tok !== session.token){ WT.tok = session.token; WT.data = null; WT.at = 0; }
+  if(WT.loading || (!force && WT.data && Date.now()-WT.at < 60000)) return;
+  WT.loading = true;
+  App.apiRpc("worker_todo_list", {p_token:session.token}).then(d=>{ WT.data = d || {open:[], done:[]}; WT.at = Date.now(); WT.loading = false; App.render(); })
+    .catch(()=>{ WT.data = WT.data || {open:[], done:[]}; WT.at = Date.now(); WT.loading = false; });
+}
+function renderWorkerTodos(App, session){
+  wtLoad(App, session);
+  const d = WT.data; if(!d) return "";
+  const open = d.open||[], done = d.done||[];
+  if(!open.length && !done.length) return "";
+  const esc = App.escapeHtml, today = App.fmtDate(new Date());
+  const tm = t=> t.time_from ? ` · <span dir="ltr">${esc(t.time_from)}${t.time_to?`–${esc(t.time_to)}`:""}</span>` : "";
+  return `<div class="card" style="border:2px solid #c9b3ef;">
+    <h3 style="margin-top:0;">📝 משימות שקיבלתי${open.length?` <span class="muted" style="font-size:.8em;font-weight:400;">(${open.length})</span>`:""}</h3>
+    ${open.length ? open.map(t=>`<div class="flexbar" style="align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);">
+        <button class="btn small ok" data-action="portal-wtodo-done" data-id="${t.id}" ${WT.busy?"disabled":""} title="סימון כבוצע">✔ בוצע</button>
+        <div style="flex:1;min-width:0;"><div style="font-weight:600;">${esc(t.title)}</div>
+          ${t.notes?`<div class="muted" style="font-size:.86em;white-space:pre-wrap;">${esc(t.notes)}</div>`:""}
+          <div class="muted" style="font-size:.85em;">${t.due?`📅 <span style="${String(t.due)<today?"color:#b42318;font-weight:600;":""}">${esc(fmtD(App, t.due))}</span>${tm(t)} · `:(t.time_from?`🕒${tm(t).replace(" · "," ")} · `:"")}👤 מאת ${esc(t.assigned_by_name||"")}</div></div></div>`).join("")
+      : `<p class="muted" style="margin:0;">אין משימות פתוחות 👍</p>`}
+    ${done.length ? `<div style="margin-top:8px;"><span class="backlink" data-action="portal-wtodo-show-done">${WT.showDone?"▲ הסתר":"▼"} משימות שביצעתי (${done.length})</span>
+      ${WT.showDone ? done.map(t=>`<div class="flexbar" style="padding:6px 0;border-bottom:1px solid var(--border);gap:8px;"><span style="flex:1;" class="muted"><s>${esc(t.title)}</s> · ${esc(fmtDT(App, t.done_at))}</span>
+        <button class="btn small secondary" data-action="portal-wtodo-undo" data-id="${t.id}">↩ החזר</button></div>`).join("") : ""}</div>` : ""}
+  </div>`;
+}
+async function workerTodoAction(App, a, el){
+  const session = loadSession(App); if(!session) return;
+  if(a==="portal-wtodo-show-done"){ WT.showDone = !WT.showDone; return App.render(); }
+  if(WT.busy) return;
+  WT.busy = true; App.render();
+  try{ await App.apiRpc("worker_todo_done", {p_token:session.token, p_id:el.dataset.id, p_done: a==="portal-wtodo-done"}); }catch(e){}
+  WT.busy = false; wtLoad(App, session, true); App.render();
 }
 
 /* ================================================================
@@ -4476,6 +4545,7 @@ async function openAttachment(App, el){
 function alertMsg(App, m){ PV.error = m; T.attError = m; App.render(); }
 async function onChangeTraining(App, e){
   const t = e.target, a = t.dataset.action;
+  if(a==="portal-todo-to"){ tdSync(); return App.render(); }
   if(a==="portal-swap-sel"){ SW.sel = t.dataset.k; SW.error = null; return; }
   if(a==="portal-swapm-sel"){ if(PV.swap) PV.swap.sel = t.dataset.k; PV.error = null; return; }
   if(a==="portal-swapm-hsel"){ if(PV.swap) PV.swap.hsel = t.dataset.w; PV.error = null; return; }
@@ -5310,6 +5380,7 @@ function onClick(App, a, el){
   if(a==="portal-ls-jump"){ const d = document.getElementById("ls-g"+el.dataset.i); if(d){ d.open = true; d.scrollIntoView({behavior:"smooth", block:"start"}); } return; }
   if(a==="portal-ls-openall"){ LS.openAll = !LS.openAll; return App.render(); }
   if(a.indexOf("portal-todo-")===0) return todoAction(App, a, el);
+  if(a.indexOf("portal-wtodo-")===0) return workerTodoAction(App, a, el);
   if(a.indexOf("portal-inc-")===0) return incClick(App, a, el);
   if(a.indexOf("portal-cal-")===0 || a.indexOf("portal-calw-")===0) return calClick(App, a, el);
   if(a==="portal-kmsg-send" || a==="portal-mmsg-send") return msgAction(App, a);
