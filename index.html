@@ -270,7 +270,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=132"></script>
+<script src="portal.js?v=133"></script>
 <script>
 (function(){
 "use strict";
@@ -3653,7 +3653,8 @@ async function runAutoAssign(){
   // חיפה (2026-10-22, סרגיי): "לכל משמרת תהיה עדיפות לשלושת האנשים הראשונים שהגישו אותה בסידור עבודה" -
   // מבין הזמינים למשמרת, שלושת מי שהגישו ראשונים את טופס ההגשה לתקופה (constraint_submissions.created_at - ההגשה
   // הראשונה, עדכון מאוחר לא מוריד מקום) קודמים לכל השאר; אחריהם - מנוחה והוגנות כרגיל.
-  const earlyPriority = guardBlockingAt(team, ui.periodStart);
+  // (2026-10-24) חיפה עברה חזרה ל"מה כן יכולים" - העדיפות ל-3 הראשונים נשארת לחיפה בכל מקרה
+  const earlyPriority = guardBlockingAt(team, ui.periodStart) || (team.sectors||[]).includes("חיפה");
   const earlyBySlot = new Map(); // slot -> Set(workerId)
   const earlyRank = (slot, w)=>{ const e = earlyBySlot.get(slot); return e && e.has(w.id) ? 0 : 1; };
   const tl = (slot, cmp)=>(a,b)=>{ const t = tightBySlot.get(slot); return (earlyRank(slot, a) - earlyRank(slot, b)) || (t ? (t.has(a.id)?1:0)-(t.has(b.id)?1:0) : 0) || cmp(a,b); };
