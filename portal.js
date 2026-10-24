@@ -607,7 +607,7 @@ function isMokedWorker(App, session){
 async function loadLogistics(App, session){
   try{
     const [items, data] = await Promise.all([
-      App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options,has_serial&order=sort_order"),
+      App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options,has_serial,has_vehicle&order=sort_order"),
       App.apiRpc("worker_equipment_get", {p_token: session.token})
     ]);
     L.items = items; L.data = data; L.error = null;
@@ -932,11 +932,11 @@ async function dmgAction(App, a, el){
   if(a==="portal-dmg-mnew"){
     if(!ms) return App.render();
     DMG.open = true; DMG.mgrMode = true; DMG.restored = null;
-    if(!DMG.items) App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options,has_serial&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; });
+    if(!DMG.items) App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options,has_serial,has_vehicle&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; });
     const mdr = el.dataset.fresh ? null : dmgLoadDraft(App, true);
     if(mdr){ dmgRestore(mdr); DMG.error = null; DMG.msg = null; return pvGo(App, "dmg-new", {}); }
     DMG.form = {branch: Array.from(new Set(mgrTeams(App, ms.logistics_team_ids).flatMap(t=>(t.sectors&&t.sectors.length)?t.sectors:[t.name]))).join(" / ")}; DMG.parties = [dmgNewParty("מאבטח", "")]; DMG.vehicles = [{label:"", photos:[]}]; DMG.equipPhotos = []; DMG.error = null; DMG.msg = null;
-    if(!DMG.items) App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options,has_serial&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; });
+    if(!DMG.items) App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options,has_serial,has_vehicle&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; });
     return pvGo(App, "dmg-new", {});
   }
   if(a==="portal-dmg-close"){
@@ -1645,6 +1645,10 @@ function eqmWaitingHtml(App, ms){
   return orderTask + waitList;
 }
 document.addEventListener("change", e=>{
+  const v = e.target && e.target.dataset ? e.target.dataset.eqmVeh : null;
+  if(v){ const row = document.querySelector(`[data-veh-row="${v}"]`); if(row) row.style.display = e.target.checked ? "" : "none"; }
+}, true);
+document.addEventListener("change", e=>{
   const t = e.target; if(!t || !t.dataset || !t.dataset.eqmStatus || !EQM.statusSel) return;
   const id = parseInt(t.dataset.eqmStatus, 10);
   EQM.statusSel[id] = t.value || null;
@@ -1655,7 +1659,7 @@ document.addEventListener("change", e=>{
 function renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs){
   const esc = App.escapeHtml;
   if(EQM.tok !== ms.token){ EQM.tok = ms.token; EQM.workers = null; }
-  if(!EQM.items && !EQM.itemsLoading){ EQM.itemsLoading = true; App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options,has_serial&order=sort_order").then(x=>{ EQM.items = x||[]; EQM.itemsLoading = false; App.render(); }).catch(()=>{ EQM.items = []; EQM.itemsLoading = false; }); }
+  if(!EQM.items && !EQM.itemsLoading){ EQM.itemsLoading = true; App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options,has_serial,has_vehicle&order=sort_order").then(x=>{ EQM.items = x||[]; EQM.itemsLoading = false; App.render(); }).catch(()=>{ EQM.items = []; EQM.itemsLoading = false; }); }
   if(pg==="equip-workers"){
     eqmLoadWorkers(App, ms);
     if(!EQM.workers && !EQM.wLoading){ EQM.wLoading = true; App.apiRpc("mgr_equipment_workers", {p_token:ms.token}).then(x=>{ EQM.workers = x||[]; EQM.wLoading = false; App.render(); }).catch(e=>{ EQM.workers = []; EQM.wLoading = false; PV.error = e.message; App.render(); }); }
@@ -1668,7 +1672,7 @@ function renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs){
       ${Object.keys(byTeam).map(tid=>`${Object.keys(byTeam).length>1?`<h3 style="margin:12px 0 4px;">${esc(teamName(tid))}</h3>`:""}
         ${byTeam[tid].map(w=>`<div class="portal-task" data-action="portal-pv" data-page="equip-edit" data-id="${w.id}" data-name="${esc(w.name)}">
           <span class="portal-task-icon">${w.items?"🎒":"➕"}</span>
-          <span><b>${esc(w.name)}</b> · ${w.items?`${w.items} פריטים`:'<span class="muted">עדיין לא הוזן</span>'}${(w.serials||[]).map(x=>` <span class="eqs-tag eqs-serial" dir="ltr">📷 ${esc(x.serial)}</span>`).join("")}${(w.waiting&&w.waiting.length)?` <span class="eqw-badge">⏳ ממתין ל-${w.waiting.length}${w.waiting.some(x=>x.status==="ordered")?` · 📦 ${w.waiting.filter(x=>x.status==="ordered").length} הוזמנו`:""}</span>`:""}${w.updated_at?` <span class="muted" style="font-size:.85em;">· עודכן ${esc(dmgFmtDate(w.updated_at))}</span>`:""}</span></div>`).join("")}`).join("") || `<p class="muted">אין עובדים.</p>`}`);
+          <span><b>${esc(w.name)}</b> · ${w.items?`${w.items} פריטים`:'<span class="muted">עדיין לא הוזן</span>'}${(w.serials||[]).map(x=>` <span class="eqs-tag eqs-serial" dir="ltr">${x.vehicle?"🏍️":"📷"} ${esc(x.serial)}${x.model?` · ${esc(x.model)}`:""}</span>`).join("")}${(w.waiting&&w.waiting.length)?` <span class="eqw-badge">⏳ ממתין ל-${w.waiting.length}${w.waiting.some(x=>x.status==="ordered")?` · 📦 ${w.waiting.filter(x=>x.status==="ordered").length} הוזמנו`:""}</span>`:""}${w.updated_at?` <span class="muted" style="font-size:.85em;">· עודכן ${esc(dmgFmtDate(w.updated_at))}</span>`:""}</span></div>`).join("")}`).join("") || `<p class="muted">אין עובדים.</p>`}`);
   }
   if(pg==="equip-edit"){
     if(!EQM.edit || EQM.edit.worker_id !== a.id){
@@ -1694,6 +1698,16 @@ function renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs){
       <div style="overflow-x:auto;"><table class="eqm-table">
         <thead><tr><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה / מס'</th><th>סטטוס</th></tr></thead>
         <tbody>${EQM.items.map(it=>{ const c = cur[it.id] || {};
+          // אופנוע צמוד (2026-10-24, סרגיי): כן/לא, ואם כן - מספר אופנוע וסוג אופנוע
+          if(it.has_vehicle){ const on = (c.quantity||0) > 0;
+            return `<tr><td style="text-align:right;">🏍️ ${esc(it.name)}</td>
+              <td><label style="white-space:nowrap;"><input type="checkbox" data-eqm-veh="${it.id}" ${on?"checked":""}> יש</label></td>
+              <td><span class="muted">-</span></td><td>${statusCell(it)}</td></tr>
+              <tr data-veh-row="${it.id}" style="${on?"":"display:none;"}background:#f6fbff;"><td colspan="4" style="text-align:right;">
+                <div class="row" style="gap:8px;flex-wrap:wrap;">
+                  <div class="field" style="margin:0;"><label>מספר אופנוע</label><input type="text" maxlength="40" data-eqm-serial="${it.id}" value="${esc(c.serial||"")}" placeholder="למשל 12-345-67" dir="ltr" style="width:140px;"></div>
+                  <div class="field" style="margin:0;"><label>סוג אופנוע</label><input type="text" maxlength="60" data-eqm-model="${it.id}" value="${esc(c.model||"")}" placeholder="למשל ימאהה XMAX 300" style="width:180px;"></div>
+                </div></td></tr>`; }
           return `<tr><td style="text-align:right;">${esc(it.name)}</td>
             <td><input type="number" min="0" max="50" data-eqm-qty="${it.id}" value="${c.quantity!=null?c.quantity:0}" style="width:70px;"></td>
             <td>${sizeCell(it, c)}</td><td>${statusCell(it)}</td></tr>`; }).join("")}</tbody>
@@ -1707,7 +1721,12 @@ async function eqmSave(App, el){
   const items = EQM.items.map(it=>{ const q = document.querySelector(`[data-eqm-qty="${it.id}"]`), sz = document.querySelector(`[data-eqm-size="${it.id}"]`), sr = document.querySelector(`[data-eqm-serial="${it.id}"]`);
     const o = {item_id: it.id, quantity: Math.max(0, Math.min(50, parseInt(q&&q.value,10)||0)), size: sz ? sz.value : null, status: (EQM.statusSel && EQM.statusSel[it.id]) || ""};
     if(sr) o.serial = sr.value.trim();
+    if(it.has_vehicle){ const cb = document.querySelector(`[data-eqm-veh="${it.id}"]`), md = document.querySelector(`[data-eqm-model="${it.id}"]`);
+      const on = !!(cb && cb.checked); o.quantity = on ? 1 : 0;
+      o.serial = on && sr ? sr.value.trim() : ""; o.model = on && md ? md.value.trim() : ""; }
     return o; });
+  const vehMissing = EQM.items.find(it=>it.has_vehicle && (document.querySelector(`[data-eqm-veh="${it.id}"]`)||{}).checked && !((document.querySelector(`[data-eqm-serial="${it.id}"]`)||{}).value||"").trim());
+  if(vehMissing){ PV.error = "סומן אופנוע צמוד — צריך למלא את מספר האופנוע"; return App.render(); }
   // מספר סידורי בלי כמות - כנראה הונפק: כמות 1
   items.forEach(o=>{ if(o.serial && !o.quantity) o.quantity = 1; });
   EQM.busy = true; PV.error = null; PV.msg = null; App.render();
@@ -1736,7 +1755,7 @@ function renderLogisticsInner(App, session){
     <p class="muted" style="margin-top:-6px;">הרשימה מוזנת ומעודכנת ע"י הקב"ט. אם משהו לא נכון — פנו לקב"ט או שלחו בקשה למטה.</p>
     ${owned.length? `<div style="overflow-x:auto;"><table>
       <thead><tr><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th></tr></thead>
-      <tbody>${owned.map(it=>`<tr><td style="text-align:right;">${esc(it.name)}</td><td>${eqById[it.id].quantity}</td><td>${eqById[it.id].serial ? `<span dir="ltr">מס' ${esc(eqById[it.id].serial)}</span>` : esc(eqById[it.id].size||"-")}</td></tr>`).join("")}</tbody>
+      <tbody>${owned.map(it=>`<tr><td style="text-align:right;">${esc(it.name)}</td><td>${eqById[it.id].quantity}</td><td>${eqById[it.id].serial ? `<span dir="ltr">מס' ${esc(eqById[it.id].serial)}</span>${eqById[it.id].model?` · ${esc(eqById[it.id].model)}`:""}` : esc(eqById[it.id].size||"-")}</td></tr>`).join("")}</tbody>
     </table></div>` : `<p class="muted">הקב"ט עדיין לא הזין את רשימת הציוד שלך.</p>`}
     ${(()=>{ const wt = L.items.filter(it=>eqById[it.id] && eqById[it.id].waiting);
       return wt.length ? `<h3>⏳ ממתין ל...</h3><p class="muted" style="margin-top:-6px;">ציוד שהקב"ט רשם שאת/ה ממתין/ה לקבל. "📦 הוזמן" — הציוד הוזמן ובדרך.</p>
@@ -1747,7 +1766,7 @@ function renderLogisticsInner(App, session){
     <p class="muted" style="margin-top:-6px;">הבקשה נשלחת למנהל שלך. הוא מסמן אם הפריט הוחלף או שנופק לך פריט נוסף, והרשימה שלך מתעדכנת לבד.</p>
     <div class="row">
       <div class="field"><label>פריט</label>
-        <select id="logReqItem">${L.items.map(it=>`<option value="${it.id}">${esc(it.name)}</option>`).join("")}</select>
+        <select id="logReqItem">${L.items.filter(it=>!it.has_vehicle).map(it=>`<option value="${it.id}">${esc(it.name)}</option>`).join("")}</select>
       </div>
       <div class="field"><label>כמות</label><input type="number" id="logReqQty" min="1" max="20" value="1" style="width:70px;"></div>
       <div class="field"><label>מידה</label><input type="text" id="logReqSize" maxlength="20" placeholder="אם רלוונטי" style="width:100px;"></div>
@@ -4616,7 +4635,7 @@ function renderSection(App, view){
     <h2>עדכונים והודעות</h2>
     ${renderAllUpdates(App, session)}
   </div>`;
-  if(view==="damage" && !DMG.items && !DMG.itemsLoading){ DMG.itemsLoading = true; App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options,has_serial&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; }); }
+  if(view==="damage" && !DMG.items && !DMG.itemsLoading){ DMG.itemsLoading = true; App.apiGet("logistics_items", "select=id,name,has_size,sort_order,size_options,has_serial,has_vehicle&order=sort_order").then(x=>{ DMG.items = x||[]; App.render(); }).catch(()=>{ DMG.items = []; }); }
   const body = view==="logistics" ? renderLogistics(App, session) : view==="damage" ? renderDamageWorker(App, session) : view==="adminreq" ? renderAdminReqWorker(App, session) : view==="actreport" ? renderActionReportWorker(App, session) : renderTraining(App, session);
   return `<div class="card">
     <span class="backlink" data-action="go-home">◀ חזרה לאיזור האישי</span>
