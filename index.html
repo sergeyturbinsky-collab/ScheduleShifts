@@ -270,7 +270,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=133"></script>
+<script src="portal.js?v=134"></script>
 <script>
 (function(){
 "use strict";
@@ -970,7 +970,7 @@ function renderSubmitPeriod(){
   </div>`;
 }
 
-/* פתיחת ההגשה עם פרסום הסידור (2026-10-22, סרגיי): "מהרגע שהמשבץ לוחץ על פרסום הסידור, הסידור לשבוע הבא כבר נפתח
+/* (עודכן 2026-10-24: לא לפני יום ראשון של השבוע שלפני התקופה - ראו computeWindowState) פתיחת ההגשה עם פרסום הסידור (2026-10-22, סרגיי): "מהרגע שהמשבץ לוחץ על פרסום הסידור, הסידור לשבוע הבא כבר נפתח
    להגשה". כלומר - ההגשה לתקופה X נפתחת במוקדם מבין: מועד הפתיחה הרגיל של הצוות, או רגע פרסום הסידור של התקופה שלפניה.
    הנעילה לא משתנה (בחיפה - רביעי 12:00). זמני הפרסום נטענים מ-schedule_publications ונשמרים ב-S.pubAt. */
 S.pubAt = {};
@@ -1005,6 +1005,9 @@ function computeWindowState(team, periodStart){
   // נפתח מוקדם - עם פרסום הסידור של התקופה הקודמת
   const prevPub = S.pubAt[team.id+"|"+shiftPeriod(periodStart, team, -1)];
   if(typeof prevPub==="number" && prevPub < openInstant){ openInstant = prevPub; opensAt = "עם פרסום הסידור הנוכחי"; }
+  // (2026-10-24, סרגיי: "הגשת סידור רק לשבוע העוקב, לא עתידי - אי אפשר להגיש לעוד שבועיים") - ההגשה לתקופה נפתחת
+  // לכל המוקדם ביום ראשון של השבוע שלפניה (גם אם הסידור הקודם פורסם קודם, וגם בצוות בלי מועד פתיחה קבוע)
+  if(openInstant < base.getTime()){ openInstant = base.getTime(); opensAt = `יום ראשון ${fmtDateHeb(fmtDate(base))}`; }
   if(team.close_weekday!=null && team.close_time){
     const d = addDays(base, team.close_weekday);
     const [h,m] = team.close_time.split(":").map(Number);
@@ -3645,7 +3648,10 @@ async function runAutoAssign(){
     tightBySlot.set(slot, tight);
     if(earlyPriority && !earlyBySlot.has(slot)){
       const subAt = ui.submittedAt || {};
-      earlyBySlot.set(slot, new Set(candidates.filter(w=>subAt[w.id]).sort((a,b)=>String(subAt[a.id]).localeCompare(String(subAt[b.id]))).slice(0, 3).map(w=>w.id)));
+      // (2026-10-24, סרגיי: "שלושה ראשונים, ואז את כל הראשונים") - כל המועמדים לפי סדר ההגשה: 3 הראשונים קודמים,
+      // אחריהם כל השאר לפי מי שהגיש קודם; מי שלא הגיש (שיבוץ ידני/חריג) - בסוף
+      const ord = candidates.filter(w=>subAt[w.id]).sort((a,b)=>String(subAt[a.id]).localeCompare(String(subAt[b.id])));
+      earlyBySlot.set(slot, new Map(ord.map((w,i)=>[w.id, i])));
     }
     return {ok, bad, newInterval};
   }
@@ -3655,8 +3661,8 @@ async function runAutoAssign(){
   // הראשונה, עדכון מאוחר לא מוריד מקום) קודמים לכל השאר; אחריהם - מנוחה והוגנות כרגיל.
   // (2026-10-24) חיפה עברה חזרה ל"מה כן יכולים" - העדיפות ל-3 הראשונים נשארת לחיפה בכל מקרה
   const earlyPriority = guardBlockingAt(team, ui.periodStart) || (team.sectors||[]).includes("חיפה");
-  const earlyBySlot = new Map(); // slot -> Set(workerId)
-  const earlyRank = (slot, w)=>{ const e = earlyBySlot.get(slot); return e && e.has(w.id) ? 0 : 1; };
+  const earlyBySlot = new Map(); // slot -> Map(workerId -> מקום בסדר ההגשה)
+  const earlyRank = (slot, w)=>{ const e = earlyBySlot.get(slot); if(!e) return 0; return e.has(w.id) ? e.get(w.id) : 1e6; };
   const tl = (slot, cmp)=>(a,b)=>{ const t = tightBySlot.get(slot); return (earlyRank(slot, a) - earlyRank(slot, b)) || (t ? (t.has(a.id)?1:0)-(t.has(b.id)?1:0) : 0) || cmp(a,b); };
   function recordChosenInterval(workerId, newInterval){
     if(!newInterval) return;
