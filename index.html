@@ -270,7 +270,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=134"></script>
+<script src="portal.js?v=135"></script>
 <script>
 (function(){
 "use strict";
@@ -1004,10 +1004,10 @@ function computeWindowState(team, periodStart){
   }
   // נפתח מוקדם - עם פרסום הסידור של התקופה הקודמת
   const prevPub = S.pubAt[team.id+"|"+shiftPeriod(periodStart, team, -1)];
-  if(typeof prevPub==="number" && prevPub < openInstant){ openInstant = prevPub; opensAt = "עם פרסום הסידור הנוכחי"; }
-  // (2026-10-24, סרגיי: "הגשת סידור רק לשבוע העוקב, לא עתידי - אי אפשר להגיש לעוד שבועיים") - ההגשה לתקופה נפתחת
-  // לכל המוקדם ביום ראשון של השבוע שלפניה (גם אם הסידור הקודם פורסם קודם, וגם בצוות בלי מועד פתיחה קבוע)
+  // (2026-10-24, סרגיי) לא מגישים לשבועות רחוקים: בלי פרסום - ההגשה נפתחת לכל המוקדם ביום ראשון של השבוע שלפני
+  // (גם בצוות בלי מועד פתיחה קבוע). ועם פרסום הסידור של התקופה שלפני - נפתחת מיד (סרגיי, 20:43: "מהרגע שפורסם הסידור").
   if(openInstant < base.getTime()){ openInstant = base.getTime(); opensAt = `יום ראשון ${fmtDateHeb(fmtDate(base))}`; }
+  if(typeof prevPub==="number" && prevPub < openInstant){ openInstant = prevPub; opensAt = "עם פרסום הסידור הנוכחי"; }
   if(team.close_weekday!=null && team.close_time){
     const d = addDays(base, team.close_weekday);
     const [h,m] = team.close_time.split(":").map(Number);
