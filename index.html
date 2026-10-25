@@ -168,8 +168,9 @@
   .tmpl-na{background:#2a2a2a;}
   .tmpl-missing{font-weight:800;}
   /* (2026-10-25, סרגיי) משמרת מתואמת - צהוב, גם בפלט; סיום לפני הזמן - תכלת */
-  .tmpl-table tr td.tmpl-coord, .mg-table tr td.mg-coord, .mg-table tr th.mg-coord, .cpt-table tr td.cpt-coord{background:#fde047;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-  .tmpl-coord-head{background:#fde047!important;color:#713f12!important;}
+  .tmpl-table tr td.tmpl-coord, .mg-table tr td.mg-coord, .mg-table tr th.mg-coord, .cpt-table tr td.cpt-coord{background:#fde047;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .tmpl-coord-head{background:#fde047!important;color:#713f12!important;font-weight:800!important;}
+  .mg-coord .mg-n{font-weight:700;}
   .hrs-early{background:#a5f3fc;color:#0e7490;font-weight:700;border-radius:4px;padding:0 3px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
   .tmpl-cell{cursor:pointer;}
   .tmpl-cell:hover{background:#eef6ff;}
@@ -281,7 +282,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=145"></script>
+<script src="portal.js?v=146"></script>
 <script>
 (function(){
 "use strict";
@@ -2419,7 +2420,7 @@ function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDa
       const restBad = restViolations.has(restKey(a));
       const restTight = !restBad && restViolations.tight && restViolations.tight.has(restKey(a));
       const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
-      return `<td class="tmpl-coord ${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${mode==="manual"?" tmpl-cell":""}" style="font-style:italic;"${clickAttrs(d, cpos)}>${escapeHtml(w.name)}<br><span class="${isEarlyEnd(cq, a)?"hrs-early":"muted"}" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
+      return `<td class="tmpl-coord ${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${mode==="manual"?" tmpl-cell":""}" style="font-style:italic;"${clickAttrs(d, cpos)}>${isEarlyEnd(cq, a)?`<span class="hrs-early">${escapeHtml(w.name)}</span>`:escapeHtml(w.name)}<br><span class="${isEarlyEnd(cq, a)?"hrs-early":"muted"}" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
     }).join("");
     return `<tr class="tmpl-mirror-row"><td class="tmpl-pos">סייר ${pos}<br><span class="muted" style="font-size:.75em;font-weight:400;">(מתואמת)</span>${tmplBucketHoursHtml(coordBucket)}</td>${cells}</tr>`;
   }).join("");
@@ -2474,13 +2475,15 @@ function renderTemplateGrid(group, dates, ui, mode){
           const restNote = (restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "") + longNote(restViolations, a);
           const shadowHtml = tmplShadowHtml(tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, a?[a.worker_id]:[], pos===1), q, id=>{ const x = workers.find(y=>y.id===id) || allWorkersById[id]; return x?x.name:"?"; });
           const coordCls = bucket.key==="coordinated" ? " tmpl-coord" : "";
-          const hrsSpan = isEarlyEnd(q, a) ? `<span class="hrs-early" style="font-size:.85em;" title="מסיים לפני סוף המשמרת">${hoursTxt}</span>` : `<span class="muted" style="font-size:.85em;">${hoursTxt}</span>`;
+          const early = isEarlyEnd(q, a);
+          const nm = w ? (early ? `<span class="hrs-early">${escapeHtml(w.name)}</span>` : escapeHtml(w.name)) : "";
+          const hrsSpan = early ? `<span class="hrs-early" style="font-size:.85em;" title="מסיים לפני סוף המשמרת">${hoursTxt}</span>` : `<span class="muted" style="font-size:.85em;">${hoursTxt}</span>`;
           if(mode==="manual"){
             const cls = "tmpl-cell" + coordCls + (w? (restBad?" tmpl-restwarn":(restTight?" tmpl-resttight":"")) + longCls(restViolations, a) : " tmpl-missing");
-            const label = (w? `${escapeHtml(w.name)}${achTagHtml(w)}<br>${hrsSpan}${restNote}` : "חוסר") + shadowHtml;
+            const label = (w? `${nm}${achTagHtml(w)}<br>${hrsSpan}${restNote}` : "חוסר") + shadowHtml;
             return `<td class="${cls}" data-action="tmpl-cell" data-sector="${escapeHtml(secData.sector)}" data-date="${d}" data-type="${q.shift_type}" data-pos="${pos}">${label}</td>`;
           }
-          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${coordCls}">${escapeHtml(w.name)}${achTagHtml(w)}<br>${hrsSpan}${restNote}${shadowHtml}</td>`;
+          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${coordCls}">${nm}${achTagHtml(w)}<br>${hrsSpan}${restNote}${shadowHtml}</td>`;
           return `<td class="tmpl-missing${coordCls}">חוסר${shadowHtml}</td>`;
         }).join("");
         return `<tr><td class="tmpl-pos">סייר ${pos}${bucketHrs}</td>${cells}</tr>`;
@@ -2538,7 +2541,7 @@ function renderCompactPrintGrid(group, dates, ui){
           if(!a) return `<td class="cpt-missing${cc}">חוסר${shadows}</td>`;
           const w = workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id];
           const hrs = tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate);
-          return `<td${cc?` class="${cc.trim()}"`:""}>${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="cpt-ach">אחמ"ש</span>`:""}${hrs!==std?` <span class="cpt-hrs${isEarlyEnd(q, a)?" hrs-early":""}" dir="ltr">(${hrs})</span>`:""}${shadows}</td>`;
+          return `<td${cc?` class="${cc.trim()}"`:""}>${isEarlyEnd(q, a)?`<span class="hrs-early">${escapeHtml(nameOf(a.worker_id))}</span>`:escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="cpt-ach">אחמ"ש</span>`:""}${hrs!==std?` <span class="cpt-hrs${isEarlyEnd(q, a)?" hrs-early":""}" dir="ltr">(${hrs})</span>`:""}${shadows}</td>`;
         }).join("");
         const lead = pos===1 ? `<td class="cpt-shift${bucket.key==="coordinated"?" cpt-coord":""}" rowspan="${n}">${label}</td><td class="cpt-hcol${bucket.key==="coordinated"?" cpt-coord":""}" rowspan="${n}">${tmplBucketHoursHtml(bucket) || `<span dir="ltr">${std||""}</span>`}</td>` : "";
         return `<tr class="${pos===1?"cpt-first":""}">${lead}${cells}</tr>`;
@@ -3469,7 +3472,7 @@ function renderMobileGrid(group, dates, ui){
           const w = wOf(a.worker_id), hrs = tmplHoursTxt2(group, d, sec.sector, q, a, abd);
           const role = q.role_counts ? assignmentRole(a, workersById) : null;
           const bad = rest.has(restKey(a)), tight = !bad && rest.tight && rest.tight.has(restKey(a));
-          return `<div class="mg-n${bad?" mg-bad":(tight?" mg-tight":"")}">${role?`<span class="mg-role">${escapeHtml(role)}</span> `:""}${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="ach-tag">אחמ"ש</span>`:""}${hrs!==std?` <span class="mg-h${isEarlyEnd(q, a)?" hrs-early":""}" dir="ltr">${escapeHtml(hrs)}</span>`:""}</div>`;
+          return `<div class="mg-n${bad?" mg-bad":(tight?" mg-tight":"")}">${role?`<span class="mg-role">${escapeHtml(role)}</span> `:""}${isEarlyEnd(q, a)?`<span class="hrs-early">${escapeHtml(nameOf(a.worker_id))}</span>`:escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="ach-tag">אחמ"ש</span>`:""}${hrs!==std?` <span class="mg-h${isEarlyEnd(q, a)?" hrs-early":""}" dir="ltr">${escapeHtml(hrs)}</span>`:""}</div>`;
         });
         tmplShadowList(abd, d, sec.sector, q.shift_type).forEach(sh=>lines.push(sh.split ? `<div class="mg-n mg-sh">⇄ ${escapeHtml(nameOf(sh.worker_id))} <span class="mg-h" dir="ltr">${escapeHtml(tmplHoursTxt(q, sh))}</span></div>` : `<div class="mg-n mg-sh">${escapeHtml(nameOf(sh.worker_id))} (ח)</div>`));
         const miss = (q.required_count||0) - list.length;
