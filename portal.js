@@ -1410,7 +1410,7 @@ const AREQ_DOCS = { vacation:[["vacation_doc","מסמך תומך (אם יש)"]],
   reserve:[["reserve_order","צו מילואים"],["form3010","טופס 3010 (אישור על שירות מילואים)"]],
   sick:[["sick_note","אישור מחלה"]] };
 const AREQ_DOCNAME = { vacation_doc:"מסמך תומך", reserve_order:"צו מילואים", form3010:"טופס 3010", sick_note:"אישור מחלה", other:"מסמך" };
-const AREQ_STATUS = { pending:"⏳ ממתינה לאישור", approved:"✅ אושרה", rejected:"❌ נדחתה" };
+const AREQ_STATUS = { pending:"⏳ ממתינה לאישור", approved:"✅ אושרה", rejected:"❌ נדחתה", cancelled:"🚫 בוטלה ע\"י העובד" };
 function areqDates(r){ const f = d=>{ const [y,m,dd] = String(d||"").split("-"); return `${dd}/${m}/${y}`; }; return r.date_from===r.date_to ? f(r.date_from) : `${f(r.date_from)} – ${f(r.date_to)}`; }
 function areqDays(r){ return Math.round((new Date(r.date_to) - new Date(r.date_from)) / 864e5) + 1; }
 function areqFilesSummary(r){ const f = r.files||{}; const ks = Object.keys(f); return ks.length ? ks.map(k=>`${AREQ_DOCNAME[k]||k}${f[k]>1?` ×${f[k]}`:""}`).join(", ") : "אין מסמכים"; }
@@ -1447,7 +1447,8 @@ function areqDocsHtml(App, files){
 function areqDetailsTable(App, r){
   const esc = App.escapeHtml, k = AREQ_KINDS[r.kind]||{label:r.kind, icon:"📝"};
   const rows = [["עובד", r.worker_name], ["סוג הבקשה", `${k.icon} ${k.label}`], ["תאריכים", `${areqDates(r)} (${areqDays(r)} ימים)`], ["הערה", r.note||""],
-    ["סטטוס", AREQ_STATUS[r.status]||r.status], ["טופל ע\"י", r.handled_by_name ? `${r.handled_by_name}${r.handled_at?" · "+dmgFmtDate(r.handled_at):""}` : ""], ["תשובת המנהל", r.mgr_note||""], ["הוגשה", dmgFmtDate(r.created_at)]];
+    ["שינוי תאריכים", r.prev_date_from ? `היה: ${areqDates({date_from:r.prev_date_from, date_to:r.prev_date_to})}${r.changed_at?" · שונה "+dmgFmtDate(r.changed_at):""}` : ""],
+    ["סטטוס", AREQ_STATUS[r.status]||r.status], ["בוטלה", r.cancelled_at ? dmgFmtDate(r.cancelled_at) : ""], ["טופל ע\"י", r.handled_by_name ? `${r.handled_by_name}${r.handled_at?" · "+dmgFmtDate(r.handled_at):""}` : ""], ["תשובת המנהל", r.mgr_note||""], ["הוגשה", dmgFmtDate(r.created_at)]];
   return `<table class="dmg-table">${rows.filter(x=>x[1]).map(([l,v])=>`<tr><th>${l}</th><td style="white-space:pre-wrap;">${esc(v)}</td></tr>`).join("")}</table>`;
 }
 function areqLoadMine(App, session){
@@ -1466,9 +1467,10 @@ function renderAdminReqWorker(App, session){
     return `<span class="backlink" data-action="portal-areq-close">◀ חזרה לבקשות שלי</span>
       <h3 style="margin:8px 0;">${(AREQ_KINDS[r.kind]||{}).icon||"📝"} בקשה ל${esc((AREQ_KINDS[r.kind]||{}).label||"")}</h3>
       ${areqDetailsTable(App, r)}
+      ${areqWorkerChangeHtml(App, r)}
       <h4 style="margin:14px 0 4px;">📎 מסמכים</h4>
       ${AREQ.vfiles===null ? `<p class="muted">טוען...</p>` : areqDocsHtml(App, AREQ.vfiles)}
-      ${r.status!=="rejected" ? `<div class="dmg-sub" style="margin-top:10px;"><b>➕ הוספת מסמך</b>${r.kind==="reserve"?`<p class="muted" style="margin:4px 0;">את טופס 3010 מוסיפים כאן בסוף המילואים.</p>`:""}
+      ${r.status!=="rejected" && r.status!=="cancelled" ? `<div class="dmg-sub" style="margin-top:10px;"><b>➕ הוספת מסמך</b>${r.kind==="reserve"?`<p class="muted" style="margin:4px 0;">את טופס 3010 מוסיפים כאן בסוף המילואים.</p>`:""}
         ${(AREQ_DOCS[r.kind]||[]).map(([dk,dl])=>`<div style="margin-top:6px;"><span style="font-weight:600;">${dl}</span> ${areqPick("portal-areq-addfile", dk)}</div>`).join("")}</div>` : ""}
       ${AREQ.busy ? `<p class="muted">${esc(AREQ.msg||"מעלה...")}</p>` : ""}${AREQ.error?`<p class="shortage">${esc(AREQ.error)}</p>`:""}${AREQ.okMsg?`<p style="color:#1b7f3b;font-weight:700;">${esc(AREQ.okMsg)}</p>`:""}`;
   }
@@ -1504,6 +1506,29 @@ function renderAdminReqWorker(App, session){
     <div style="margin-top:14px;"><button class="btn ok" data-action="portal-areq-send" ${AREQ.busy?"disabled":""} style="font-size:1.05em;padding:10px 20px;">${AREQ.busy?esc(AREQ.msg||"שולח..."):"✔ שליחת הבקשה"}</button></div>
     ${AREQ.error?`<p class="shortage">${esc(AREQ.error)}</p>`:""}`;
 }
+/* (2026-10-25, סרגיי) העובד יכול לבטל בקשה או לשנות את התאריכים - גם אחרי שנשלחה וגם אחרי שאושרה.
+   ביטול לא מוחק את הבקשה (היא נשארת עם סטטוס "בוטלה"); שינוי תאריכים מחזיר אותה לאישור הקב"ט. השרת: worker_admin_req_cancel / _update. */
+function areqWorkerChangeHtml(App, r){
+  const esc = App.escapeHtml;
+  if(r.status!=="pending" && r.status!=="approved") return "";
+  if(AREQ.edit===r.id) return `<div class="dmg-sub" style="margin-top:10px;"><b>📅 שינוי תאריכים</b>
+      <div class="dmg-pfields">
+        <div class="field"><label>מתאריך</label><input type="date" id="areq_efrom" value="${esc(r.date_from)}"></div>
+        <div class="field"><label>עד תאריך (כולל)</label><input type="date" id="areq_eto" value="${esc(r.date_to)}"></div>
+      </div>
+      <div class="field"><label>הערה (לא חובה)</label><textarea id="areq_enote" rows="2">${esc(r.note||"")}</textarea></div>
+      ${r.status==="approved" ? `<p class="muted" style="margin:4px 0;font-size:.88em;">הבקשה כבר אושרה — אחרי שינוי התאריכים היא תחזור לאישור הקב"ט.</p>` : ""}
+      <div class="row"><button class="btn ok" data-action="portal-areq-edit-save" ${AREQ.busy?"disabled":""}>✔ שמירת התאריכים</button>
+      <button class="btn secondary" data-action="portal-areq-edit-close">ביטול</button></div></div>`;
+  if(AREQ.delAsk===r.id) return `<div class="note-box" style="margin-top:10px;border-color:#b42318;background:#fff7f6;">
+      <b>🚫 לבטל את הבקשה ל${esc((AREQ_KINDS[r.kind]||{}).label||"")} (${esc(areqDates(r))})?</b>
+      <p class="muted" style="margin:4px 0;">הקב"ט יקבל הודעה שהבקשה בוטלה. הבקשה והמסמכים נשמרים בהיסטוריה.</p>
+      <div class="row"><button class="btn danger" data-action="portal-areq-del-go" ${AREQ.busy?"disabled":""}>כן, לבטל את הבקשה</button>
+      <button class="btn secondary" data-action="portal-areq-del-no">לא</button></div></div>`;
+  return `<div class="row" style="margin-top:10px;">
+      <button class="btn secondary" data-action="portal-areq-edit">📅 שינוי תאריכים</button>
+      <button class="btn secondary" data-action="portal-areq-del-ask" style="color:#b42318;border-color:#f3c4c0;">🚫 ביטול הבקשה</button></div>`;
+}
 function areqCollect(){
   const v = id=>{ const x = document.getElementById(id); return x ? x.value : undefined; };
   if(!AREQ.form) return;
@@ -1517,7 +1542,30 @@ async function areqAction(App, a, el){
   if(a==="portal-areq-kind"){ areqCollect(); AREQ.form = Object.assign({}, AREQ.form, {kind: el.dataset.k || null}); AREQ.files = {}; AREQ.error = null; return App.render(); }
   if(a==="portal-areq-rmfile"){ areqCollect(); (AREQ.files[el.dataset.kind]||[]).splice(Number(el.dataset.j),1); return App.render(); }
   if(a==="portal-areq-open"){ AREQ.view = (AREQ.mine||[]).find(x=>x.id===el.dataset.id) || null; AREQ.vfiles = null; AREQ.error = null; AREQ.okMsg = null; return App.render(); }
-  if(a==="portal-areq-close"){ AREQ.view = null; AREQ.vfiles = null; AREQ.error = null; AREQ.okMsg = null; return App.render(); }
+  if(a==="portal-areq-close"){ AREQ.view = null; AREQ.vfiles = null; AREQ.error = null; AREQ.okMsg = null; AREQ.edit = null; AREQ.delAsk = null; return App.render(); }
+  if(a==="portal-areq-edit"){ AREQ.edit = AREQ.view && AREQ.view.id; AREQ.delAsk = null; AREQ.error = null; AREQ.okMsg = null; return App.render(); }
+  if(a==="portal-areq-edit-close"){ AREQ.edit = null; AREQ.error = null; return App.render(); }
+  if(a==="portal-areq-del-ask"){ AREQ.delAsk = AREQ.view && AREQ.view.id; AREQ.edit = null; AREQ.error = null; AREQ.okMsg = null; return App.render(); }
+  if(a==="portal-areq-del-no"){ AREQ.delAsk = null; return App.render(); }
+  if(a==="portal-areq-edit-save" || a==="portal-areq-del-go"){
+    const r = AREQ.view; if(!session || !r || AREQ.busy) return;
+    let args, fn;
+    if(a==="portal-areq-edit-save"){
+      const v = id=>(document.getElementById(id)||{}).value;
+      const fr = v("areq_efrom"), to = v("areq_eto"), nt = v("areq_enote");
+      if(!fr || !to){ AREQ.error = "בחרו תאריכים"; return App.render(); }
+      if(to < fr){ AREQ.error = "תאריך הסיום לפני תאריך ההתחלה"; return App.render(); }
+      fn = "worker_admin_req_update"; args = {p_token:session.token, p_req:r.id, p_from:fr, p_to:to, p_note:nt==null?null:nt};
+    } else { fn = "worker_admin_req_cancel"; args = {p_token:session.token, p_req:r.id}; }
+    AREQ.busy = true; AREQ.error = null; App.render();
+    try{
+      await App.apiRpc(fn, args);
+      const changed = a==="portal-areq-edit-save" && (args.p_from!==r.date_from || args.p_to!==r.date_to);
+      AREQ.busy = false; AREQ.edit = null; AREQ.delAsk = null; AREQ.view = null; AREQ.vfiles = null; AREQ.mine = null;
+      AREQ.okMsg = a==="portal-areq-del-go" ? "✔ הבקשה בוטלה — הקב\"ט קיבל הודעה." : changed ? "✔ התאריכים עודכנו — הבקשה נשלחה שוב לאישור הקב\"ט." : "✔ נשמר.";
+    }catch(e){ AREQ.busy = false; AREQ.error = e.message; }
+    return App.render();
+  }
   if(a==="portal-areq-send"){
     if(!session || AREQ.busy) return;
     areqCollect(); const f = AREQ.form || {};
@@ -1585,7 +1633,7 @@ function renderAdminReqMgrPages(App, ms, pg, a, wrap, loading, msgs){
     if(!AREQ.list) return loading();
     const row = r=>`<div class="portal-task${r.seen?"":" portal-unread"}" data-action="portal-pv" data-page="areq-view" data-id="${r.id}">
       <span class="portal-task-icon">${(AREQ_KINDS[r.kind]||{}).icon||"📝"}</span>
-      <span><b>${esc(r.worker_name)}</b> · ${esc((AREQ_KINDS[r.kind]||{}).label||"")} · ${esc(areqDates(r))} (${areqDays(r)} ימים) · ${esc(AREQ_STATUS[r.status]||"")}
+      <span><b>${esc(r.worker_name)}</b> · ${esc((AREQ_KINDS[r.kind]||{}).label||"")} · ${esc(areqDates(r))} (${areqDays(r)} ימים) · ${esc(AREQ_STATUS[r.status]||"")}${r.prev_date_from && r.status==="pending" ? ` · <b style="color:#b45309;">📅 העובד שינה תאריכים</b>` : ""}
       <span class="muted" style="display:block;font-size:.85em;">📎 ${esc(areqFilesSummary(r))}${r.note?` · ${esc(r.note.slice(0,80))}`:""}</span></span></div>`;
     const pend = AREQ.list.filter(r=>r.status==="pending"), done = AREQ.list.filter(r=>r.status!=="pending");
     return wrap(`<h2 style="margin-top:4px;">📝 בקשות מנהלתיות</h2>${msgs}
@@ -1604,12 +1652,14 @@ function renderAdminReqMgrPages(App, ms, pg, a, wrap, loading, msgs){
       ${areqDetailsTable(App, r)}
       <h4 style="margin:14px 0 4px;">📎 מסמכים</h4>${AREQ.mfiles===null ? `<p class="muted">טוען...</p>` : areqDocsHtml(App, AREQ.mfiles)}
       ${r.kind==="reserve" && !(r.files||{}).form3010 ? `<p class="muted" style="font-size:.88em;">טופס 3010 עדיין לא צורף — העובד יכול להוסיף אותו מתוך הבקשה, ותקבלו התראה.</p>` : ""}
+      ${r.status==="cancelled" ? `<p class="note-box" style="margin-top:12px;">🚫 העובד ביטל את הבקשה הזו${r.cancelled_at?" ב-"+esc(dmgFmtDate(r.cancelled_at)):""}. אין צורך לטפל בה.</p>${msgs}` : `
+      ${r.prev_date_from && r.status==="pending" ? `<p class="note-box" style="margin-top:12px;border-color:#e0a800;">📅 העובד שינה את התאריכים: היה ${esc(areqDates({date_from:r.prev_date_from, date_to:r.prev_date_to}))}, עכשיו ${esc(areqDates(r))}. צריך לאשר מחדש.</p>` : ""}
       <div class="field" style="margin-top:12px;"><label>תשובה לעובד (לא חובה)</label><textarea id="areq_mgr_note" rows="2">${esc(r.mgr_note||"")}</textarea></div>
       <div class="row">
         <button class="btn ok" data-action="portal-areq-resolve" data-id="${r.id}" data-s="approved" ${PV.busy?"disabled":""}>✅ אישור</button>
         <button class="btn danger" data-action="portal-areq-resolve" data-id="${r.id}" data-s="rejected" ${PV.busy?"disabled":""}>❌ דחייה</button>
         ${r.status!=="pending" ? `<button class="btn secondary" data-action="portal-areq-resolve" data-id="${r.id}" data-s="pending" ${PV.busy?"disabled":""}>↩ החזרה להמתנה</button>` : ""}
-      </div>${msgs}`);
+      </div>${msgs}`}`);
   }
   return null;
 }
@@ -5169,7 +5219,7 @@ const HELP_KB = [
   {who:"w", q:"איך מדווחים על נזק או תאונה?", k:"נזק תאונה דיווח נזק רכב אופנוע ציוד נשבר",
    a:`במסך הבית: <b>⚠️ דיווח נזק / תאונה</b>. בוחרים "נזק לציוד" או "תאונה/נזק לכלי רכב", ממלאים את הפרטים ומצרפים תמונות. אם מעורב צד ג׳ — ממלאים גם את פרטיו. הדיווח נשלח לקב"ט ולסרגיי.`},
   {who:"w", q:"איך מבקשים חופשה / מילואים / מחלה?", k:"חופשה מילואים מחלה חולה חופש בקשה מנהלתית צו 3010 אישור מחלה ימי חופש",
-   a:`במסך הבית: <b>📋 מנהלתיות</b> → בוחרים חופשה / מילואים / מחלה, תאריכים, ומצרפים מסמכים (במילואים — צו מילואים, ובסוף גם טופס 3010; במחלה — אישור מחלה). אפשר להוסיף מסמכים גם אחרי השליחה. תקבל התראה כשהבקשה מאושרת או נדחית.`},
+   a:`במסך הבית: <b>📋 מנהלתיות</b> → בוחרים חופשה / מילואים / מחלה, תאריכים, ומצרפים מסמכים (במילואים — צו מילואים, ובסוף גם טופס 3010; במחלה — אישור מחלה). אפשר להוסיף מסמכים גם אחרי השליחה. תקבל התראה כשהבקשה מאושרת או נדחית. צריך לבטל או לשנות תאריכים? פותחים את הבקשה ב"הבקשות שלי" → <b>📅 שינוי תאריכים</b> או <b>🚫 ביטול הבקשה</b> — גם אחרי שאושרה (שינוי תאריכים מחזיר אותה לאישור הקב"ט).`},
   {who:"w", q:"איפה רואים את הציוד האישי שלי?", k:"ציוד אישי לוגיסטי מדים קסדה מעיל בקשת ציוד החלפה",
    a:`במסך הבית: <b>🎒 לוגיסטי</b>. שם מופיעה רשימת הציוד שלך (הקב"ט מזין אותה — אי אפשר לערוך). צריך ציוד נוסף או החלפה? "בקשת ציוד" — בוחרים פריט, כמות, מידה וסיבה.`},
   {who:"w", q:"איפה הלומדות והבחנים?", k:"לומדה בוחן מבחן הדרכה תרגיל סיכום בקרה קראתי",

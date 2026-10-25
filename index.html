@@ -155,6 +155,13 @@
   .mg-miss{color:#b42318;font-weight:700;font-size:11px;}
   .mg-table td.mg-na{background:#2a2a2a;}
   .mg-tasks td{background:#fff7ec;text-align:right;font-size:11px;}
+  /* חופשה / מילואים / מחלה (2026-10-25) - סגול, בנפרד מהמשימות */
+  .abs-head{background:#f3e8ff;color:#6b21a8;padding:5px 12px;font-weight:600;font-size:13px;}
+  .abs-cell{background:#faf5ff;color:#6b21a8;font-size:.88em;}
+  .abs-cell.abs-pend{background:repeating-linear-gradient(45deg,#faf5ff,#faf5ff 6px,#f3e8ff 6px,#f3e8ff 12px);}
+  .abs-tag{display:inline-block;background:#f3e8ff;color:#6b21a8;border:1px solid #d8b4fe;border-radius:6px;padding:0 5px;font-size:.85em;font-weight:600;white-space:nowrap;}
+  .abs-tag.abs-pend{border-style:dashed;background:#fff;}
+  .mg-abs td{background:#faf5ff;color:#6b21a8;text-align:right;font-size:11px;}
   .tmpl-fixed th,.tmpl-fixed td{white-space:normal;overflow-wrap:anywhere;}
   .stask-cell{font-size:.9em;min-width:70px;}
   .tmpl-pos-hrs{font-size:.72em;font-weight:400;color:#4b5563;white-space:nowrap;line-height:1.35;}
@@ -270,7 +277,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=143"></script>
+<script src="portal.js?v=144"></script>
 <script>
 (function(){
 "use strict";
@@ -1171,6 +1178,7 @@ function renderAggregate(){
   if(ui.loadError || !ui.workers) return `<div class="card"><span class="backlink" data-action="go-home">◀ חזרה</span><h3>הטעינה נכשלה</h3><p class="shortage">${escapeHtml(ui.loadError||"שגיאה לא ידועה")}</p><button class="btn" data-action="agg-reload">🔄 נסה שוב</button></div>`;
 
   if(ui.printOpen) return `<div class="card">${renderPrintView(team)}</div>`;
+  if(ui.previewOpen) return renderSchedPreview(team);
 
   if(ui.mode==="manual") return renderManualBuild(team);
 
@@ -1224,6 +1232,7 @@ function renderAggregate(){
              <button class="btn secondary" data-action="open-pin" data-next="unpublish">בטל פרסום</button>`
           : `<button class="btn ok" data-action="open-pin" data-next="publish">📢 פרסם סידור לעובדים</button>`) : ""}
         <button class="btn ok" data-action="share-open">📤 שליחה בוואטסאפ / מייל</button>
+        ${group.citySectors.length ? `<button class="btn secondary" data-action="sched-preview">👁 הצג בתצוגה</button>` : ""}
       </div>
       ${group.citySectors.length ? `<p class="muted" style="margin-top:8px;">${isSchedulePublished(group, ui) ? "✅ הסידור לתקופה הזו פורסם — העובדים רואים אותו ב\"המשמרות שלי\"." : "📝 טיוטה — העובדים עדיין לא רואים את הסידור לתקופה הזו."}</p>` : ""}
       ${publishInfoHtml(group, ui)}
@@ -1639,6 +1648,11 @@ async function loadAggregateData(team){
       ui.schedTasks = group.citySectors.length ? await apiRpc("sched_tasks_list", {p_sectors: group.citySectors, p_from: tdates[0], p_to: tdates[tdates.length-1]}) : [];
       try{ ui.schedTaskRows = group.citySectors.length ? await apiRpc("sched_task_rows_list", {p_sectors: group.citySectors, p_from: tdates[0], p_to: tdates[tdates.length-1]}) : []; }catch(e){ ui.schedTaskRows = []; }
     }catch(e){ ui.schedTasks = []; }
+    // חופשה / מילואים / מחלה של עובדי הגזרה בתקופה (2026-10-25) - רק עם הרשאת עריכה
+    try{
+      ui.absences = (S.pin && !ui.workerView && workerIds.length && dates.length)
+        ? (await apiRpc("sched_absences", {p_pin:S.pin, p_worker_ids:workerIds, p_from:dates[0], p_to:dates[dates.length-1]}) || []) : [];
+    }catch(e){ ui.absences = []; }
 
     ui.loaded = true;
   }catch(e){
@@ -1676,12 +1690,13 @@ function renderPivot(dates, workers, entriesByWorker, submittedIds, exceptionIds
           ${noteCell}
           ${dates.map(d=>{
             const es = (entriesByWorker[w.id]||{})[d];
-            if(!es || !es.length) return `<td>-</td>`;
+            const absH = absOn(S.ui, w.id, d).map(absTagHtml).join(" ");
+            if(!es || !es.length) return `<td>${absH || "-"}</td>`;
             // מוקד: שעות מותאמות = "רק בשעות האלה כן יכול" - מוצג בירוק בנפרד, כי שאר הסימונים במוקד הם חסימות
             const mk = workerIsMoked(w, "");
             const gb = guardBlockingAt(teamById(w.team_id), d); // חיפה מ-01/11: הסימונים הם חסימות
             return `<td>${es.map(e=> e.shift_type==="custom" ? (gb ? "" : mk ? `<span style="color:var(--ok);font-weight:700;">✓ יכול רק ${escapeHtml(e.custom_start)}-${escapeHtml(e.custom_end)}</span>` : `${escapeHtml(e.custom_start)}-${escapeHtml(e.custom_end)}`)
-              : (gb && !DAY_STATUS_TYPES.includes(e.shift_type) ? `<span style="color:var(--danger);font-weight:700;">✕ ${SHIFT_LABELS[e.shift_type]}</span>` : SHIFT_LABELS[e.shift_type])).filter(Boolean).join(", ")}</td>`;
+              : (gb && !DAY_STATUS_TYPES.includes(e.shift_type) ? `<span style="color:var(--danger);font-weight:700;">✕ ${SHIFT_LABELS[e.shift_type]}</span>` : SHIFT_LABELS[e.shift_type])).filter(Boolean).join(", ")}${absH?"<br>"+absH:""}</td>`;
           }).join("")}
         </tr>`;
       }).join("")}
@@ -2471,7 +2486,7 @@ function renderTemplateGrid(group, dates, ui, mode){
   }).join("");
 
   const banner = mode==="manual" ? longChainBanner(restViolations, dates, id=>{ const x = workers.find(y=>y.id===id) || allWorkersById[id]; return x?x.name:"?"; }) : "";
-  return blocksHtml ? banner + blocksHtml : `<p class="muted">אין תקן מוגדר לגזרות אלו.</p>`;
+  return blocksHtml ? banner + blocksHtml + absencesBlock(dates, ui) : `<p class="muted">אין תקן מוגדר לגזרות אלו.</p>`;
 }
 
 /* פלט PDF מתומצת (2026-10-21, סרגיי: "שהפלט לא יתפרס על פני כל כך הרבה עמודים... כדוגמת טבלת האקסל"):
@@ -2546,6 +2561,29 @@ function renderCompactPrintGrid(group, dates, ui){
    בשיבוץ ידני (schedule_task_days, rpc_sched_task_rows). אין כמות קבועה - רק השורות שיש בהן משימות, ומה שהקב"ט
    הוסיף בלחצן (סרגיי, 2026-10-21). אי אפשר להסיר שורה שיש בה משימה. */
 const STASK_DEFAULT_ROWS = 0;
+/* חופשה / מילואים / מחלה (2026-10-25, סרגיי): בקשות מנהלתיות ממתינות ומאושרות של עובדי הגזרה - מוצגות לקב"ט מתחת לטבלת
+   השיבוץ (כמו המשימות, בצבע סגול נפרד) ובטבלת הזמינות שהוגשה, בתאריכים הרלוונטיים. נטען מ-sched_absences (רק עם הרשאת עריכה). */
+const ABS_KINDS = { vacation:{l:"חופשה", i:"🏖️"}, reserve:{l:"מילואים", i:"🪖"}, sick:{l:"מחלה", i:"🤒"} };
+function absOn(ui, workerId, d){ return (ui.absences||[]).filter(x=>x.worker_id===workerId && x.from<=d && x.to>=d); }
+function absTagHtml(x){ const k = ABS_KINDS[x.kind]||{l:x.kind, i:"📝"}; return `<span class="abs-tag${x.status==="pending"?" abs-pend":""}" title="${x.status==="pending"?"ממתין לאישור":"מאושר"}">${k.i} ${escapeHtml(k.l)}${x.status==="pending"?" ⏳":""}</span>`; }
+function absencesBlock(dates, ui){
+  if(ui.workerView || ui.previewOpen) return "";
+  const list = (ui.absences||[]).filter(x=>x.from<=dates[dates.length-1] && x.to>=dates[0]);
+  if(!list.length) return "";
+  const rows = list.map(x=>{
+    const k = ABS_KINDS[x.kind]||{l:x.kind, i:"📝"};
+    return `<tr><td class="tmpl-pos" style="background:#faf5ff;color:#6b21a8;">${escapeHtml(x.worker_name||"")}</td>${dates.map(d=> (x.from<=d && x.to>=d)
+      ? `<td class="abs-cell${x.status==="pending"?" abs-pend":""}">${k.i} ${escapeHtml(k.l)}${x.status==="pending"?`<br><span style="font-size:.85em;">⏳ ממתין לאישור</span>`:""}</td>` : `<td></td>`).join("")}</tr>`;
+  }).join("");
+  return `<div class="tmpl-block">
+      <div class="abs-head">🏖️ חופשה / 🪖 מילואים / 🤒 מחלה <span style="font-weight:400;font-size:.85em;">— בקשות מאושרות, ופסים = ממתינות לאישור</span></div>
+      <div style="overflow-x:auto;">
+      <table class="tmpl-table tmpl-fixed" style="min-width:${TMPL_POS_W + dates.length*TMPL_DAY_W}px;"><colgroup><col style="width:${TMPL_POS_W}px">${dates.map(()=>"<col>").join("")}</colgroup>
+        <thead><tr><th></th>${dates.map(d=>`<th>${fmtDateHeb(d)}</th>`).join("")}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      </div></div>`;
+}
 function stRowsFor(ui, sector, date){
   const rec = (ui.schedTaskRows||[]).find(r=>r.sector===sector && r.date===date);
   const used = Math.max(0, ...(ui.schedTasks||[]).filter(t=>t.sector===sector && t.date===date).map(t=>t.slot));
@@ -2761,7 +2799,7 @@ function renderMokedTemplateGrid(group, dates, ui, mode){
   }).join("");
 
   const banner = mode==="manual" ? longChainBanner(restViolations, dates, id=>{ const x = workersById[id]; return x?x.name:"?"; }) : "";
-  return blocksHtml ? banner + blocksHtml : `<p class="muted">אין תקן מוגדר למוקד.</p>`;
+  return blocksHtml ? banner + blocksHtml + absencesBlock(dates, ui) : `<p class="muted">אין תקן מוגדר למוקד.</p>`;
 }
 
 /* טופס מוקטן "הוסף עובד חדש", מוטמע בתוך overlay של תא שיבוץ (גיאוגרפי או מוקד) - כדי שאפשר יהיה
@@ -3395,7 +3433,9 @@ function renderMobileGrid(group, dates, ui){
   const workersById = {}; workers.forEach(w=>workersById[w.id]=w);
   const abd = {}; (ui.assignments||[]).forEach(a=>{ (abd[a.entry_date]=abd[a.entry_date]||[]).push(a); });
   const rest = computeRestViolations(ui.allAssignments || ui.assignments || []);
-  return buildTemplateData(group, dates, S.quotas).map(sec=>{
+  const tdata = buildTemplateData(group, dates, S.quotas);
+  const absSector = (tdata.find(x=>x.buckets.length)||{}).sector; // חופשות - פעם אחת, בטבלה הראשונה
+  return tdata.map(sec=>{
     if(!sec.buckets.length) return "";
     const buckets = sec.buckets.slice().sort((a,b)=>(MG_ORDER[a.key]||9)-(MG_ORDER[b.key]||9) || a.minStart.localeCompare(b.minStart));
     const stdOf = b=>{ const cnt = {}; Object.values(b.perDate).forEach(q=>{ if(q){ const k = `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`; cnt[k]=(cnt[k]||0)+1; } }); return Object.keys(cnt).sort((x,y)=>cnt[y]-cnt[x])[0]||""; };
@@ -3423,7 +3463,9 @@ function renderMobileGrid(group, dates, ui){
       }).join("");
       const tasks = (ui.schedTasks||[]).filter(t=>t.sector===sec.sector && t.date===d);
       const taskRow = tasks.length ? `<tr class="mg-tasks"><td colspan="${buckets.length+1}">📌 ${tasks.map(t=>`<b>${escapeHtml(t.worker_name||"")}</b> — ${escapeHtml(t.title)}${t.start?` <span dir="ltr">(${escapeHtml(tmplHourNum(t.start))}${t.end?"-"+escapeHtml(tmplHourNum(t.end)):""})</span>`:""}`).join(" · ")}</td></tr>` : "";
-      return `<tr class="mg-row"><th class="mg-day">${MG_DOW[dow]}<br>${String(dt.getDate()).padStart(2,"0")}/${String(dt.getMonth()+1).padStart(2,"0")}${extra?`<div class="mg-sub">${extra}</div>`:""}</th>${cells}</tr>${taskRow}`;
+      const absList = (sec.sector===absSector && !ui.workerView && !ui.previewOpen) ? (ui.absences||[]).filter(x=>x.from<=d && x.to>=d) : [];
+      const absRow = absList.length ? `<tr class="mg-abs"><td colspan="${buckets.length+1}">${absList.map(x=>`<b>${escapeHtml(x.worker_name||"")}</b> ${absTagHtml(x)}`).join(" · ")}</td></tr>` : "";
+      return `<tr class="mg-row"><th class="mg-day">${MG_DOW[dow]}<br>${String(dt.getDate()).padStart(2,"0")}/${String(dt.getMonth()+1).padStart(2,"0")}${extra?`<div class="mg-sub">${extra}</div>`:""}</th>${cells}</tr>${taskRow}${absRow}`;
     }).join("");
     return `<div class="tmpl-sector-head">${escapeHtml(sec.sector)}</div><table class="mg-table"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
   }).join("");
@@ -3441,6 +3483,19 @@ function renderScheduleViewer(team){
   return `${ui.workerView ? "" : `<div class="row no-print" style="margin-bottom:8px;"><button class="btn ok" data-action="share-open">📤 שליחה בוואטסאפ / מייל</button></div>`}
     <h3 style="margin:4px 0 8px;">${escapeHtml(group.label)} — ${fmtDateHeb(dates[0])} — ${fmtDateHeb(dates[dates.length-1])}</h3>
     ${grid}`;
+}
+/* "הצג בתצוגה" (2026-10-25, סרגיי): הסידור כפי שהוא נראה לעובדים - בלי לפרסם, להוריד או לשלוח. כולל טיוטה שעוד לא פורסמה. */
+function renderSchedPreview(team){
+  const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
+  const isMoked = group.citySectors[0]==="מוקד";
+  const pub = isSchedulePublished(group, ui);
+  return `<div class="card">
+    <span class="backlink" data-action="sched-preview-close">◀ חזרה ${ui.mode==="manual"?"לשיבוץ הידני":"לטבלה המרוכזת"}</span>
+    <h2 style="margin:6px 0;">👁 תצוגת הסידור — ${escapeHtml(group.label)}</h2>
+    <p class="muted" style="margin:0 0 10px;">${fmtDateHeb(dates[0])} — ${fmtDateHeb(dates[dates.length-1])} · ${pub ? "✅ פורסם — כך העובדים רואים אותו." : "📝 טיוטה — כך הסידור ייראה לעובדים אחרי הפרסום. כרגע רק אתה רואה אותו."}</p>
+    ${responsiveGrid(isMoked ? renderMokedTemplateGrid(group, dates, ui, "view") : renderTemplateGrid(group, dates, ui, "view"), group, dates, ui)}
+    <button class="btn secondary" data-action="sched-preview-close" style="margin-top:10px;">◀ חזרה</button>
+  </div>`;
 }
 function renderOriginalPrint(team){
   const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
@@ -4157,6 +4212,7 @@ function renderManualBuild(team){
       <button class="btn ok" data-action="manual-done" style="margin-top:8px;">✔ סיימתי</button>
       <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
       <button class="btn ok small" data-action="share-open" style="margin-top:8px;">📤 שליחה בוואטסאפ / מייל</button>
+      <button class="btn secondary small" data-action="sched-preview" style="margin-top:8px;">👁 הצג בתצוגה</button>
     </div>
     ${bottomTables}
     ${renderTmplCellOverlay()}
@@ -4173,6 +4229,7 @@ function renderManualBuild(team){
     <button class="btn ok" data-action="manual-done" style="margin-top:8px;">✔ סיימתי</button>
     <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
     <button class="btn ok small" data-action="share-open" style="margin-top:8px;">📤 שליחה בוואטסאפ / מייל</button>
+    <button class="btn secondary small" data-action="sched-preview" style="margin-top:8px;">👁 הצג בתצוגה</button>
   </div>
   ${bottomTables}
   ${renderMokedCellOverlay()}`;
@@ -4604,6 +4661,8 @@ function onAppClick(e){
   if(a==="agg-export") return exportPivot();
   if(a==="agg-export-assign") return exportAssignments();
   if(a==="open-print"){ ui.printOpen = true; return render(); }
+  if(a==="sched-preview"){ ui.previewOpen = true; window.scrollTo(0,0); return render(); }
+  if(a==="sched-preview-close"){ ui.previewOpen = false; return render(); }
   if(a==="close-print"){ ui.printOpen = false; return render(); }
   if(a==="do-print"){ window.print(); return; }
   if(a==="share-open" || a==="share-go"){
