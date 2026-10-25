@@ -1659,13 +1659,73 @@ function eqmWaitingHtml(App, ms){
           <div style="font-size:.88em;margin-top:3px;">${g.people.map(x=>wLink(x.w, `${esc(x.w.name)}${x.size?` (${esc(x.size)})`:""}${x.at?` <span class="muted">· הוזמן ${day(x.at)}</span>`:""}`)).join(" · ")}</div></div>`; }).join("")}
     </details>` : "";
   const nItems = list.reduce((s,w)=>s+w.waiting.length, 0);
+  // (2026-10-25, סרגיי) רשימת הזמנה: כל מה שעובדים עוד לא קיבלו ועוד לא הוזמן - לפי פריט ומידה, עם PDF לוואטסאפ
+  const need = eqoNeedGroups(list);
+  const needN = need.reduce((s,g)=>s+g.n, 0);
+  const orderList = needN ? `<details class="eqw-list eqo-task"${EQM.needOpen?" open":""}>
+      <summary data-action="portal-eqn-toggle">🛒 רשימת הזמנה — ${needN} פריטים להזמין</summary>
+      <p class="muted" style="margin:6px 0;font-size:.85em;">כל מה שמסומן אצל העובדים "❌ לא קיבל", מסוכם לפי פריט ומידה. אחרי שמזמינים — מסמנים אצל העובד "📦 הוזמן".</p>
+      ${need.map(g=>`<div class="portal-task" style="display:block;"><b>${esc(g.name)}</b> × ${g.n}${g.sizes.length?` <span class="muted">(${g.sizes.map(x=>`${esc(x.size)} ×${x.n}`).join(", ")})</span>`:""}
+        <div style="font-size:.88em;margin-top:3px;">${g.people.map(x=>wLink(x.w, `${esc(x.w.name)}${x.size?` (${esc(x.size)})`:""}`)).join(" · ")}</div></div>`).join("")}
+      <div class="flexbar" style="margin-top:8px;gap:6px;">
+        <button class="btn small ok" data-action="portal-eqo-pdf" data-via="share" ${EQM.pdfBusy?"disabled":""}>📤 PDF לוואטסאפ</button>
+        <button class="btn small secondary" data-action="portal-eqo-pdf" data-via="dl" ${EQM.pdfBusy?"disabled":""}>⬇️ הורדת PDF</button>
+        ${EQM.pdfBusy?`<span class="muted">מכין PDF...</span>`:""}${EQM.pdfMsg?`<span class="muted">${esc(EQM.pdfMsg)}</span>`:""}</div>
+    </details>` : "";
   const waitList = `<details class="eqw-list"${EQM.waitOpen?" open":""}>
     <summary data-action="portal-eqw-toggle">⏳ רשימת המתנה לציוד — ${list.length} עובדים · ${nItems} פריטים</summary>
     ${list.map(w=>`<div class="portal-task" data-action="portal-pv" data-page="equip-edit" data-id="${w.id}" data-name="${esc(w.name)}">
       <span class="portal-task-icon">⏳</span>
       <span><b>${esc(w.name)}</b> — ${w.waiting.map(x=>`${esc(x.name)}${x.size?` (${esc(x.size)})`:""} <span class="eqs-tag eqs-${x.status}">${x.status==="ordered"?"📦 הוזמן":"❌ לא קיבל"}</span>${x.since?` <span class="muted" style="font-size:.85em;">(מ-${day(x.since)})</span>`:""}`).join(", ")}</span></div>`).join("")}
   </details>`;
-  return orderTask + waitList;
+  return orderList + orderTask + waitList;
+}
+/* קיבוץ החוסרים (טרם התקבל, לא הוזמן) לפי פריט ומידה */
+function eqoNeedGroups(list){
+  const by = {};
+  list.forEach(w=>w.waiting.filter(x=>x.status!=="ordered").forEach(x=>{
+    const g = by[x.item_id] = by[x.item_id] || {name:x.name, n:0, sz:{}, people:[], teams:{}};
+    g.n++; if(x.size) g.sz[x.size] = (g.sz[x.size]||0) + 1; g.people.push({w, size:x.size}); g.teams[w.team_id] = true;
+  }));
+  return Object.keys(by).map(k=>{ const g = by[k]; g.sizes = Object.keys(g.sz).sort((a,b)=>String(a).localeCompare(String(b), "he", {numeric:true})).map(sz=>({size:sz, n:g.sz[sz]})); return g; })
+    .sort((a,b)=>a.name.localeCompare(b.name, "he"));
+}
+async function eqoMakePdf(App, ms, via){
+  const esc = App.escapeHtml, ws = (EQM.workers||[]).filter(w=>w.waiting && w.waiting.length);
+  const teamIds = [...new Set(ws.map(w=>w.team_id))];
+  const tName = id=>{ const t = App.teamById(id); return t ? ((t.sectors&&t.sectors.length) ? t.sectors.join(" / ") : t.name) : ""; };
+  const today = App.fmtDateHeb(App.fmtDate(new Date()));
+  const section = (title, items)=>{ const need = eqoNeedGroups(items); if(!need.length) return "";
+    return `<h3 style="margin:14px 0 6px;">${esc(title)}</h3>
+      <table class="t"><thead><tr><th>פריט</th><th>מידה</th><th>כמות</th></tr></thead><tbody>
+      ${need.map(g=> g.sizes.length ? g.sizes.map((x,i)=>`<tr>${i===0?`<td rowspan="${g.sizes.length + (g.n > g.sizes.reduce((s,y)=>s+y.n,0) ? 1 : 0)}"><b>${esc(g.name)}</b></td>`:""}<td>${esc(x.size)}</td><td>${x.n}</td></tr>`).join("")
+          + (g.n > g.sizes.reduce((s,y)=>s+y.n,0) ? `<tr><td>ללא מידה</td><td>${g.n - g.sizes.reduce((s,y)=>s+y.n,0)}</td></tr>` : "")
+        : `<tr><td><b>${esc(g.name)}</b></td><td>—</td><td>${g.n}</td></tr>`).join("")}
+      <tr><td colspan="2"><b>סה"כ</b></td><td><b>${need.reduce((s,g)=>s+g.n,0)}</b></td></tr></tbody></table>
+      <div style="font-size:12px;color:#444;margin-top:6px;">${need.map(g=>`<div><b>${esc(g.name)}:</b> ${g.people.map(x=>esc(x.w.name)+(x.size?` (${esc(x.size)})`:"")).join(", ")}</div>`).join("")}</div>`; };
+  const body = (teamIds.length > 1 ? teamIds.map(id=>section(tName(id), ws.filter(w=>w.team_id===id))).join("") : section(tName(teamIds[0]) || "", ws))
+    || `<p>אין פריטים להזמין.</p>`;
+  await loadHtml2Pdf();
+  const box = document.createElement("div");
+  box.dir = "rtl"; box.style.cssText = "position:fixed;left:-10000px;top:0;width:760px;background:#fff;color:#111;font-family:Arial,sans-serif;padding:18px;";
+  box.innerHTML = `<style>.t{width:100%;border-collapse:collapse;font-size:13px;}.t th,.t td{border:1px solid #999;padding:6px 8px;text-align:right;}.t th{background:#f1f1f1;} h2{font-size:20px;margin:0 0 4px;} tr{page-break-inside:avoid;}</style>
+    ${App.logoStripHtml ? App.logoStripHtml(50) : ""}<h2>🛒 רשימת הזמנת ציוד</h2><div style="font-size:12px;color:#666;">הופק ${esc(today)} ע"י ${esc(ms.name||"")}</div>${body}`;
+  document.body.appendChild(box);
+  const name = `הזמנת-ציוד-${App.fmtDate(new Date())}.pdf`;
+  let blob;
+  try{
+    blob = await window.html2pdf().set({margin:[10,8,10,8], filename:name, image:{type:"jpeg", quality:0.92}, html2canvas:{scale:2, useCORS:true},
+      jsPDF:{unit:"mm", format:"a4", orientation:"portrait"}, pagebreak:{mode:["css","legacy"]}}).from(box).outputPdf("blob");
+  } finally { box.remove(); }
+  const file = new File([blob], name, {type:"application/pdf"});
+  const download = ()=>{ const u = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u), 4000); };
+  if(via==="share" && navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file], title:"רשימת הזמנת ציוד", text:"רשימת הזמנת ציוד — " + today}); return ""; }
+    catch(err){ if(err && err.name==="AbortError") return ""; }
+  }
+  download();
+  if(via==="share"){ window.open("https://wa.me/?text=" + encodeURIComponent("רשימת הזמנת ציוד — " + today + " (הקובץ מצורף)"), "_blank"); return "ה-PDF נשמר בהורדות — צרפו אותו להודעה בוואטסאפ שנפתחה."; }
+  return "ה-PDF נשמר בהורדות.";
 }
 document.addEventListener("change", e=>{
   const v = e.target && e.target.dataset ? e.target.dataset.eqmVeh : null;
@@ -5567,6 +5627,14 @@ function onClick(App, a, el){
   if(a==="portal-pv-back") return pvBack(App);
   if(a==="portal-eqw-toggle"){ EQM.waitOpen = !(el.parentElement && el.parentElement.open); return; }
   if(a==="portal-eqo-toggle"){ EQM.ordOpen = !(el.parentElement && el.parentElement.open); return; }
+  if(a==="portal-eqn-toggle"){ EQM.needOpen = !(el.parentElement && el.parentElement.open); return; }
+  if(a==="portal-eqo-pdf"){
+    const ms = loadMgr(App); if(!ms || EQM.pdfBusy) return;
+    EQM.pdfBusy = true; EQM.pdfMsg = null; EQM.needOpen = true; App.render();
+    eqoMakePdf(App, ms, el.dataset.via).then(m=>{ EQM.pdfBusy = false; EQM.pdfMsg = m || null; App.render(); })
+      .catch(e=>{ EQM.pdfBusy = false; EQM.pdfMsg = "יצירת ה-PDF נכשלה: " + e.message; App.render(); });
+    return;
+  }
   if(a==="portal-ls-filter"){ LS.filter = el.dataset.k; return App.render(); }
   if(a==="portal-ls-refresh"){ LS.data = null; return App.render(); }
   if(a==="portal-ls-jump"){ const d = document.getElementById("ls-g"+el.dataset.i); if(d){ d.open = true; d.scrollIntoView({behavior:"smooth", block:"start"}); } return; }

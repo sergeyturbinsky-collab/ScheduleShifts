@@ -270,7 +270,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=141"></script>
+<script src="portal.js?v=142"></script>
 <script>
 (function(){
 "use strict";
@@ -1203,6 +1203,8 @@ function renderAggregate(){
         ${renderAvailabilityByDay(dates, group, ui)}` : ""}
       </div>`:"";
 
+  const missingHtml = renderMissingSubmissions(workers, ui.submittedWorkerIds, ui.exceptionWorkerIds, isMoked || teamBlockingAt(team, ui.periodStart), ui.periodStart);
+  const eliranOrder = isEliranLayout(group);
   return `
   <div class="card">
     <span class="backlink" data-action="agg-back">${(isSessionPin() && !ui.mgrPick) ? "◀ חזרה" : "◀ בחירת צוות אחר"}</span>
@@ -1215,7 +1217,7 @@ function renderAggregate(){
       <b>תקופה: ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(dates[dates.length-1])}</b>
       <button class="btn small secondary" data-action="agg-period-next">תקופה הבאה ▶</button>
     </div>
-    ${renderMissingSubmissions(workers, ui.submittedWorkerIds, ui.exceptionWorkerIds, isMoked || teamBlockingAt(team, ui.periodStart), ui.periodStart)}
+    ${eliranOrder ? "" : missingHtml}
   </div>
   <div class="card">
       <h3>${isMoked?"זמינות מול התקנים":"שיבוץ"}</h3>
@@ -1246,8 +1248,9 @@ function renderAggregate(){
       ${ui.buildMsg? `<p style="margin-top:8px;">${escapeHtml(ui.buildMsg)}</p>`:""}
       ${renderMonthlyPanel(ui, isMoked)}
   </div>
-  ${availCard}
-  ${renderBottomTables(team, group, dates, ui)}`;
+  ${eliranOrder
+    ? renderPivotCard(group, dates, ui) + missingHtml + availCard + renderWorkloadCard(team, group, dates, ui)
+    : availCard + renderBottomTables(team, group, dates, ui)}`;
 }
 
 /* --------- פלט סידור להדפסה/PDF: גרסה נקייה של טבלת השיבוץ (כולל שורות "מראה" של חיפה אם רלוונטי),
@@ -4096,18 +4099,31 @@ async function fillPartialGaps(partialRecs, slots, workers){
    קודם "כמה משמרות לכל עובד" (שובץ + בסוגריים כמה יכול לעבוד), ואחריה "אילוצים/זמינות שהוגשו" עם
    הערות העובדים. מתעדכנות אחרי כל שיבוץ (loadAggregateData + render). לבקשת סרגיי (2026-10-07). --------- */
 function renderBottomTables(team, group, dates, ui){
+  return renderWorkloadCard(team, group, dates, ui) + renderPivotCard(group, dates, ui);
+}
+function renderWorkloadCard(team, group, dates, ui){
   const isMoked = group.citySectors[0]==="מוקד";
   return `
   <div class="card">
     <h3>כמה משמרות לכל עובד${isMoked?" (לפי שבוע)":""}</h3>
     <p class="muted" style="margin-top:-6px;">מתעדכן אוטומטית אחרי כל שיבוץ.</p>
     ${renderWorkloadSummary(team, dates, ui)}
-  </div>
+  </div>`;
+}
+function renderPivotCard(group, dates, ui){
+  const isMoked = group.citySectors[0]==="מוקד";
+  return `
   <div class="card">
     <h3>${isMoked?"אילוצים שהוגשו":"זמינות שהוגשה"} (כולל הערות העובדים)</h3>
     ${renderPivot(dates, ui.workers||[], ui.entriesByWorker||{}, ui.submittedWorkerIds||new Set(), ui.exceptionWorkerIds, ui.periodStart, ui.workerNotes)}
     <button class="btn secondary small" data-action="agg-export" style="margin-top:8px;">העתק טבלה (להדבקה באקסל)</button>
   </div>`;
+}
+/* (2026-10-25, סרגיי: "בתצורה אצל אלירן חמו בשיבוצי משמרת") סדר אחר במסכי השיבוץ של הגזרה של אלירן (חיפה):
+   טבלת הסידור, טבלת הזמינות של כל עובד, מי לא הגיש, מי זמין בכל יום, כמה משמרות לכל עובד. בשאר הגזרות - ללא שינוי. */
+function isEliranLayout(group){
+  const t = teamByName("אלירן חמו");
+  return !!t && (group.teamIds||[]).includes(t.id);
 }
 
 function renderManualBuild(team){
@@ -4115,7 +4131,9 @@ function renderManualBuild(team){
   const group = sectorGroupForTeam(team);
   const dates = periodDates(ui.periodStart, team);
   // שתי הטבלאות בתחתית (כמה משמרות, ואחריה אילוצים+הערות) - זהה לטבלה המרוכזת. לבקשת סרגיי (2026-10-07)
-  const bottomTables = renderBottomTables(team, group, dates, ui);
+  const bottomTables = isEliranLayout(group)
+    ? renderPivotCard(group, dates, ui) + renderWorkloadCard(team, group, dates, ui)
+    : renderBottomTables(team, group, dates, ui);
 
   if(group.citySectors[0]!=="מוקד"){
     return `
