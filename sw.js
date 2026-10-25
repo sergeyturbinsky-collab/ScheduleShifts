@@ -75,16 +75,33 @@ self.addEventListener("push", e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (err) { d = { title: "איזור אישי", body: e.data ? e.data.text() : "" }; }
   const title = d.title || "איזור אישי";
-  e.waitUntil(self.registration.showNotification(title, {
-    body: d.body || "",
-    icon: "icon-192.png",
-    badge: "icon-192.png",
-    dir: "rtl",
-    lang: "he",
-    tag: d.tag || undefined,
-    data: { url: d.url || "./" }
-  }));
+  e.waitUntil(Promise.all([
+    self.registration.showNotification(title, {
+      body: d.body || "",
+      icon: "icon-192.png",
+      badge: "icon-192.png",
+      dir: "rtl",
+      lang: "he",
+      tag: d.tag || undefined,
+      data: { url: d.url || "./" }
+    }),
+    ackPush(d)
+  ]));
 });
+
+/* (2026-10-25, סרגיי: "התראה שלא נמסרה לפני 14:00 בשישי - תקפוץ במוצ"ש") מאשרים לשרת שההתראה הגיעה לטלפון.
+   מה שלא אושר עד שישי 14:00 נשלח שוב במוצאי שבת. נשלח רק מפתח ההתראה וכתובת המכשיר - בלי מידע אישי. */
+async function ackPush(d) {
+  try {
+    if (!d || !d.ack || !d.au || !/^https:\/\/[a-z0-9-]+\.supabase\.co\/rest\/v1\/rpc\/push_ack$/.test(d.au)) return;
+    const sub = await self.registration.pushManager.getSubscription();
+    await fetch(d.au, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: d.ak || "", Authorization: "Bearer " + (d.ak || "") },
+      body: JSON.stringify({ p_key: d.ack, p_endpoint: sub ? sub.endpoint : "" })
+    });
+  } catch (err) {}
+}
 
 self.addEventListener("notificationclick", e => {
   e.notification.close();

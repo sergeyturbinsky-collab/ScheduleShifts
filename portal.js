@@ -64,6 +64,7 @@ async function loadWorkers(App){
 
 function renderLogin(App){
   const esc = App.escapeHtml;
+  const lig = loginInstallGate(App); if(lig) return lig;
   if(!P.workers){ loadWorkers(App); return `<div class="card"><p>טוען...</p></div>`; }
   const sel = P.selectedId ? P.workers.find(w=>w.key===P.selectedId) : null;
   App.S.ui.afterRender = ()=>{
@@ -299,10 +300,33 @@ function deviceName(){ return isIOS() ? "iPhone" : isAndroid() ? "Android" : "מ
 const IG = { waited:false, timer:null, listening:false, msg:null };
 function installGate(App, name, logoutAct){
   if(DEMO || !isAndroid() || isStandalone() || appInstalledFlag()) return null;
-  if(!IG.listening){ IG.listening = true; window.addEventListener("bip-ready", ()=>App.render()); }
-  if(!window.__bip && !IG.waited && !IG.timer) IG.timer = setTimeout(()=>{ IG.waited = true; App.render(); }, 2500);
   const esc = App.escapeHtml;
   const head = `<div class="card"><div class="flexbar" style="justify-content:space-between;"><h2 style="margin:0;">שלום, ${esc(name)}</h2>${homeBackBtn(App)}</div></div>`;
+  return head + `<div class="card" style="border:2px solid #0c3a6e;"><h3 style="margin-top:0;">📲 שלב 1 מתוך 2: התקנת האפליקציה</h3>${androidInstallBody(App)}
+    ${IG.msg?`<p class="shortage" style="margin-top:8px;">${esc(IG.msg)}</p>`:""}
+    <p class="muted" style="font-size:.85em;margin-top:10px;">אחרי ההתקנה — שלב 2: הפעלת התראות.</p></div>`;
+}
+/* (2026-10-25, סרגיי: "ההתקנה היא תנאי לשימוש באפליקציה וצריכה להופיע במסך הכניסה")
+   בטלפון (אנדרואיד / אייפון) שלא נפתח מהאפליקציה המותקנת - במקום טופס הכניסה מופיע מסך ההתקנה.
+   אנדרואיד: אחרי התקנה (או "התקנתי — המשך" כשהאפליקציה כבר מותקנת וכרום לא מציע להתקין שוב) - ממשיכים לכניסה.
+   אייפון: רק מהאייקון במסך הבית (שם גם ההתראות עובדות). מחשב ודמו - בלי שינוי. */
+function loginInstallGate(App){
+  if(DEMO || isStandalone()) return null;
+  const ios = isIOS(), android = !ios && isAndroid();
+  if(!ios && !android) return null;
+  if(android && appInstalledFlag()) return null;
+  const esc = App.escapeHtml;
+  const body = ios ? iosInstallHtml(App, true) : androidInstallBody(App);
+  return `<div class="card"><h2 style="margin:0;">כניסה למערכת</h2></div>
+    <div class="card" style="border:2px solid #0c3a6e;"><h3 style="margin-top:0;">📲 קודם מתקינים את האפליקציה</h3>
+    <p style="margin-top:0;">הכניסה מהטלפון היא רק דרך האפליקציה <b>"איזור אישי"</b> המותקנת במסך הבית.</p>
+    ${body}
+    ${IG.msg?`<p class="shortage" style="margin-top:8px;">${esc(IG.msg)}</p>`:""}
+    <p class="muted" style="font-size:.85em;margin-top:10px;">אחרי ההתקנה — נכנסים עם השם והקוד האישי, ומפעילים התראות.</p></div>`;
+}
+function androidInstallBody(App){
+  if(!IG.listening){ IG.listening = true; window.addEventListener("bip-ready", ()=>App.render()); }
+  if(!window.__bip && !IG.waited && !IG.timer) IG.timer = setTimeout(()=>{ IG.waited = true; App.render(); }, 2500);
   let body;
   if(isInAppBrowser()) body = `<p>הקישור נפתח בתוך אפליקציה (וואטסאפ / פייסבוק וכו'), ומשם אי אפשר להתקין.</p>
       <ol style="padding-inline-start:20px;line-height:2;"><li>לוחצים על <b>⋮</b> (שלוש הנקודות) למעלה</li><li>בוחרים <b>"פתח בכרום"</b> / <b>"פתיחה בדפדפן"</b></li><li>שם מופיע לחצן ההתקנה</li></ol>
@@ -315,9 +339,7 @@ function installGate(App, name, logoutAct){
       <ol style="padding-inline-start:20px;line-height:2;"><li>לוחצים על <b>⋮</b> (שלוש הנקודות) למעלה בכרום</li><li>בוחרים <b>"התקנת אפליקציה"</b> או <b>"הוספה למסך הבית"</b></li><li>לוחצים <b>"התקנה"</b> / <b>"הוספה"</b></li></ol>
       <p class="muted" style="font-size:.85em;">האפליקציה כבר מותקנת? אפשר לפתוח אותה מהאייקון "איזור אישי" במסך הבית, או ללחוץ כאן:</p>
       <button class="btn ok" data-action="portal-install-done">✅ התקנתי — המשך</button>`;
-  return head + `<div class="card" style="border:2px solid #0c3a6e;"><h3 style="margin-top:0;">📲 שלב 1 מתוך 2: התקנת האפליקציה</h3>${body}
-    ${IG.msg?`<p class="shortage" style="margin-top:8px;">${esc(IG.msg)}</p>`:""}
-    <p class="muted" style="font-size:.85em;margin-top:10px;">אחרי ההתקנה — שלב 2: הפעלת התראות.</p></div>`;
+  return body;
 }
 async function installApp(App){
   const e = window.__bip; if(!e) return App.render();
@@ -419,7 +441,7 @@ function mgrPushGate(App, ms){
 }
 /* אייפון (2026-10-22, סרגיי: "לאייפון - תבנה מה שצריך"): אפל לא מאפשרת לאתר לחצן התקנה, אז מסבירים צעד-צעד,
    עם ציור של כפתור השיתוף. דפדפן שאינו ספארי (כרום/וואטסאפ וכו') - קודם לעבור לספארי; iOS ישן מ-16.4 - לעדכן. */
-function iosInstallHtml(App){
+function iosInstallHtml(App, atLogin){
   const shareIcon = `<svg width="20" height="24" viewBox="0 0 20 24" style="vertical-align:-5px;" aria-hidden="true"><path d="M10 1v14M5 6l5-5 5 5" fill="none" stroke="#0a84ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 10H3v12h14V10h-3" fill="none" stroke="#0a84ff" stroke-width="2" stroke-linejoin="round"/></svg>`;
   const addIcon = `<svg width="22" height="22" viewBox="0 0 22 22" style="vertical-align:-5px;" aria-hidden="true"><rect x="1.5" y="1.5" width="19" height="19" rx="5" fill="none" stroke="#333" stroke-width="1.8"/><path d="M11 6.5v9M6.5 11h9" stroke="#333" stroke-width="1.8" stroke-linecap="round"/></svg>`;
   const v = iosVersion();
@@ -433,7 +455,7 @@ function iosInstallHtml(App){
       ${step(2, `גוללים מעט למטה ובוחרים ${addIcon} <b>"הוסף למסך הבית"</b>`)}
       ${step(3, `לוחצים <b>"הוסף"</b> למעלה בצד`)}
       ${step(4, `סוגרים את ספארי ופותחים את <b>"איזור אישי"</b> מהאייקון החדש במסך הבית`)}
-      ${step(5, `נכנסים שוב עם הקוד האישי ולוחצים <b>"הפעלת התראות"</b> ← <b>"אפשר"</b>`)}
+      ${step(5, `${atLogin ? "נכנסים עם השם והקוד האישי" : "נכנסים שוב עם הקוד האישי"} ולוחצים <b>"הפעלת התראות"</b> ← <b>"אפשר"</b>`)}
       <p class="muted" style="font-size:.85em;margin-top:8px;">אין "הוסף למסך הבית"? צריך לוודא שהקישור נפתח בספארי ולא מתוך וואטסאפ.</p>`;
 }
 function pushGateHtml(App, name, N, act){
