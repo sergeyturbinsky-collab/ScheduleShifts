@@ -207,7 +207,7 @@ function renderMyShifts(App, session){
       if(a.split_with) notes.push(`⇄ פיצול משמרת עם ${esc(a.split_with)}`);
       if(a.filled_role && a.filled_role!==session.role) notes.push(`בתקן ${esc(a.filled_role)}`);
       const req = openReq[swKey(a)];
-      if(req) notes.push(`<span style="color:#8a5a00;font-weight:600;">⏳ ביקשת חילוף</span> <button class="btn small secondary" data-action="portal-swap-cancel" data-id="${req.id}">בטל בקשה</button>`);
+      if(req) notes.push(`<span style="color:#8a5a00;font-weight:600;">⏳ ביקשת חילוף</span> <button class="btn small secondary" data-action="portal-swap-cancel" data-id="${req.id}">בטל בקשה</button>${rplMineHtml(App, session, "swap", req.id)}`);
       return `<tr><td>${App.fmtDateHeb(a.entry_date)}</td><td>${esc(label)}</td><td>${hoursOf(App, a)}</td><td>${esc(a.sector)}</td><td class="muted">${notes.join(" · ")}</td></tr>`;
     }).join("")}</tbody>
   </table></div>${renderSwapBoard(App)}`;
@@ -1394,7 +1394,77 @@ const AR_CSS = `
   .ar-h{font-weight:800;margin-top:6px;text-decoration:underline;}
   .ar-gap{height:6px;} .ar-ul{margin:2px 0;padding-inline-start:22px;}
   .ar-meta{margin-top:10px;font-size:.82em;color:#6b7280;border-top:1px solid #eee;padding-top:6px;}
+  .rpl-box{margin-top:4px;text-align:right;white-space:normal;}
+  .rpl-item{background:#eef6ff;border:1px solid #cfe3f7;border-radius:8px;padding:3px 8px;margin:3px 0;font-size:.88em;white-space:pre-wrap;}
 `;
+
+/* ================================================================
+   תגובה של הקב"ט לבקשה (2026-10-25, סרגיי): בבקשות ציוד, בבקשות מנהלתיות (חופשה/מילואים/מחלה) ובבקשות חילוף -
+   הקב"ט יכול לכתוב תגובה בלי קשר לאישור/דחייה/ניפוק. העובד מקבל התראה ורואה את התגובה ליד הבקשה.
+   השרת: mgr_request_reply / mgr_request_replies / worker_request_replies (טבלה request_replies).
+   ================================================================ */
+const RPL = { mgr:{}, mine:null, mineTok:null, mineBusy:false, open:null, busy:false, err:null, draft:"" };
+// מה שהוקלד בתגובה נשמר גם כשהמסך מתרענן ברקע (למשל רשימת החילופים שמתעדכנת כל 30 שניות)
+try{ document.addEventListener("input", e=>{ if(e.target && e.target.id==="rpl_txt") RPL.draft = e.target.value; }); }catch(e){}
+function rplFmt(App, iso){ try{ return dmgFmtDate(iso); }catch(e){ return ""; } }
+function rplListHtml(App, list, who){
+  const esc = App.escapeHtml;
+  if(!list || !list.length) return "";
+  return list.map(x=>`<div class="rpl-item">💬 <b>${esc(x.author_name||"הקב\"ט")}</b>${who==="w"?"":""}: ${esc(x.body)} <span class="muted" style="font-size:.8em;">${esc(rplFmt(App, x.created_at))}</span></div>`).join("");
+}
+function rplMgrLoad(App, ms, kind){
+  const c = RPL.mgr[kind] = RPL.mgr[kind] && RPL.mgr[kind].tok===ms.token ? RPL.mgr[kind] : {tok:ms.token, list:null, at:0, busy:false};
+  if(!c.busy && (!c.list || Date.now()-c.at > 60000)){
+    c.busy = true;
+    App.apiRpc("mgr_request_replies", {p_token:ms.token, p_kind:kind}).then(r=>{ c.list = r||[]; c.at = Date.now(); c.busy = false; App.render(); })
+      .catch(()=>{ c.list = c.list||[]; c.at = Date.now(); c.busy = false; });
+  }
+  return c.list || [];
+}
+/* אצל הקב"ט: התגובות שכבר נשלחו + לחצן "💬 תגובה לעובד" שפותח תיבת כתיבה */
+function rplMgrHtml(App, ms, kind, id){
+  if(!ms || !ms.token) return "";
+  const esc = App.escapeHtml;
+  const list = rplMgrLoad(App, ms, kind).filter(x=>x.request_id===id);
+  const k = kind + ":" + id;
+  return `<div class="rpl-box">${rplListHtml(App, list, "m")}
+    ${RPL.open===k ? `<div class="field" style="margin:6px 0 4px;"><textarea id="rpl_txt" rows="2" maxlength="1000" placeholder="התגובה תישלח לעובד בהתראה">${esc(RPL.draft||"")}</textarea></div>
+      ${RPL.err?`<p class="shortage" style="margin:2px 0;">${esc(RPL.err)}</p>`:""}
+      <button class="btn small ok" data-action="portal-rpl-send" data-kind="${kind}" data-id="${id}" ${RPL.busy?"disabled":""}>${RPL.busy?"שולח...":"שליחת התגובה"}</button>
+      <button class="btn small secondary" data-action="portal-rpl-close">ביטול</button>`
+    : `<button class="btn small secondary" data-action="portal-rpl-open" data-k="${esc(k)}">💬 תגובה לעובד</button>`}</div>`;
+}
+/* אצל העובד: התגובות של הקב"ט לבקשה */
+function rplMineLoad(App, session){
+  if(!session) return [];
+  if(RPL.mineTok!==session.token){ RPL.mineTok = session.token; RPL.mine = null; }
+  if(RPL.mine===null && !RPL.mineBusy){
+    RPL.mineBusy = true;
+    App.apiRpc("worker_request_replies", {p_token:session.token}).then(r=>{ RPL.mine = r||[]; RPL.mineBusy = false; App.render(); })
+      .catch(()=>{ RPL.mine = []; RPL.mineBusy = false; });
+  }
+  return RPL.mine || [];
+}
+function rplMineHtml(App, session, kind, id){
+  const list = rplMineLoad(App, session).filter(x=>x.kind===kind && x.request_id===id);
+  return list.length ? `<div class="rpl-box">${rplListHtml(App, list, "w")}</div>` : "";
+}
+async function rplAction(App, a, el){
+  if(a==="portal-rpl-open"){ RPL.open = el.dataset.k; RPL.err = null; RPL.draft = ""; App.render(); setTimeout(()=>{ const t = document.getElementById("rpl_txt"); if(t) t.focus(); }, 30); return; }
+  if(a==="portal-rpl-close"){ RPL.open = null; RPL.err = null; RPL.draft = ""; return App.render(); }
+  if(a==="portal-rpl-send"){
+    const ms = loadMgr(App); if(!ms || RPL.busy) return;
+    const body = ((document.getElementById("rpl_txt")||{}).value||"").trim();
+    if(!body){ RPL.err = "כתבו תגובה"; return App.render(); }
+    RPL.busy = true; RPL.err = null; App.render();
+    try{
+      const x = await App.apiRpc("mgr_request_reply", {p_token:ms.token, p_kind:el.dataset.kind, p_id:el.dataset.id, p_body:body});
+      const c = RPL.mgr[el.dataset.kind]; if(c && c.list && x) c.list.push(x);
+      RPL.busy = false; RPL.open = null; RPL.draft = "";
+    }catch(e){ RPL.busy = false; RPL.err = e.message; }
+    return App.render();
+  }
+}
 
 /* ================================================================
    בקשה מנהלתית (2026-10-20, סרגיי): מאבטחים ומוקדנים מגישים בקשה לחופשה / יציאה למילואים / מחלה,
@@ -1467,6 +1537,7 @@ function renderAdminReqWorker(App, session){
     return `<span class="backlink" data-action="portal-areq-close">◀ חזרה לבקשות שלי</span>
       <h3 style="margin:8px 0;">${(AREQ_KINDS[r.kind]||{}).icon||"📝"} בקשה ל${esc((AREQ_KINDS[r.kind]||{}).label||"")}</h3>
       ${areqDetailsTable(App, r)}
+      ${rplMineHtml(App, session, "admin", r.id)}
       ${areqWorkerChangeHtml(App, r)}
       <h4 style="margin:14px 0 4px;">📎 מסמכים</h4>
       ${AREQ.vfiles===null ? `<p class="muted">טוען...</p>` : areqDocsHtml(App, AREQ.vfiles)}
@@ -1483,7 +1554,7 @@ function renderAdminReqWorker(App, session){
       ${mine===null ? `<p class="muted">טוען...</p>` : (mine.length ? mine.map(r=>`<div class="portal-task" data-action="portal-areq-open" data-id="${r.id}">
         <span class="portal-task-icon">${(AREQ_KINDS[r.kind]||{}).icon||"📝"}</span>
         <span><b>${esc((AREQ_KINDS[r.kind]||{}).label||"")}</b> · ${esc(areqDates(r))} · ${esc(AREQ_STATUS[r.status]||"")}
-        <span class="muted" style="display:block;font-size:.85em;">📎 ${esc(areqFilesSummary(r))}${r.mgr_note?` · ${esc(r.mgr_note)}`:""}</span></span></div>`).join("") : `<p class="muted">עדיין לא הגשת בקשות.</p>`)}
+        <span class="muted" style="display:block;font-size:.85em;">📎 ${esc(areqFilesSummary(r))}${r.mgr_note?` · ${esc(r.mgr_note)}`:""}</span>${rplMineHtml(App, session, "admin", r.id)}</span></div>`).join("") : `<p class="muted">עדיין לא הגשת בקשות.</p>`)}
       ${AREQ.error?`<p class="shortage">${esc(AREQ.error)}</p>`:""}`;
   }
   const f = AREQ.form || {};
@@ -1652,6 +1723,7 @@ function renderAdminReqMgrPages(App, ms, pg, a, wrap, loading, msgs){
       ${areqDetailsTable(App, r)}
       <h4 style="margin:14px 0 4px;">📎 מסמכים</h4>${AREQ.mfiles===null ? `<p class="muted">טוען...</p>` : areqDocsHtml(App, AREQ.mfiles)}
       ${r.kind==="reserve" && !(r.files||{}).form3010 ? `<p class="muted" style="font-size:.88em;">טופס 3010 עדיין לא צורף — העובד יכול להוסיף אותו מתוך הבקשה, ותקבלו התראה.</p>` : ""}
+      <h4 style="margin:14px 0 4px;">💬 תגובות לעובד</h4>${rplMgrHtml(App, ms, "admin", r.id)}
       ${r.status==="cancelled" ? `<p class="note-box" style="margin-top:12px;">🚫 העובד ביטל את הבקשה הזו${r.cancelled_at?" ב-"+esc(dmgFmtDate(r.cancelled_at)):""}. אין צורך לטפל בה.</p>${msgs}` : `
       ${r.prev_date_from && r.status==="pending" ? `<p class="note-box" style="margin-top:12px;border-color:#e0a800;">📅 העובד שינה את התאריכים: היה ${esc(areqDates({date_from:r.prev_date_from, date_to:r.prev_date_to}))}, עכשיו ${esc(areqDates(r))}. צריך לאשר מחדש.</p>` : ""}
       <div class="field" style="margin-top:12px;"><label>תשובה לעובד (לא חובה)</label><textarea id="areq_mgr_note" rows="2">${esc(r.mgr_note||"")}</textarea></div>
@@ -1913,7 +1985,7 @@ function renderLogisticsInner(App, session){
     <h3>הבקשות שלי</h3>
     ${reqs.length? `<div style="overflow-x:auto;"><table>
       <thead><tr><th>תאריך</th><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th><th>סיבה</th><th>סטטוס</th></tr></thead>
-      <tbody>${reqs.map(r=>`<tr><td>${App.fmtDateHeb(locDay(App, r.created_at))}</td><td style="text-align:right;">${esc(itemName(r.item_id))}${r.note?`<br><span class="muted" style="font-size:.85em;">${esc(r.note)}</span>`:""}</td><td>${r.quantity}</td><td>${esc(r.size||"-")}</td><td>${esc(REQ_REASON[r.reason]||"-")}</td><td>${esc(REQ_STATUS[r.status]||r.status)}</td></tr>`).join("")}</tbody>
+      <tbody>${reqs.map(r=>`<tr><td>${App.fmtDateHeb(locDay(App, r.created_at))}</td><td style="text-align:right;">${esc(itemName(r.item_id))}${r.note?`<br><span class="muted" style="font-size:.85em;">${esc(r.note)}</span>`:""}${rplMineHtml(App, loadSession(App), "equipment", r.id)}</td><td>${r.quantity}</td><td>${esc(r.size||"-")}</td><td>${esc(REQ_REASON[r.reason]||"-")}</td><td>${esc(REQ_STATUS[r.status]||r.status)}</td></tr>`).join("")}</tbody>
     </table></div>` : `<p class="muted">עוד לא שלחת בקשות.</p>`}`;
 }
 
@@ -2011,7 +2083,7 @@ function renderManagerRequestsList(App, backHtml, label){
   const row = (r, actions)=>`<tr>
       <td>${App.fmtDateHeb(locDay(App, r.created_at))}</td>
       <td style="text-align:right;">${esc(r.worker_name)}</td>
-      <td style="text-align:right;">${esc(r.item_name)}${r.note?`<br><span class="muted" style="font-size:.85em;">${esc(r.note)}</span>`:""}</td>
+      <td style="text-align:right;">${esc(r.item_name)}${r.note?`<br><span class="muted" style="font-size:.85em;">${esc(r.note)}</span>`:""}${rplMgrHtml(App, M.session, "equipment", r.id)}</td>
       <td>${r.quantity}</td><td>${esc(r.size||"-")}</td><td>${esc(REQ_REASON[r.reason]||"-")}</td><td>${r.current_quantity}</td>
       <td>${actions}</td></tr>`;
   return `<div class="card">
@@ -4259,6 +4331,7 @@ function renderPView(App){
           <span class="muted" style="font-size:.85em;display:block;">${r.requested_by_kind==="w"?"ביקש בעצמו":"נפתח ע\"י "+esc(r.requested_by_name||"מנהל")}${r.note?` · ${esc(r.note)}`:""}</span></span>
         <button class="btn small ok" data-action="portal-swapm-handle" data-id="${r.id}">טופל</button>
         <button class="btn small secondary" data-action="portal-swapm-cancel" data-id="${r.id}">בטל</button></div>
+        <div style="margin:-4px 0 8px;padding-inline-start:34px;">${rplMgrHtml(App, ms, "swap", r.id)}</div>
         ${S2.handle===r.id ? `<div class="portal-qbox" style="margin-top:-4px;">
           <div style="font-weight:700;margin-bottom:6px;">מי החליף את ${esc(r.worker_name)}?</div>
           ${S2.cands===null ? `<p class="muted">טוען...</p>` : !S2.cands.length ? `<p class="muted">אין עובדים זמינים בגזרה.</p>`
@@ -5568,6 +5641,7 @@ function onClick(App, a, el){
   if(a==="portal-go-updates"){ S.view = "updates"; S.ui = {}; F.data = null; T.postOpen = null; T.controlOpen = null; T.attError = null; return App.render(); }
   if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; T.data = null; F.data = null; T.controlOpen = null; T.postOpen = null; T.quiz = null; return App.render(); }
   if(a==="portal-go-areq"){ S.view = "adminreq"; S.ui = {}; AREQ.open = false; AREQ.view = null; AREQ.mine = null; AREQ.okMsg = null; AREQ.error = null; return App.render(); }
+  if(a.indexOf("portal-rpl-")===0) return rplAction(App, a, el);
   if(a.indexOf("portal-areq-")===0 && a!=="portal-areq-resolve") return areqAction(App, a, el);
   if(a==="portal-areq-resolve") return areqResolve(App, el);
   if(a==="portal-eqm-save") return eqmSave(App, el);

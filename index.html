@@ -167,6 +167,10 @@
   .tmpl-pos-hrs{font-size:.72em;font-weight:400;color:#4b5563;white-space:nowrap;line-height:1.35;}
   .tmpl-na{background:#2a2a2a;}
   .tmpl-missing{font-weight:800;}
+  /* (2026-10-25, סרגיי) משמרת מתואמת - צהוב, גם בפלט; סיום לפני הזמן - תכלת */
+  .tmpl-table tr td.tmpl-coord, .mg-table tr td.mg-coord, .mg-table tr th.mg-coord, .cpt-table tr td.cpt-coord{background:#fde047;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .tmpl-coord-head{background:#fde047!important;color:#713f12!important;}
+  .hrs-early{background:#a5f3fc;color:#0e7490;font-weight:700;border-radius:4px;padding:0 3px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
   .tmpl-cell{cursor:pointer;}
   .tmpl-cell:hover{background:#eef6ff;}
   /* חוסר 8 שעות מנוחה בין משמרות עוקבות של אותו עובד (ידני/אוטומטי כאחד) - לבקשת סרגיי, 2026-09-28 */
@@ -277,7 +281,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=144"></script>
+<script src="portal.js?v=145"></script>
 <script>
 (function(){
 "use strict";
@@ -1961,6 +1965,13 @@ function computeRestViolations(assignments){
   return bad;
 }
 /* סימון ופירוט של רצף עבודה ארוך מ-12 שעות */
+/* סיום לפני סוף המשמרת (שעות מותאמות שמסתיימות מוקדם) - מודגש בתכלת (2026-10-25, סרגיי) */
+function isEarlyEnd(q, a){
+  if(!a || !a.custom_end || !q || !q.start_time || !q.end_time) return false;
+  const m = t=>{ const p = String(t).slice(0,5).split(":").map(Number); return p[0]*60 + (p[1]||0); };
+  const qs = m(q.start_time), std = ((m(q.end_time)-qs)+1440)%1440 || 1440, ce = ((m(a.custom_end)-qs)+1440)%1440 || 1440;
+  return ce < std;
+}
 function longCls(rv, a){ return (a && rv.long && rv.long.has(restKey(a))) ? " tmpl-longwarn" : ""; }
 function longNote(rv, a){ const h = a && rv.long ? rv.long.get(restKey(a)) : null; return h ? `<span class="tmpl-longwarn-note">⚠ ${Math.round(h*10)/10} שעות ברצף</span>` : ""; }
 function longChainBanner(rv, dates, nameOf){
@@ -2398,7 +2409,7 @@ function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDa
       const list = tmplAssignedList(assignmentsByDate, d, sector, cq.shift_type);
       const a = list[cpos-1];
       const w = a ? (workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id]) : null;
-      if(!w) return `<td class="tmpl-missing${mode==="manual"?" tmpl-cell":""}" style="font-style:italic;"${clickAttrs(d, cpos)}>חוסר</td>`;
+      if(!w) return `<td class="tmpl-missing tmpl-coord${mode==="manual"?" tmpl-cell":""}" style="font-style:italic;"${clickAttrs(d, cpos)}>חוסר</td>`;
       const cs = a.custom_start ? a.custom_start.slice(0,5) : cq.start_time.slice(0,5);
       const ce = a.custom_end ? a.custom_end.slice(0,5) : cq.end_time.slice(0,5);
       const q = bucket.perDate[d];
@@ -2408,7 +2419,7 @@ function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDa
       const restBad = restViolations.has(restKey(a));
       const restTight = !restBad && restViolations.tight && restViolations.tight.has(restKey(a));
       const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
-      return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${mode==="manual"?" tmpl-cell":""}" style="opacity:.8;font-style:italic;"${clickAttrs(d, cpos)}>${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
+      return `<td class="tmpl-coord ${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${mode==="manual"?" tmpl-cell":""}" style="font-style:italic;"${clickAttrs(d, cpos)}>${escapeHtml(w.name)}<br><span class="${isEarlyEnd(cq, a)?"hrs-early":"muted"}" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
     }).join("");
     return `<tr class="tmpl-mirror-row"><td class="tmpl-pos">סייר ${pos}<br><span class="muted" style="font-size:.75em;font-weight:400;">(מתואמת)</span>${tmplBucketHoursHtml(coordBucket)}</td>${cells}</tr>`;
   }).join("");
@@ -2462,19 +2473,21 @@ function renderTemplateGrid(group, dates, ui, mode){
           const restTight = a && !restBad && restViolations.tight.has(restKey(a));
           const restNote = (restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "") + longNote(restViolations, a);
           const shadowHtml = tmplShadowHtml(tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, a?[a.worker_id]:[], pos===1), q, id=>{ const x = workers.find(y=>y.id===id) || allWorkersById[id]; return x?x.name:"?"; });
+          const coordCls = bucket.key==="coordinated" ? " tmpl-coord" : "";
+          const hrsSpan = isEarlyEnd(q, a) ? `<span class="hrs-early" style="font-size:.85em;" title="מסיים לפני סוף המשמרת">${hoursTxt}</span>` : `<span class="muted" style="font-size:.85em;">${hoursTxt}</span>`;
           if(mode==="manual"){
-            const cls = "tmpl-cell" + (w? (restBad?" tmpl-restwarn":(restTight?" tmpl-resttight":"")) + longCls(restViolations, a) : " tmpl-missing");
-            const label = (w? `${escapeHtml(w.name)}${achTagHtml(w)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}` : "חוסר") + shadowHtml;
+            const cls = "tmpl-cell" + coordCls + (w? (restBad?" tmpl-restwarn":(restTight?" tmpl-resttight":"")) + longCls(restViolations, a) : " tmpl-missing");
+            const label = (w? `${escapeHtml(w.name)}${achTagHtml(w)}<br>${hrsSpan}${restNote}` : "חוסר") + shadowHtml;
             return `<td class="${cls}" data-action="tmpl-cell" data-sector="${escapeHtml(secData.sector)}" data-date="${d}" data-type="${q.shift_type}" data-pos="${pos}">${label}</td>`;
           }
-          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}">${escapeHtml(w.name)}${achTagHtml(w)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}${shadowHtml}</td>`;
-          return `<td class="tmpl-missing">חוסר${shadowHtml}</td>`;
+          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${coordCls}">${escapeHtml(w.name)}${achTagHtml(w)}<br>${hrsSpan}${restNote}${shadowHtml}</td>`;
+          return `<td class="tmpl-missing${coordCls}">חוסר${shadowHtml}</td>`;
         }).join("");
         return `<tr><td class="tmpl-pos">סייר ${pos}${bucketHrs}</td>${cells}</tr>`;
       }).join("");
       const mirrorHtml = coordBucket ? tmplCoordMirrorRows(secData.sector, bucket, coordBucket, dates, assignmentsByDate, workers, allWorkersById, restViolations, mode) : "";
       return `
-      <div class="tmpl-bucket-head">${escapeHtml(bucket.label)}</div>
+      <div class="tmpl-bucket-head${bucket.key==="coordinated"?" tmpl-coord-head":""}">${escapeHtml(bucket.label)}</div>
       <div style="overflow-x:auto;">
       <table class="tmpl-table tmpl-fixed" style="min-width:${TMPL_POS_W + dates.length*TMPL_DAY_W}px;"><colgroup><col style="width:${TMPL_POS_W}px">${dates.map(()=>"<col>").join("")}</colgroup>
         <thead><tr><th></th>${dates.map(d=>`<th>${fmtDateHeb(d)}${shabbatThHtml(d, secData.sector)}</th>`).join("")}</tr></thead>
@@ -2521,12 +2534,13 @@ function renderCompactPrintGrid(group, dates, ui){
           const a = tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type)[pos-1];
           const shadows = tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, a?[a.worker_id]:[], pos===1)
             .map(sh=> sh.split ? ` / ${escapeHtml(nameOf(sh.worker_id))} <span class="cpt-hrs" dir="ltr">(${tmplHoursTxt(q, sh)})</span>` : ` + ${escapeHtml(nameOf(sh.worker_id))} (ח)`).join("");
-          if(!a) return `<td class="cpt-missing">חוסר${shadows}</td>`;
+          const cc = bucket.key==="coordinated" ? " cpt-coord" : "";
+          if(!a) return `<td class="cpt-missing${cc}">חוסר${shadows}</td>`;
           const w = workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id];
           const hrs = tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate);
-          return `<td>${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="cpt-ach">אחמ"ש</span>`:""}${hrs!==std?` <span class="cpt-hrs" dir="ltr">(${hrs})</span>`:""}${shadows}</td>`;
+          return `<td${cc?` class="${cc.trim()}"`:""}>${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="cpt-ach">אחמ"ש</span>`:""}${hrs!==std?` <span class="cpt-hrs${isEarlyEnd(q, a)?" hrs-early":""}" dir="ltr">(${hrs})</span>`:""}${shadows}</td>`;
         }).join("");
-        const lead = pos===1 ? `<td class="cpt-shift" rowspan="${n}">${label}</td><td class="cpt-hcol" rowspan="${n}">${tmplBucketHoursHtml(bucket) || `<span dir="ltr">${std||""}</span>`}</td>` : "";
+        const lead = pos===1 ? `<td class="cpt-shift${bucket.key==="coordinated"?" cpt-coord":""}" rowspan="${n}">${label}</td><td class="cpt-hcol${bucket.key==="coordinated"?" cpt-coord":""}" rowspan="${n}">${tmplBucketHoursHtml(bucket) || `<span dir="ltr">${std||""}</span>`}</td>` : "";
         return `<tr class="${pos===1?"cpt-first":""}">${lead}${cells}</tr>`;
       }).join("");
     }).join("");
@@ -3439,7 +3453,7 @@ function renderMobileGrid(group, dates, ui){
     if(!sec.buckets.length) return "";
     const buckets = sec.buckets.slice().sort((a,b)=>(MG_ORDER[a.key]||9)-(MG_ORDER[b.key]||9) || a.minStart.localeCompare(b.minStart));
     const stdOf = b=>{ const cnt = {}; Object.values(b.perDate).forEach(q=>{ if(q){ const k = `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`; cnt[k]=(cnt[k]||0)+1; } }); return Object.keys(cnt).sort((x,y)=>cnt[y]-cnt[x])[0]||""; };
-    const head = `<tr><th class="mg-day"></th>${buckets.map(b=>`<th>${escapeHtml(b.label.replace(/^משמרת\s+/,""))}<div class="mg-sub" dir="ltr">${escapeHtml(stdOf(b))}</div></th>`).join("")}</tr>`;
+    const head = `<tr><th class="mg-day"></th>${buckets.map(b=>`<th${b.key==="coordinated"?' class="mg-coord"':""}>${escapeHtml(b.label.replace(/^משמרת\s+/,""))}<div class="mg-sub" dir="ltr">${escapeHtml(stdOf(b))}</div></th>`).join("")}</tr>`;
     const rows = dates.map(d=>{
       const dt = parseDate(d), dow = dt.getDay();
       let extra = "";
@@ -3448,18 +3462,19 @@ function renderMobileGrid(group, dates, ui){
       const cells = buckets.map(b=>{
         const q = b.perDate[d]; if(!q) return `<td class="mg-na"></td>`;
         const std = `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
+        const coordTd = b.key==="coordinated" ? ' class="mg-coord"' : "";
         let list = tmplAssignedList(abd, d, sec.sector, q.shift_type);
         if(q.role_counts) list = list.slice().sort((x,y)=>(MOKED_ROLE_ORDER.indexOf(assignmentRole(x, workersById))+9)%9 - (MOKED_ROLE_ORDER.indexOf(assignmentRole(y, workersById))+9)%9);
         const lines = list.map(a=>{
           const w = wOf(a.worker_id), hrs = tmplHoursTxt2(group, d, sec.sector, q, a, abd);
           const role = q.role_counts ? assignmentRole(a, workersById) : null;
           const bad = rest.has(restKey(a)), tight = !bad && rest.tight && rest.tight.has(restKey(a));
-          return `<div class="mg-n${bad?" mg-bad":(tight?" mg-tight":"")}">${role?`<span class="mg-role">${escapeHtml(role)}</span> `:""}${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="ach-tag">אחמ"ש</span>`:""}${hrs!==std?` <span class="mg-h" dir="ltr">${escapeHtml(hrs)}</span>`:""}</div>`;
+          return `<div class="mg-n${bad?" mg-bad":(tight?" mg-tight":"")}">${role?`<span class="mg-role">${escapeHtml(role)}</span> `:""}${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="ach-tag">אחמ"ש</span>`:""}${hrs!==std?` <span class="mg-h${isEarlyEnd(q, a)?" hrs-early":""}" dir="ltr">${escapeHtml(hrs)}</span>`:""}</div>`;
         });
         tmplShadowList(abd, d, sec.sector, q.shift_type).forEach(sh=>lines.push(sh.split ? `<div class="mg-n mg-sh">⇄ ${escapeHtml(nameOf(sh.worker_id))} <span class="mg-h" dir="ltr">${escapeHtml(tmplHoursTxt(q, sh))}</span></div>` : `<div class="mg-n mg-sh">${escapeHtml(nameOf(sh.worker_id))} (ח)</div>`));
         const miss = (q.required_count||0) - list.length;
         if(miss>0) lines.push(`<div class="mg-miss">חוסר${miss>1?` ×${miss}`:""}</div>`);
-        return `<td>${lines.join("")}</td>`;
+        return `<td${coordTd}>${lines.join("")}</td>`;
       }).join("");
       const tasks = (ui.schedTasks||[]).filter(t=>t.sector===sec.sector && t.date===d);
       const taskRow = tasks.length ? `<tr class="mg-tasks"><td colspan="${buckets.length+1}">📌 ${tasks.map(t=>`<b>${escapeHtml(t.worker_name||"")}</b> — ${escapeHtml(t.title)}${t.start?` <span dir="ltr">(${escapeHtml(tmplHourNum(t.start))}${t.end?"-"+escapeHtml(tmplHourNum(t.end)):""})</span>`:""}`).join(" · ")}</td></tr>` : "";
@@ -3484,17 +3499,22 @@ function renderScheduleViewer(team){
     <h3 style="margin:4px 0 8px;">${escapeHtml(group.label)} — ${fmtDateHeb(dates[0])} — ${fmtDateHeb(dates[dates.length-1])}</h3>
     ${grid}`;
 }
-/* "הצג בתצוגה" (2026-10-25, סרגיי): הסידור כפי שהוא נראה לעובדים - בלי לפרסם, להוריד או לשלוח. כולל טיוטה שעוד לא פורסמה. */
+/* "הצג בתצוגה" (2026-10-25, סרגיי: "שיציג את זה כתמונה של הפלט, כפי שהיא נשלחת בוואטסאפ, רק ללא צורך בשליחה"):
+   אותה תמונה בדיוק שנשלחת בוואטסאפ/מייל (makeScheduleImage), מוצגת במסך - בלי לפרסם, להוריד או לשלוח. */
 function renderSchedPreview(team){
   const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
-  const isMoked = group.citySectors[0]==="מוקד";
   const pub = isSchedulePublished(group, ui);
+  const back = `◀ חזרה ${ui.mode==="manual"?"לשיבוץ הידני":"לטבלה המרוכזת"}`;
   return `<div class="card">
-    <span class="backlink" data-action="sched-preview-close">◀ חזרה ${ui.mode==="manual"?"לשיבוץ הידני":"לטבלה המרוכזת"}</span>
-    <h2 style="margin:6px 0;">👁 תצוגת הסידור — ${escapeHtml(group.label)}</h2>
-    <p class="muted" style="margin:0 0 10px;">${fmtDateHeb(dates[0])} — ${fmtDateHeb(dates[dates.length-1])} · ${pub ? "✅ פורסם — כך העובדים רואים אותו." : "📝 טיוטה — כך הסידור ייראה לעובדים אחרי הפרסום. כרגע רק אתה רואה אותו."}</p>
-    ${responsiveGrid(isMoked ? renderMokedTemplateGrid(group, dates, ui, "view") : renderTemplateGrid(group, dates, ui, "view"), group, dates, ui)}
-    <button class="btn secondary" data-action="sched-preview-close" style="margin-top:10px;">◀ חזרה</button>
+    <span class="backlink" data-action="sched-preview-close">${back}</span>
+    <h2 style="margin:6px 0;">👁 תצוגת הפלט — ${escapeHtml(group.label)}</h2>
+    <p class="muted" style="margin:0 0 10px;">${fmtDateHeb(dates[0])} — ${fmtDateHeb(dates[dates.length-1])} · זו התמונה שנשלחת בוואטסאפ / מייל. ${pub ? "" : "📝 הסידור עדיין טיוטה — לא פורסם לעובדים."}</p>
+    ${ui.previewErr ? `<p class="shortage">${escapeHtml(ui.previewErr)}</p><button class="btn small" data-action="sched-preview">🔄 נסה שוב</button>`
+      : !ui.previewUrl ? `<p class="muted">⏳ יוצר את התמונה...</p>`
+      : `<div style="overflow:auto;border:1px solid var(--border);border-radius:8px;background:#fff;">
+           <img src="${ui.previewUrl}" alt="פלט הסידור" style="display:block;width:${ui.previewZoom?"1400px":"100%"};max-width:none;cursor:zoom-${ui.previewZoom?"out":"in"};" data-action="sched-preview-zoom"></div>
+         <p class="muted" style="font-size:.85em;margin-top:6px;">לחיצה על התמונה — הגדלה / הקטנה.</p>`}
+    <button class="btn secondary" data-action="sched-preview-close" style="margin-top:10px;">${back}</button>
   </div>`;
 }
 function renderOriginalPrint(team){
@@ -4661,8 +4681,20 @@ function onAppClick(e){
   if(a==="agg-export") return exportPivot();
   if(a==="agg-export-assign") return exportAssignments();
   if(a==="open-print"){ ui.printOpen = true; return render(); }
-  if(a==="sched-preview"){ ui.previewOpen = true; window.scrollTo(0,0); return render(); }
-  if(a==="sched-preview-close"){ ui.previewOpen = false; return render(); }
+  if(a==="sched-preview"){
+    ui.previewOpen = true; ui.previewErr = null; ui.previewZoom = false;
+    if(ui.previewUrl){ try{ URL.revokeObjectURL(ui.previewUrl); }catch(e){} ui.previewUrl = null; }
+    window.scrollTo(0,0); render();
+    makeScheduleImage().then(blob=>{
+      const team = teamById(ui.teamId), group = team && sectorGroupForTeam(team);
+      ui.shareBlob = blob; if(group) ui.shareKey = group.label + ui.periodStart; // אותה תמונה משמשת גם לשליחה
+      if(ui.previewOpen && S.ui===ui) ui.previewUrl = URL.createObjectURL(blob);
+      render();
+    }).catch(err=>{ ui.previewErr = (err && err.message) || "יצירת התמונה נכשלה"; render(); });
+    return;
+  }
+  if(a==="sched-preview-zoom"){ ui.previewZoom = !ui.previewZoom; return render(); }
+  if(a==="sched-preview-close"){ ui.previewOpen = false; if(ui.previewUrl){ try{ URL.revokeObjectURL(ui.previewUrl); }catch(e){} ui.previewUrl = null; } return render(); }
   if(a==="close-print"){ ui.printOpen = false; return render(); }
   if(a==="do-print"){ window.print(); return; }
   if(a==="share-open" || a==="share-go"){
