@@ -270,7 +270,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=142"></script>
+<script src="portal.js?v=143"></script>
 <script>
 (function(){
 "use strict";
@@ -1193,15 +1193,7 @@ function renderAggregate(){
 
   // "מי זמין לכל יום" - מתחת ללוח המשמרות (שתופס עכשיו את כל הרוחב), לבקשת סרגיי (2026-10-07).
   // (2026-10-20, סרגיי) לא מוצג כברירת מחדל - רק בלחיצה על לחצן נפרד, אם המשבץ רוצה לראות.
-  const availCard = group.citySectors.length ? `
-      <div class="card">
-        <div class="flexbar" style="justify-content:space-between;">
-          <h3 style="margin:0;">מי זמין לכל יום</h3>
-          <button class="btn small secondary" data-action="agg-avail-toggle">${ui.showAvailByDay?"▲ הסתר":"👥 הצג מי זמין לכל יום"}</button>
-        </div>
-        ${ui.showAvailByDay ? `<p class="muted" style="margin-top:8px;">כולל גם עובדים שכבר שובצו לאותו יום — מציג זמינות אמיתית, לא רק חוסרים.</p>
-        ${renderAvailabilityByDay(dates, group, ui)}` : ""}
-      </div>`:"";
+  const availCard = renderAvailByDayCard(group, dates, ui);
 
   const missingHtml = renderMissingSubmissions(workers, ui.submittedWorkerIds, ui.exceptionWorkerIds, isMoked || teamBlockingAt(team, ui.periodStart), ui.periodStart);
   const eliranOrder = isEliranLayout(group);
@@ -1249,7 +1241,7 @@ function renderAggregate(){
       ${renderMonthlyPanel(ui, isMoked)}
   </div>
   ${eliranOrder
-    ? renderPivotCard(group, dates, ui) + missingHtml + availCard + renderWorkloadCard(team, group, dates, ui)
+    ? renderEliranBelow(team, group, dates, ui)
     : availCard + renderBottomTables(team, group, dates, ui)}`;
 }
 
@@ -4101,6 +4093,25 @@ async function fillPartialGaps(partialRecs, slots, workers){
 function renderBottomTables(team, group, dates, ui){
   return renderWorkloadCard(team, group, dates, ui) + renderPivotCard(group, dates, ui);
 }
+function renderAvailByDayCard(group, dates, ui){
+  return group.citySectors.length ? `
+      <div class="card">
+        <div class="flexbar" style="justify-content:space-between;">
+          <h3 style="margin:0;">מי זמין לכל יום</h3>
+          <button class="btn small secondary" data-action="agg-avail-toggle">${ui.showAvailByDay?"▲ הסתר":"👥 הצג מי זמין לכל יום"}</button>
+        </div>
+        ${ui.showAvailByDay ? `<p class="muted" style="margin-top:8px;">כולל גם עובדים שכבר שובצו לאותו יום — מציג זמינות אמיתית, לא רק חוסרים.</p>
+        ${renderAvailabilityByDay(dates, group, ui)}` : ""}
+      </div>`:"";
+}
+/* החלק שמתחת לטבלת הסידור בגזרה של אלירן - זהה בשיבוץ האוטומטי (הטבלה המרוכזת) ובשיבוץ הידני (2026-10-25, סרגיי) */
+function renderEliranBelow(team, group, dates, ui){
+  const isMoked = group.citySectors[0]==="מוקד";
+  return renderPivotCard(group, dates, ui)
+    + renderMissingSubmissions(ui.workers||[], ui.submittedWorkerIds||new Set(), ui.exceptionWorkerIds, isMoked || teamBlockingAt(team, ui.periodStart), ui.periodStart)
+    + renderAvailByDayCard(group, dates, ui)
+    + renderWorkloadCard(team, group, dates, ui);
+}
 function renderWorkloadCard(team, group, dates, ui){
   const isMoked = group.citySectors[0]==="מוקד";
   return `
@@ -4132,7 +4143,7 @@ function renderManualBuild(team){
   const dates = periodDates(ui.periodStart, team);
   // שתי הטבלאות בתחתית (כמה משמרות, ואחריה אילוצים+הערות) - זהה לטבלה המרוכזת. לבקשת סרגיי (2026-10-07)
   const bottomTables = isEliranLayout(group)
-    ? renderPivotCard(group, dates, ui) + renderWorkloadCard(team, group, dates, ui)
+    ? renderEliranBelow(team, group, dates, ui)
     : renderBottomTables(team, group, dates, ui);
 
   if(group.citySectors[0]!=="מוקד"){
