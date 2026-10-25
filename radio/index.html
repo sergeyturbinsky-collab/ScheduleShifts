@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>התקנת מעקב מוקד</title>
+<!-- דף ההתקנה של "מעקב מוקד" למכשירי הקשר (ריפו moked-tracker). הקובץ עצמו באחסון הציבורי של Supabase,
+     ומתעדכן לבד בכל בנייה; הדף לא צריך שינוי כשיוצאת גרסה. -->
+<style>
+  :root { --bg:#F3F6FA; --card:#fff; --ink:#14212F; --muted:#5F6B7A; --blue:#0C3A6E; --green:#1E7B34; --warn-bg:#FFF4E5; --warn:#8A4B00; --line:#DCE3EC; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif; line-height:1.5; }
+  main { max-width:520px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { color:var(--blue); font-size:28px; margin:8px 0 2px; text-align:center; }
+  .sub { color:var(--muted); text-align:center; margin:0 0 18px; font-size:16px; }
+  .card { background:var(--card); border-radius:14px; padding:18px; margin-top:14px; box-shadow:0 1px 2px rgba(0,0,0,.05); }
+  .btn { display:block; width:100%; text-align:center; text-decoration:none; background:var(--green); color:#fff; font-size:24px; font-weight:700; padding:20px 12px; border-radius:12px; }
+  .btn:active { filter:brightness(.92); }
+  .ver { color:var(--muted); text-align:center; font-size:14px; margin-top:10px; min-height:1.5em; }
+  ol { margin:0; padding-inline-start:22px; font-size:18px; }
+  ol li { margin:10px 0; }
+  .warn { display:none; background:var(--warn-bg); color:var(--warn); border-radius:12px; padding:14px 16px; font-size:17px; margin-top:14px; }
+  .note { color:var(--muted); font-size:15px; }
+  #qrbox { display:none; text-align:center; }
+  #qr { display:inline-block; padding:12px; background:#fff; border:1px solid var(--line); border-radius:10px; margin-top:8px; }
+  h2 { font-size:19px; color:var(--blue); margin:0 0 8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>מעקב מוקד</h1>
+  <p class="sub">האפליקציה למכשירי הקשר של המאבטחים</p>
+
+  <div class="warn" id="inapp">
+    <b>הקישור נפתח בתוך וואטסאפ.</b> כדי להתקין צריך לפתוח אותו ב-Chrome:
+    לחצו על <b>⋮</b> למעלה ← <b>"פתיחה ב-Chrome"</b>.
+  </div>
+  <div class="warn" id="notandroid">
+    האפליקציה מיועדת למכשירי הקשר (אנדרואיד). פתחו את הדף הזה במכשיר הקשר, או סרקו ממנו את הקוד שלמטה.
+  </div>
+
+  <div class="card">
+    <a class="btn" id="dl" href="https://hcejwcxsqhpiufaakalj.supabase.co/storage/v1/object/public/apps/moked-tracker.apk">⬇ הורדה והתקנה</a>
+    <div class="ver" id="ver"></div>
+  </div>
+
+  <div class="card">
+    <h2>איך מתקינים</h2>
+    <ol>
+      <li>לוחצים <b>"הורדה והתקנה"</b>.</li>
+      <li>כשההורדה מסתיימת, פותחים את הקובץ (בהתראה למעלה, או ב"הורדות").</li>
+      <li>אם המכשיר שואל — מאשרים <b>"התקנה ממקור זה"</b>, ואז <b>"התקנה"</b>.</li>
+      <li>פותחים את <b>"מעקב מוקד"</b>, בוחרים איזה מכשיר קשר זה ומזינים את קוד העריכה. <span class="note">(פעם אחת למכשיר — את הקוד נותן המנהל.)</span></li>
+      <li>מאשרים לפי הסדר: מיקום ← <b>"אפשר כל הזמן"</b> ← התראות ← ללא הגבלת סוללה.</li>
+    </ol>
+    <p class="note">מכאן והלאה האפליקציה מתעדכנת לבד: כשיוצאת גרסה חדשה מופיע בה הכפתור "עדכון עכשיו". לא צריך להיכנס לכאן שוב.</p>
+  </div>
+
+  <div class="card" id="qrbox">
+    <h2>סריקה ממכשיר הקשר</h2>
+    <div id="qr"></div>
+  </div>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+(function () {
+  var INFO = "https://hcejwcxsqhpiufaakalj.supabase.co/storage/v1/object/public/apps/moked-tracker.json";
+  var ua = navigator.userAgent || "";
+  var android = /Android/i.test(ua);
+  if (/WhatsApp|FBAN|FBAV|Instagram|; wv\)/i.test(ua)) document.getElementById("inapp").style.display = "block";
+  if (!android) {
+    document.getElementById("notandroid").style.display = "block";
+    document.getElementById("qrbox").style.display = "block";
+    try { new QRCode(document.getElementById("qr"), { text: location.href.split("#")[0], width: 220, height: 220 }); } catch (e) {}
+  }
+  // הגרסה האחרונה: קישור ישיר לקובץ של הגרסה (נמנע מעותק ישן במטמון)
+  fetch(INFO + "?t=" + Date.now(), { cache: "no-store" })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (i) {
+      if (!i) return;
+      if (i.url) document.getElementById("dl").href = i.url;
+      var d = i.published_at ? new Date(i.published_at) : null;
+      document.getElementById("ver").textContent = "גרסה " + i.version +
+        (d && !isNaN(d) ? " · עודכנה " + d.toLocaleDateString("he-IL", { day: "numeric", month: "numeric", year: "numeric" }) : "");
+    })
+    .catch(function () {});
+})();
+</script>
+</body>
+</html>
