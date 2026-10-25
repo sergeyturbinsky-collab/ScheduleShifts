@@ -270,7 +270,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=137"></script>
+<script src="portal.js?v=138"></script>
 <script>
 (function(){
 "use strict";
@@ -520,12 +520,6 @@ function shabbatThHtml(dateStr, sector){
   return `<div class="shabbat-th">🕯️ כניסת שבת ${fmtMinutes(m)}</div>${fe?`<div class="shabbat-th">סיום משמרת בוקר: ${fe} (שעתיים לפני כניסת שבת)</div>`:""}`;
 }
 /* (לא בשימוש מאז 2026-10-12 - הוחלף ב-shabbatThHtml) */
-function shabbatNoteHtml(group, dates){
-  const cities = (group.citySectors||[]).filter(c=>SHABBAT_CITIES[c] && (S.quotas||[]).some(q=>q.sector===c && q.shift_type==="friday_morning"));
-  if(!cities.length) return "";
-  const rows = dates.filter(d=>dayTypeForDate(d)==="friday").map(d=>`<div>🕯️ <b>${fmtDateHeb(d)}</b>: ${cities.map(c=>`${escapeHtml(c)} — כניסת שבת ${fmtMinutes(candleLightingMinutes(d,c))}, שישי בוקר עד <b>${fridayMorningEnd(d,c)}</b>`).join(" · ")}</div>`);
-  return rows.length ? `<div class="muted" style="font-size:.88em;margin:-4px 0 10px;line-height:1.8;">${rows.join("")}<div style="font-size:.9em;">משמרת שישי בוקר מסתיימת שעתיים לפני כניסת השבת, בחצאי שעות: כניסה עד ורבע — שעה עגולה, בין ורבע לרבע ל — בחצי, אחרי רבע ל — שעה עגולה כלפי מעלה.</div></div>` : "";
-}
 /* תווית לבחירת משמרת בטופס - בשבת "ערב" מציג את השעות מתוך התקן של המוקד */
 function submitOptionLabel(ot, dateStr){
   if(ot==="evening" && dayTypeForDate(dateStr)==="saturday"){
@@ -1065,6 +1059,13 @@ async function loadMySubmission(team){
 // ההערה בטופס ההגשה נשמרת תוך כדי הקלדה - כדי שלחיצה על משמרת (שמציירת מחדש) לא תמחק אותה
 document.addEventListener("input", e=>{ if(e.target && e.target.id==="submitNote" && S.ui) S.ui.note = e.target.value; });
 
+/* הטוקן של העובד שמגיש: מהכניסה לאיזור האישי (portal), או מהזיהוי בשם+קוד */
+function workerTokenForIdentity(){
+  const id = S.identity; if(!id) return null;
+  if(id.token) return id.token;
+  const ws = loadJSON("cst_worker_session");
+  return ws && ws.token && ws.worker_id===id.workerId ? ws.token : null;
+}
 async function saveSubmission(){
   const ui = S.ui;
   const team = teamById(S.identity.teamId);
@@ -1088,6 +1089,25 @@ async function saveSubmission(){
     if(missing.length){ ui.saveOk = false; ui.saveMsg = `צריך לסמן כל יום. חסר: ${missing.map(fmtDateHeb).join(", ")} — סמנו משמרות, או "לא יכול" / "אחר".`; ui.note = noteTxt; return render(); }
   }
   try{
+    // (2026-10-25) שמירה דרך השרת לפי הכניסה של העובד - הכל או כלום (אין יותר כתיבה ישירה לטבלאות)
+    const tok = workerTokenForIdentity();
+    const entryRows = [];
+    Object.keys(ui.entries).forEach(date=>{
+      const e = ui.entries[date];
+      if(e.dayStatus){ entryRows.push({entry_date:date, shift_type:e.dayStatus, custom_start:null, custom_end:null}); return; }
+      (e.types||[]).forEach(t=> entryRows.push({entry_date:date, shift_type:t, custom_start:null, custom_end:null}));
+      if(e.customOn) entryRows.push({entry_date:date, shift_type:"custom", custom_start:e.customStart, custom_end:e.customEnd});
+    });
+    let viaRpc = false;
+    if(tok && S.subRpcOk !== false){
+      try{
+        await apiRpc("worker_constraints_save", {p_token:tok, p_team_id:team.id, p_period_start:ui.periodStart, p_note:(document.getElementById("submitNote")||{}).value || null, p_entries:entryRows});
+        viaRpc = true;
+      }catch(e){ if(!/worker_constraints_save|PGRST202|Could not find the function/i.test(e.message||"")) throw e; S.subRpcOk = false; }
+    } else if(!tok && S.subRpcOk !== false){
+      ui.saveOk = false; ui.saveMsg = "הכניסה שלך פגה — צאו והיכנסו שוב עם הקוד האישי, ואז שמרו."; return render();
+    }
+    if(viaRpc){ ui.saveOk = true; ui.saveMsg = "האילוצים נשמרו בהצלחה."; return render(); }
     const sub = await apiUpsertSubmission({
       team_id: team.id, worker_id: S.identity.workerId, worker_name: S.identity.name,
       period_start: ui.periodStart, note: document.getElementById("submitNote").value || null,
@@ -1850,6 +1870,9 @@ const REST_HOURS_REQUIRED = 8;
 const LONG_CHAIN_HOURS = 12; // אזהרה על רצף עבודה ארוך מזה (2026-10-22)
 /* טווח הזמן בפועל של שיבוץ נתון: שעות מותאמות אם הוגדרו, אחרת שעות התקן הרגילות לפי S.quotas.
    משמרת שחוצה חצות (סיום <= התחלה) - הסיום מחושב ליום הבא. */
+/* (2026-10-25) שעות בין שני זמנים לפי שעון הקיר: בלילה של מעבר לשעון קיץ 23:00-07:00 = 8 שעות (ולא 7),
+   ובמעבר לשעון חורף - 8 (ולא 9). כך כלל 8 שעות המנוחה תואם את השעות שרואים בסידור. */
+function hoursBetween(a, b){ const x = new Date(+a), y = new Date(+b); return ((y - x) - (y.getTimezoneOffset() - x.getTimezoneOffset()) * 60000) / 3600000; }
 function shiftInterval(a){
   const q = effQuota(S.quotas.find(x=>x.sector===a.sector && x.shift_type===a.shift_type &&
     (x.weekday==null || x.weekday===parseDate(a.entry_date).getDay())), a.entry_date);
@@ -1897,7 +1920,7 @@ function computeRestViolations(assignments){
     let chain = uniq.length ? [uniq[0]] : [], chainStart = uniq.length ? uniq[0].iv.start : null;
     const closeChain = ()=>{
       if(!chain.length) return;
-      const hrs = (curEnd - chainStart) / 3600000;
+      const hrs = hoursBetween(chainStart, curEnd);
       if(hrs > LONG_CHAIN_HOURS + 0.01){
         chain.forEach(x=>{ bad.long.set(restKey(x.a), hrs); (x.dups||[]).forEach(d=>bad.long.set(restKey(d), hrs)); });
         bad.longList.push({worker_id: chain[0].a.worker_id, from: chain[0].a.entry_date, to: chain[chain.length-1].a.entry_date, hrs, start: chainStart});
@@ -1918,7 +1941,7 @@ function computeRestViolations(assignments){
         chain.push(uniq[i]); continue;
       }
       closeChain(); chain = [uniq[i]]; chainStart = uniq[i].iv.start;
-      const gapHours = (uniq[i].iv.start - curEnd) / 3600000;
+      const gapHours = hoursBetween(curEnd, uniq[i].iv.start);
       const target = gapHours < REST_HOURS_REQUIRED ? bad : (Math.abs(gapHours-REST_HOURS_REQUIRED) < 0.01 ? bad.tight : null);
       if(target){ target.add(restKey(uniq[i].a)); (uniq[i].dups||[]).forEach(d=>target.add(restKey(d))); }
       if(+uniq[i].iv.end > +curEnd) curEnd = uniq[i].iv.end;
@@ -1958,7 +1981,7 @@ function wouldBeTightRest(workerId, newInterval, workerIntervals){
   const list = workerIntervals[workerId];
   if(!list || !list.length || !newInterval) return false;
   return list.some(iv=>{
-    const gap = iv.end <= newInterval.start ? (newInterval.start - iv.end)/3600000 : (newInterval.end <= iv.start ? (iv.start - newInterval.end)/3600000 : -1);
+    const gap = iv.end <= newInterval.start ? hoursBetween(iv.end, newInterval.start) : (newInterval.end <= iv.start ? hoursBetween(newInterval.end, iv.start) : -1);
     return Math.abs(gap - REST_HOURS_REQUIRED) < 0.01;
   });
 }
@@ -1967,8 +1990,8 @@ function wouldViolateRest(workerId, newInterval, workerIntervals){
   if(!list || !list.length) return false;
   return list.some(iv=>{
     let gapHours;
-    if(iv.end <= newInterval.start) gapHours = (newInterval.start - iv.end) / 3600000;
-    else if(newInterval.end <= iv.start) gapHours = (iv.start - newInterval.end) / 3600000;
+    if(iv.end <= newInterval.start) gapHours = hoursBetween(iv.end, newInterval.start);
+    else if(newInterval.end <= iv.start) gapHours = hoursBetween(newInterval.end, iv.start);
     else return true; // חפיפה ממש - לא אמור לקרות (availableForSlot כבר מדיר "כבר משובץ"), נזהרים בכל זאת
     return gapHours < REST_HOURS_REQUIRED;
   });
@@ -2053,34 +2076,6 @@ function streakWarningsHtml(group, dates){
   return `<div class="note-box streak-box"><b>אזהרות רצף (7 ימי עבודה / שבת רביעית ברצף):</b>${lines.join("")}</div>`;
 }
 
-function renderQuotaPanel(group, slots, ui){
-  const workers = ui.workers;
-  const assignmentsByDate = {};
-  (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
-
-  const rows = slots.map(slot=>{
-    const assigned = (assignmentsByDate[slot.date]||[]).filter(a=>a.sector===slot.sector && a.shift_type===slot.shiftType);
-    const avail = availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(slot.sector,slot.shiftType));
-    const shortAvail = avail.length < slot.required;
-    const shortAssigned = assigned.length < slot.required;
-    return `<tr>
-      <td>${fmtDateHeb(slot.date)}</td>
-      <td>${escapeHtml(slot.sector)}</td>
-      <td>${escapeHtml(slot.label)}${slot.roleCounts?`<br><span class="muted" style="font-size:.85em;">${escapeHtml(roleCountsText(slot.roleCounts))}</span>`:""}</td>
-      <td>${slot.required}</td>
-      <td class="${shortAvail?'shortage':'ok-cell'}">${avail.length}</td>
-      <td class="${assigned.length?(shortAssigned?'shortage':'ok-cell'):''}">${assigned.length}${assigned.length?` (${assigned.map(a=>{const w=workers.find(x=>x.id===a.worker_id); return w?escapeHtml(w.name)+(w.role?` [${escapeHtml(w.role)}]`:""):"?";}).join(", ")})`:""}</td>
-    </tr>`;
-  }).join("");
-
-  return `
-  <div style="overflow-x:auto;">
-  <table>
-    <thead><tr><th>תאריך</th><th>גזרה</th><th>משמרת</th><th>נדרש</th><th>זמינים</th><th>משובצים</th></tr></thead>
-    <tbody>${rows || `<tr><td colspan="6" class="muted">אין משבצות לתקופה זו</td></tr>`}</tbody>
-  </table>
-  </div>`;
-}
 
 /* ================================================================
    תצוגת "תבנית" (כמו הטופס הרשמי): גזרה -> משמרת בוקר/ערב -> סייר N -> יום
@@ -2257,10 +2252,29 @@ function tmplShadowText(shadows, q, nameOf){
    כשבקוביה כבר משובץ עובד ובוחרים עובד נוסף - שואלים אם להחליף אותו או להוסיף את החדש לצידו
    (מישהו עושה חצי משמרת ומישהו אחר את החצי השני). העובד שנוסף נשמר כמו חפיפה (shadow_of = העובד
    שבקוביה, לא תופס מקום נוסף בתקן) עם split = true, ולכל אחד שעות משלו. */
+/* (2026-10-25) שמירת משבצת כפעולה אחת בשרת: כל קריאות rpc_assignment_* שבתוך asgAtomic נאספות ונשלחות
+   בבקשה אחת (rpc_assignment_batch) - אם משהו נכשל באמצע, כלום לא נשמר (במקום מצב ביניים שבו נמחקו שעות/חניכות).
+   מחוץ ל-asgAtomic - כמו קודם, קריאה-קריאה. שרת בלי rpc_assignment_batch - חוזרים לקריאות הבודדות. */
+let ASG_BATCH = null;
+function asgCall(fn, args){ if(ASG_BATCH){ ASG_BATCH.push({fn, args}); return Promise.resolve(null); } return apiRpc(fn, args); }
+async function asgAtomic(work){
+  if(ASG_BATCH) return work();
+  ASG_BATCH = [];
+  let ops;
+  try{ await work(); ops = ASG_BATCH; } finally { ASG_BATCH = null; }
+  if(!ops.length) return;
+  if(S.asgBatchOk !== false){
+    try{
+      await apiRpc("rpc_assignment_batch", {p_pin:S.pin, p_ops: ops.map(o=>{ const a = Object.assign({}, o.args); delete a.p_pin; return {fn:o.fn, args:a}; })});
+      return;
+    }catch(e){ if(!/rpc_assignment_batch|PGRST202|Could not find the function/i.test(e.message||"")) throw e; S.asgBatchOk = false; }
+  }
+  for(const o of ops) await apiRpc(o.fn, o.args);
+}
 function restoreShadowRpc(sector, date, shiftType, workerId, hostId, split){
   return split
-    ? apiRpc("rpc_assignment_set_split", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:workerId, p_split_of:hostId})
-    : apiRpc("rpc_assignment_set_shadow", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:workerId, p_shadow_of:hostId});
+    ? asgCall("rpc_assignment_set_split", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:workerId, p_split_of:hostId})
+    : asgCall("rpc_assignment_set_shadow", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:workerId, p_shadow_of:hostId});
 }
 function minToHHMM(m){ m = ((m%1440)+1440)%1440; return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0"); }
 function tmplNameOf(id){ const x=(S.ui.workers||[]).find(y=>y.id===id)||(S.ui.allWorkersById||{})[id]; return x?x.name:"?"; }
@@ -2853,7 +2867,7 @@ function renderTmplCellOverlay(){
             <div class="field"><label>משעה</label><input type="time" id="tmplCustomStart" value="${escapeHtml(ui.tmplCustomStart||(slot?slot.start:""))}"></div>
             <div class="field"><label>עד שעה</label><input type="time" id="tmplCustomEnd" value="${escapeHtml(ui.tmplCustomEnd||(slot?slot.end:""))}"></div>
           </div>
-          <p class="muted">אם הטווח חופף משמרת סמוכה ביותר מ-3 שעות, העובד יופיע גם שם עם הערת שעה. חפיפה של 3 שעות או פחות — הוא ישובץ רק למשמרת השנייה.</p>
+          <p class="muted">אם הטווח חוצה שתי משמרות, העובד ישובץ לשתיהן וכל משמרת תקבל את החלק שלה מהשעות (למשל ערב 16:30-22:30 ולילה 22:30-04:30).</p>
           <div class="row" style="margin-top:8px;">
             <button class="btn" data-action="tmpl-hours-confirm">אישור</button>
             <button class="btn secondary" data-action="tmpl-hours-back">חזרה</button>
@@ -2995,7 +3009,7 @@ function renderMokedCellOverlay(){
             <div class="field"><label>משעה</label><input type="time" id="tmplCustomStart" value="${escapeHtml(ui.tmplCustomStart||(slot?slot.start:""))}"></div>
             <div class="field"><label>עד שעה</label><input type="time" id="tmplCustomEnd" value="${escapeHtml(ui.tmplCustomEnd||(slot?slot.end:""))}"></div>
           </div>
-          <p class="muted">אם הטווח חופף משמרת סמוכה ביותר מ-3 שעות, העובד יופיע גם שם עם הערת שעה (חפיפה). חפיפה של 3 שעות או פחות — הוא ישובץ רק למשמרת השנייה.</p>
+          <p class="muted">אם הטווח חופף גם משמרת סמוכה, העובד יופיע גם בה עם הערת שעה (חפיפה).</p>
           <div class="row" style="margin-top:8px;">
             <button class="btn" data-action="tmpl-hours-confirm">אישור</button>
             <button class="btn secondary" data-action="tmpl-hours-back">חזרה</button>
@@ -3080,7 +3094,8 @@ function renderMokedCellOverlay(){
    אותה משמרת, ולכן בלי השחזור הזה כל עריכה של משבצת אחת הייתה מוחקת "חפיפות"/שעות מותאמות של
    עובדים אחרים שכבר משובצים לאותה משמרת (למשל: קארינה עם שעות מותאמות במשמרת ערב, ואז שיבוץ עובד
    נוסף לאותה משמרת - היה מאפס את השעות המותאמות של קארינה). */
-async function setAssignmentListPreservingHours(sector, date, shiftType, list, method, justSetWorkerId, justSetStart, justSetEnd, opts){
+function setAssignmentListPreservingHours(...args){ return asgAtomic(()=>setAssignmentListPreservingHoursImpl(...args)); }
+async function setAssignmentListPreservingHoursImpl(sector, date, shiftType, list, method, justSetWorkerId, justSetStart, justSetEnd, opts){
   // opts.addShadow = {workerId, hostId, cs, ce} - מוסיף שיבוץ "חפיפה"; opts.dropShadowIds - מסיר חפיפות.
   // חפיפות קיימות במשבצת נשמרות (rpc_assignment_set מוחק את כל שורות המשבצת), אלא אם העובד עבר לשיבוץ רגיל.
   opts = opts || {};
@@ -3096,20 +3111,20 @@ async function setAssignmentListPreservingHours(sector, date, shiftType, list, m
     .map(a=>({workerId:a.worker_id, hostId:a.shadow_of, cs:a.custom_start, ce:a.custom_end, split:!!a.split}));
   if(opts.addShadow) shadowEntries.push(opts.addShadow);
   const fullList = list.concat(shadowEntries.map(x=>x.workerId).filter(id=>!list.includes(id)));
-  await apiRpc("rpc_assignment_set", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_ids:fullList, p_method:method});
+  await asgCall("rpc_assignment_set", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_ids:fullList, p_method:method});
   if(justSetWorkerId && (justSetStart||justSetEnd)){
-    await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:justSetWorkerId, p_custom_start:justSetStart||null, p_custom_end:justSetEnd||null});
+    await asgCall("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:justSetWorkerId, p_custom_start:justSetStart||null, p_custom_end:justSetEnd||null});
   }
   for(const wid of list){
     if(wid===justSetWorkerId) continue;
-    if(prevHours[wid]) await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:wid, p_custom_start:prevHours[wid].cs, p_custom_end:prevHours[wid].ce});
+    if(prevHours[wid]) await asgCall("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:wid, p_custom_start:prevHours[wid].cs, p_custom_end:prevHours[wid].ce});
   }
   for(const wid of list){
-    if(prevRole[wid]) await apiRpc("rpc_assignment_set_role", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:wid, p_role:prevRole[wid]});
+    if(prevRole[wid]) await asgCall("rpc_assignment_set_role", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:wid, p_role:prevRole[wid]});
   }
   for(const sh of shadowEntries){
     await restoreShadowRpc(sector, date, shiftType, sh.workerId, sh.hostId, sh.split);
-    if(sh.cs || sh.ce) await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:sh.workerId, p_custom_start:sh.cs||null, p_custom_end:sh.ce||null});
+    if(sh.cs || sh.ce) await asgCall("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_id:sh.workerId, p_custom_start:sh.cs||null, p_custom_end:sh.ce||null});
   }
 }
 
@@ -3234,22 +3249,6 @@ async function assignRoleAtPosition(sector, date, shiftType, role, ridx, workerI
    של תפקיד "מוקדן" (הוא לא מוקדן בפועל) - פשוט מוסיפים אותו לרשימת השיבוץ הכוללת של המשבצת, בדיוק
    כמו שה-fallback הקיים עושה בשיבוץ האוטומטי (runAutoAssign). בתצוגה הוא יופיע תחת השורה של
    התפקיד האמיתי שלו (אחמ"ש) - זה הגיוני כי התפקיד מוצג לפי w.role בפועל, לא לפי "איזה תקן מילא". */
-async function assignRoleOverrideWorker(sector, date, shiftType, workerId, customStart, customEnd){
-  const ui = S.ui;
-  const team = teamById(ui.teamId);
-  const assignmentsByDate = {};
-  (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
-  const list = tmplAssignedList(assignmentsByDate, date, sector, shiftType).map(a=>a.worker_id);
-  if(!list.includes(workerId)) list.push(workerId);
-  try{
-    await setAssignmentListPreservingHours(sector, date, shiftType, list, "manual", workerId, customStart||null, customEnd||null);
-    ui.tmplCell = null; ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCustomStart=null; ui.tmplCustomEnd=null; ui.tmplCellMsg = null; ui.tmplShowOtherSectors=false; ui.tmplRoleOverride=null;
-    ui.loaded = false;
-    await loadAggregateData(team);
-  }catch(e){
-    ui.tmplCellMsg = "שגיאה בשמירה: " + e.message; render();
-  }
-}
 
 /* שיבוץ עם שעות מותאמות שעשוי לחצות בין "בלוקי משמרת": תמיד לכל היותר 2 בלוקים/שורות (גם אם הטווח
    נוגע ביותר מ-2 בלוקים בפועל) - הבלוק המוקדם ביותר שנחצה ("מוביל") והבלוק שאחריו ("עוגן"), ראו
@@ -3928,20 +3927,22 @@ async function runAutoAssign(){
       fullList = fullList.filter(isAch).concat(fullList.filter(id=>!isAch(id)));
     }
     try{
-      await apiRpc("rpc_assignment_set", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_ids: fullList, p_method:"auto"});
-      // rpc_assignment_set מוחק ומכניס מחדש את כל שורות המשבצת - משחזרים חפיפות ושעות מותאמות של שיבוצים קיימים
-      for(const a of alreadyAll.filter(x=>x.id)){
-        if(a.shadow_of) await restoreShadowRpc(slot.sector, slot.date, slot.shiftType, a.worker_id, a.shadow_of, a.split);
-        if(a.custom_start || a.custom_end) await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:a.worker_id, p_custom_start:a.custom_start, p_custom_end:a.custom_end});
-        if(a.filled_role) await apiRpc("rpc_assignment_set_role", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:a.worker_id, p_role:a.filled_role});
-      }
-      for(const wid of fallbackFillers){
-        await apiRpc("rpc_assignment_set_role", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:wid, p_role:"מוקדן"});
-      }
-      for(const wid of Object.keys(customFor)){
-        if(!chosen.some(c=>c.id===wid)) continue;
-        await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:wid, p_custom_start:customFor[wid][0], p_custom_end:customFor[wid][1]});
-      }
+      await asgAtomic(async()=>{
+        await asgCall("rpc_assignment_set", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_ids: fullList, p_method:"auto"});
+        // rpc_assignment_set מוחק ומכניס מחדש את כל שורות המשבצת - משחזרים חפיפות ושעות מותאמות של שיבוצים קיימים
+        for(const a of alreadyAll.filter(x=>x.id)){
+          if(a.shadow_of) await restoreShadowRpc(slot.sector, slot.date, slot.shiftType, a.worker_id, a.shadow_of, a.split);
+          if(a.custom_start || a.custom_end) await asgCall("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:a.worker_id, p_custom_start:a.custom_start, p_custom_end:a.custom_end});
+          if(a.filled_role) await asgCall("rpc_assignment_set_role", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:a.worker_id, p_role:a.filled_role});
+        }
+        for(const wid of fallbackFillers){
+          await asgCall("rpc_assignment_set_role", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:wid, p_role:"מוקדן"});
+        }
+        for(const wid of Object.keys(customFor)){
+          if(!chosen.some(c=>c.id===wid)) continue;
+          await asgCall("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:slot.sector, p_entry_date:slot.date, p_shift_type:slot.shiftType, p_worker_id:wid, p_custom_start:customFor[wid][0], p_custom_end:customFor[wid][1]});
+        }
+      });
       filled++;
       chosen.forEach(w=>{ assignCount[w.id]++; tgtCount[w.id+"|"+weekOf(slot.date)] = (tgtCount[w.id+"|"+weekOf(slot.date)]||0) + 1; recordChosenInterval(w.id, customFor[w.id] ? shiftInterval({sector:slot.sector, shift_type:slot.shiftType, entry_date:slot.date, custom_start:customFor[w.id][0], custom_end:customFor[w.id][1]}) : newInterval); streakAdd(streakIdx, w.id, slot.date, slot.shiftType); (assignmentsByDate[slot.date]=assignmentsByDate[slot.date]||[]).push({sector:slot.sector, shift_type:slot.shiftType, worker_id:w.id, entry_date:slot.date}); });
     }catch(e){ ui.buildMsg = "שגיאה בשמירת שיבוץ: " + e.message; render(); return; }
@@ -4012,16 +4013,16 @@ async function repairShortages(team){
       }
       if(!move) break;
       // כתיבה: T - מחליפים את X ב-Y; המשמרת החסרה - מוסיפים את X. שומרים שעות/חפיפות/תפקידים של שאר העובדים.
-      const saveSlot = async (sector, date, type, ids)=>{
+      const saveSlot = (sector, date, type, ids)=> asgAtomic(async()=>{
         const prev = (ui.assignments||[]).filter(a=>a.sector===sector && a.entry_date===date && a.shift_type===type);
-        await apiRpc("rpc_assignment_set", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:type, p_worker_ids:ids, p_method:"auto"});
+        await asgCall("rpc_assignment_set", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:type, p_worker_ids:ids, p_method:"auto"});
         for(const a of prev){
           if(!ids.includes(a.worker_id) && !a.shadow_of) continue;
           if(a.shadow_of) await restoreShadowRpc(sector, date, type, a.worker_id, a.shadow_of, a.split);
-          if(a.custom_start || a.custom_end) await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:type, p_worker_id:a.worker_id, p_custom_start:a.custom_start, p_custom_end:a.custom_end});
-          if(a.filled_role) await apiRpc("rpc_assignment_set_role", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:type, p_worker_id:a.worker_id, p_role:a.filled_role});
+          if(a.custom_start || a.custom_end) await asgCall("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:type, p_worker_id:a.worker_id, p_custom_start:a.custom_start, p_custom_end:a.custom_end});
+          if(a.filled_role) await asgCall("rpc_assignment_set_role", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:type, p_worker_id:a.worker_id, p_role:a.filled_role});
         }
-      };
+      });
       const {X, T, tRows, Y} = move;
       const tAll = (ui.assignments||[]).filter(a=>a.sector===T.sector && a.entry_date===T.entry_date && a.shift_type===T.shift_type);
       await saveSlot(T.sector, T.entry_date, T.shift_type, tAll.map(a=>a.worker_id===X.id ? Y.id : a.worker_id));
@@ -4077,7 +4078,7 @@ async function fillPartialGaps(partialRecs, slots, workers){
           if(ne - ns > 12*60) continue;
           const t = m=>fmtMinutes(((m - off)%1440 + 1440)%1440);
           try{
-            await apiRpc("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:x.sector, p_entry_date:x.date, p_shift_type:x.shiftType, p_worker_id:a.worker_id, p_custom_start:t(ns), p_custom_end:t(ne)});
+            await asgCall("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:x.sector, p_entry_date:x.date, p_shift_type:x.shiftType, p_worker_id:a.worker_id, p_custom_start:t(ns), p_custom_end:t(ne)});
             touched.add(a.id); extended++; done = true;
           }catch(e){}
           break;
@@ -4148,20 +4149,6 @@ function renderManualBuild(team){
   ${renderMokedCellOverlay()}`;
 }
 
-async function saveManualSlot(sector, date, shiftType){
-  const ui = S.ui;
-  const checks = document.querySelectorAll('[data-action="manual-check"]');
-  const ids = Array.from(checks).filter(c=>c.checked).map(c=>c.dataset.worker);
-  try{
-    await apiRpc("rpc_assignment_set", {p_pin:S.pin, p_sector:sector, p_entry_date:date, p_shift_type:shiftType, p_worker_ids: ids, p_method:"manual"});
-    ui.manualMsg = "נשמר.";
-    ui.manualOpenSlot = null;
-    const team = teamById(ui.teamId);
-    await loadAggregateData(team);
-  }catch(e){
-    ui.manualMsg = "שגיאה בשמירה: " + e.message; render();
-  }
-}
 
 /* ============== ייצוא (הדבקה לאקסל) ============== */
 function copyToClipboard(text){
@@ -4409,7 +4396,6 @@ function attachHandlers(){
 function onAppChange(e){
   const t = e.target;
   if(t.dataset.action==="city-pref") return syncCityPrefs(t.dataset.prefix);
-  if(t.dataset.action==="manual-check") return; // נקרא בזמן שמירה
   if(t.dataset.action==="admin-role-select"){
     const id = t.dataset.id, role = t.value || null;
     const ui = S.ui;
@@ -4501,9 +4487,9 @@ function onAppClick(e){
     if(!row){ ui.identifyError = "שגיאה: העובד לא נמצא"; return render(); }
     return (async()=>{
       try{
-        const workerId = await apiRpc("verify_worker_code", {p_team_id: row.team_id, p_name:row.name, p_code:code});
-        if(!workerId){ ui.identifyError = "שם או קוד שגויים"; return render(); }
-        S.ui = {step:"recipient", pendingIdentity:{workerId, name:row.name}};
+        const res = await apiRpc("worker_login", {p_worker_id: row.id, p_code:code});
+        if(!res || !res.token){ ui.identifyError = "שם או קוד שגויים"; return render(); }
+        S.ui = {step:"recipient", pendingIdentity:{workerId: res.worker_id, name:row.name, token: res.token}};
         render();
       }catch(err){ ui.identifyError = "שגיאה: "+err.message; render(); }
     })();
@@ -4511,7 +4497,7 @@ function onAppClick(e){
   if(a==="pick-recipient"){
     const pend = ui.pendingIdentity;
     if(!pend) return render();
-    S.identity = {teamId: el.dataset.id, workerId: pend.workerId, name: pend.name, recipientLabel: el.dataset.label};
+    S.identity = {teamId: el.dataset.id, workerId: pend.workerId, name: pend.name, recipientLabel: el.dataset.label, token: pend.token || null};
     saveJSON("cst_identity", S.identity);
     S.ui = {step:"period"};
     return render();
@@ -4763,13 +4749,6 @@ function onAppClick(e){
                       : "✔ השיבוץ הידני נשמר. כדי שהעובדים יראו את הסידור — לחצו \"📢 פרסם סידור לעובדים\".";
     render(); window.scrollTo(0,0); return;
   }
-  if(a==="manual-toggle"){
-    const key = el.dataset.key;
-    ui.manualOpenSlot = (ui.manualOpenSlot===key) ? null : key;
-    return render();
-  }
-  if(a==="manual-close"){ ui.manualOpenSlot=null; return render(); }
-  if(a==="manual-save") return saveManualSlot(el.dataset.sector, el.dataset.date, el.dataset.type);
 
   // ---- admin ----
   if(a==="admin-pin-submit"){

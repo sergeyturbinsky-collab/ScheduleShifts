@@ -5125,7 +5125,8 @@ async function helpAsk(q){
         body: JSON.stringify({token: sess.token, who: role, question: q, history})});
       clearTimeout(tm);
       const j = res.ok ? await res.json().catch(()=>({})) : {};
-      if(!res.ok || (j.fallback && j.reason==="no key")) HELP.ai = false; // אין בוט AI בסביבה הזו (למשל בדמו) - לא מנסים שוב
+      // (2026-10-25) מכבים את הבוט רק כשהוא באמת לא קיים בסביבה הזו (אין פונקציה / אין מפתח). תקלה רגעית - מנסים שוב בשאלה הבאה
+      if(res.status===404 || (j.fallback && j.reason==="no key")) HELP.ai = false;
       if(j.answer){ HELP.msgs.push({h: helpMd(j.answer), p: j.answer}); done = true; }
     }catch(e){}
     HELP.busy = false;
