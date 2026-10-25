@@ -3764,6 +3764,33 @@ function mmLoad(App, ms, force){
   App.apiRpc("mgmt_msg_list", {p_token:ms.token}).then(d=>{ MM.data = d; MM.at = Date.now(); MM.loading = false; App.render(); })
     .catch(()=>{ MM.loading = false; MM.at = Date.now(); });
 }
+/* (2026-10-25, סרגיי: "שכלל המנהלים יוכלו לראות חילופים תלויים באוויר") - בקשות חילוף פתוחות בראש העמוד של כל מנהל.
+   הרשימה מתרעננת כל דקה (ובכל כניסה). מנהל מערכת / מנהל יחידה - כל הגזרות; כל השאר - הצוותים שלהם. */
+const SWO = { list:null, at:0, busy:false, tok:null };
+function swoLoad(App, ms, force){
+  if(!SWO.timer) SWO.timer = setInterval(()=>{ try{ const m = loadMgr(App); if(m && document.visibilityState==="visible") swoLoad(App, m); }catch(e){} }, 60000);
+  if(SWO.tok !== ms.token){ SWO.tok = ms.token; SWO.list = null; SWO.at = 0; }
+  if(SWO.busy || (!force && SWO.at && Date.now() - SWO.at < 60000)) return;
+  SWO.busy = true;
+  App.apiRpc("mgr_swap_list", {p_token: ms.token}).then(r=>{ const was = JSON.stringify(SWO.list); SWO.list = r||[]; SWO.at = Date.now(); SWO.busy = false; if(was !== JSON.stringify(SWO.list)) App.render(); })
+    .catch(()=>{ SWO.at = Date.now(); SWO.busy = false; if(SWO.list===null){ SWO.list = []; } });
+}
+function openSwapsHtml(App, list, withBtn){
+  const esc = App.escapeHtml;
+  return `<div class="portal-tasks">${list.map(r=>`<div class="portal-task">
+      <span class="portal-task-icon">🔁</span>
+      <span style="flex:1;"><b>${esc(r.worker_name)}</b> — ${App.fmtDateHeb(r.entry_date)} · ${esc(App.SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${esc(r.sector)}
+        <span class="muted" style="font-size:.85em;display:block;">${r.requested_by_kind==="w"?"ביקש בעצמו":"נפתח ע\"י "+esc(r.requested_by_name||"מנהל")}${r.note?` · ${esc(r.note)}`:""}</span></span></div>`).join("")}</div>
+    ${withBtn?`<button class="btn small" data-action="portal-pv" data-page="swap-mgr" style="margin-top:8px;">לטיפול בבקשות</button>`:""}`;
+}
+function openSwapsCard(App, ms){
+  swoLoad(App, ms);
+  const list = SWO.list || [];
+  if(!list.length) return "";
+  return `<div class="card" style="border:2px solid #e8590c;background:#fff4e6;">
+    <h3 style="margin:0 0 6px;">🔁 חילופים פתוחים — מחפשים מחליף (${list.length})</h3>
+    ${openSwapsHtml(App, list, true)}</div>`;
+}
 function renderMsgCard(App, ms){
   mmLoad(App, ms);
   const isMg = MM.token===ms.token && MM.data && MM.data.is_mgmt;
@@ -3977,7 +4004,10 @@ function renderPView(App){
       App.apiRpc("swap_history", {p_sectors: secs, p_from: App.fmtDate(App.addDays(new Date(), -60)), p_to: App.fmtDate(App.addDays(new Date(), 90))})
         .then(r=>{ H.list = (r||[]).slice().sort((x,y)=>String(y.entry_date).localeCompare(String(x.entry_date))); App.render(); }).catch(()=>{ H.list = []; App.render(); }); }
     if(H.list==="loading") return loading();
-    return wrap(`<h2>📜 היסטוריית החלפות</h2><p class="muted" style="margin-top:-6px;">החלפות שבוצעו בחודשיים האחרונים ובסידורים הבאים, מהחדש לישן.</p>
+    swoLoad(App, ms);
+    const openNow = SWO.list || [];
+    return wrap(`${openNow.length ? `<h2>🔁 חילופים פתוחים — מחפשים מחליף (${openNow.length})</h2>${openSwapsHtml(App, openNow, true)}<hr style="border:none;border-top:1px solid #e3e9f0;margin:14px 0;">` : `<p class="muted">אין כרגע חילופים פתוחים.</p>`}
+      <h2>📜 היסטוריית החלפות</h2><p class="muted" style="margin-top:-6px;">החלפות שבוצעו בחודשיים האחרונים ובסידורים הבאים, מהחדש לישן.</p>
       ${H.list.length ? `<div class="portal-tasks">${H.list.map(r=>`<div class="portal-task"><span class="portal-task-icon">✔</span>
         <span style="flex:1;">${App.fmtDateHeb(r.entry_date)} · ${esc(App.SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${esc(r.sector)}: ${esc(r.from_name)} ← <b>${esc(r.to_name||"")}</b>
         <span class="muted" style="font-size:.85em;display:block;">${r.by_kind==="m"?"סומן ע\"י "+esc(r.by_name||""):"לקח בעצמו"}</span></span></div>`).join("")}</div>` : `<p class="muted">אין החלפות בתקופה הזו.</p>`}`);
@@ -4754,7 +4784,8 @@ function renderManagerHome(App, ms){
   }
   const names = ts=>esc(ts.map(t=>(t.sectors&&t.sectors.length)?t.sectors.join(" / "):t.name).join(" · "));
   const schedU = ms.is_admin ? sched.filter(t=>!App.isMokedTeam(t)) : sched;
-  const mainHtml = `  ${renderMsgCard(App, ms)}
+  const mainHtml = `  ${openSwapsCard(App, ms)}
+  ${renderMsgCard(App, ms)}
   ${(logi.length || ms.is_admin) ? `<div class="card">
     <h3>🚨 דו"ח אירוע חריג</h3>
     <div class="inc-sec-h"><span class="sayvu-badge">SAYVU</span> אירועי SAYVU מהמוקד — תחקיר אירוע חריג</div>
@@ -4925,6 +4956,7 @@ function resetUserState(){
   HELP.msgs = []; HELP.draft = ""; HELP.ai = null;
   N.state = null; MN.state = null; HB.pending = false; HB.fresh = false;
   EQM.edit = null; EQM.statusSel = null; EQM.statusFor = null; EQM.workers = null;
+  SWO.list = null; SWO.at = 0; SWO.tok = null;
   USER_GEN++;
 }
 // who: "w" = עובדים (מאבטח/מוקדן), "m" = מנהלים/קב"טים, "a" = כולם
@@ -5248,7 +5280,7 @@ function onClick(App, a, el){
     const noteEl = document.getElementById("swapmNote");
     PV.busy = true; PV.error = null; App.render();
     return App.apiRpc("mgr_swap_request", {p_token:ms.token, p_sector:sector, p_date:date, p_shift_type:shiftType, p_worker_id:workerId, p_note: noteEl?noteEl.value:""})
-      .then(()=>{ PV.busy = false; PV.msg = "בקשת החילוף נשמרה."; S2.sel = null; S2.list = null; S2.listAt = 0; App.render(); })
+      .then(()=>{ PV.busy = false; PV.msg = "בקשת החילוף נשמרה."; S2.sel = null; S2.list = null; S2.listAt = 0; SWO.at = 0; App.render(); })
       .catch(e=>{ PV.busy = false; PV.error = e.message; App.render(); });
   }
   if(a==="portal-swapm-handle"){
@@ -5262,12 +5294,12 @@ function onClick(App, a, el){
     if(!S2.hsel){ PV.error = "יש לבחור מי החליף"; PV.msg = null; return App.render(); }
     PV.busy = true; PV.error = null; App.render();
     return App.apiRpc("mgr_swap_resolve", {p_token:ms.token, p_id:el.dataset.id, p_new_worker:S2.hsel})
-      .then(r=>{ PV.busy = false; PV.msg = `טופל — ${r && r.new_worker ? r.new_worker + " שובץ במשמרת, והסידור עודכן." : "הסידור עודכן."}`; S2.handle = null; S2.list = null; S2.listAt = 0; S2.hist = undefined; S2.rows = null; App.render(); })
+      .then(r=>{ PV.busy = false; PV.msg = `טופל — ${r && r.new_worker ? r.new_worker + " שובץ במשמרת, והסידור עודכן." : "הסידור עודכן."}`; S2.handle = null; S2.list = null; S2.listAt = 0; SWO.at = 0; S2.hist = undefined; S2.rows = null; App.render(); })
       .catch(e=>{ PV.busy = false; PV.error = e.message; App.render(); });
   }
   if(a==="portal-swapm-cancel"){
     const ms = loadMgr(App); if(!ms) return App.render();
-    return App.apiRpc("mgr_swap_cancel", {p_token:ms.token, p_id:el.dataset.id}).then(()=>{ if(PV.swap){ PV.swap.list = null; PV.swap.listAt = 0; } PV.msg = "הבקשה בוטלה."; App.render(); }).catch(e=>{ PV.error = e.message; App.render(); });
+    return App.apiRpc("mgr_swap_cancel", {p_token:ms.token, p_id:el.dataset.id}).then(()=>{ if(PV.swap){ PV.swap.list = null; PV.swap.listAt = 0; } SWO.at = 0; PV.msg = "הבקשה בוטלה."; App.render(); }).catch(e=>{ PV.error = e.message; App.render(); });
   }
   if(a==="portal-mgr-push-enable"){ const ms = loadMgr(App); if(ms && !MN.busy) enableMgrPush(App, ms); return; }
   if(a==="portal-full-schedule"){ const ss = loadSession(App); if(!ss) return App.render(); S.view = "mgrview"; S.ui = {teamId: ss.team_id, workerView: true}; return App.render(); }
