@@ -2537,6 +2537,18 @@ function renderKabatUpdates(App, ms){
 const ONB_KEYS = ["general","training","kabat","moked","weapon","logistics"];
 function onbStations(App, w){
   const t = App.teamById(w.team_id) || {};
+  /* חיפה (2026-10-25, סרגיי - "אלו הרובריקות הסופיות"): 3 משמרות חפיפה, לכל אחת תאריך ביצוע וחונך */
+  if((t.sectors||[]).includes("חיפה")) return [
+    {key:"general",   who:"קב\"ט הגזרה", what:"שיחה כללית"},
+    {key:"kabat",     who:"קב\"ט / אחמ\"ש / ישראל ב.", what:"נהלים והכרת הגזרה"},
+    {key:"moked",     who:"קב\"ט / אחמ\"ש", what:"מוקד ומכשירים"},
+    {key:"weapon",    who:"מנהל חדר נשק", what:"חתימה על נשק"},
+    {key:"driver",    who:"קצין רכב", what:"פתיחת תיק נהג + תדריך בטיחות"},
+    {key:"logistics", who:"קב\"ט / אחמ\"ש", what:"ציוד לוגיסטי"},
+    {key:"shadow1",   who:"אחמ\"ש", what:"חפיפה + יציאה לשטח — משמרת 1", shift:true},
+    {key:"shadow2",   who:"אחמ\"ש", what:"חפיפה + יציאה לשטח — משמרת 2", shift:true},
+    {key:"shadow3",   who:"אחמ\"ש", what:"חפיפה + יציאה לשטח — משמרת 3", shift:true}
+  ];
   const jlm = (t.sectors||[]).some(s=>s==="ירושלים" || s==="סובב ירושלים");
   return [
     {key:"general",   who:"שיחה כללית", what:"היכרות ותיאום ציפיות"},
@@ -2547,7 +2559,10 @@ function onbStations(App, w){
     {key:"logistics", who:"ניר חטבי", what:"ציוד לוגיסטי"}
   ];
 }
-function onbDone(w){ return (w.items||[]).filter(i=>i.done).length; }
+// כמה תחנות הושלמו / כמה יש - לפי התחנות של הגזרה של העובד (בחיפה 9, בשאר 6)
+function onbKeys(App, w){ return onbStations(App, w).map(s=>s.key); }
+function onbDone(w, App){ const ks = App ? onbKeys(App, w) : ONB_KEYS; return (w.items||[]).filter(i=>i.done && ks.includes(i.key)).length; }
+function onbTotal(w, App){ return App ? onbStations(App, w).length : ONB_KEYS.length; }
 /* קליטת עובד חדש גם אצל קב"ט גזרתי (2026-10-25, סרגיי: "אותה רובריקה עם אותן פונקציות גם אצל אלירן ועידן") -
    אותו מסך בדיוק, לעובדים של הגזרה שלו. ההרשאה בשרת: managers.can_onboarding (onb_access / onb_scope). */
 const ONBK = { tok:null, ok:null, list:null, at:0, busy:false };
@@ -2565,7 +2580,7 @@ function onbKabatTile(App, ms){
   onbKabatLoad(App, ms);
   if(!ONBK.ok) return "";
   const l = ONBK.list || [];
-  const notDone = l.filter(w=>onbDone(w)<ONB_KEYS.length).length;
+  const notDone = l.filter(w=>onbDone(w, App)<onbTotal(w, App)).length;
   const waitKabat = l.filter(w=>!(w.items||[]).some(i=>i.key==="kabat" && i.done)).length;
   return `<div class="team-tile" data-action="portal-pv" data-page="trn-onboarding"${notDone?' data-open="1"':""}${waitKabat?' style="border-color:#b42318;"':""}>
     <div style="font-size:1.1em;font-weight:700;">🆕 קליטת עובד חדש${notDone?` (${notDone})`:""}</div>
@@ -2597,8 +2612,8 @@ function renderIsraelDashboard(App, ms){
   const res = I.data.res || {new_count:0, results:[]};
   const trs = ov.trainings||[];
   const progs = ov.programs||[];
-  const notDoneOnb = onb.filter(w=>onbDone(w)<ONB_KEYS.length).length;
-  const waitTraining = onb.filter(w=>!(w.items||[]).some(i=>i.key==="training" && i.done)).length;
+  const notDoneOnb = onb.filter(w=>onbDone(w, App)<onbTotal(w, App)).length;
+  const waitTraining = onb.filter(w=>onbKeys(App, w).includes("training") && !(w.items||[]).some(i=>i.key==="training" && i.done)).length;
   /* משימות פתוחות של ישראל (2026-10-08): התחנה שלו בקליטת עובד חדש, והדרכות שעוד לא כל המאבטחים עברו.
      משימה שהושלמה נשארת עם ✔ (כמו אצל המאבטחים). */
   const tasks = [];
@@ -4398,15 +4413,18 @@ function renderPView(App){
     if(!w) return wrap(`<p class="muted">העובד לא נמצא.</p>`);
     const items = {}; (w.items||[]).forEach(i=>items[i.key]=i);
     return wrap(`<h2>${esc(w.name)}</h2>
-      <p class="muted">${esc(workerSector(App,w))} · ${onbDone(w)}/${ONB_KEYS.length} תחנות הושלמו</p>${msgs}
-      <table><thead><tr><th style="text-align:right;">עם מי</th><th style="text-align:right;">נושא</th><th>מועד מתואם</th><th>בוצע</th><th style="text-align:right;">הערה</th><th></th></tr></thead><tbody>
-      ${onbStations(App, w).map(s=>{ const it = items[s.key]||{}; return `<tr>
+      <p class="muted">${esc(workerSector(App,w))} · ${onbDone(w, App)}/${onbTotal(w, App)} תחנות הושלמו</p>${msgs}
+      <table><thead><tr><th style="text-align:right;">עם מי</th><th style="text-align:right;">נושא</th><th>מועד מתואם / תאריך ביצוע</th><th>בוצע</th><th style="text-align:right;">הערה / חונך</th><th></th></tr></thead><tbody>
+      ${onbStations(App, w).map(s=>{ const it = items[s.key]||{}; return `<tr${s.shift?' style="background:#f5f9ff;"':""}>
         <td style="text-align:right;">${esc(s.who)}</td><td style="text-align:right;">${esc(s.what)}</td>
-        <td><input type="datetime-local" id="onb_at_${s.key}" value="${toLocalInput(it.scheduled_at)}"></td>
+        <td>${s.shift ? `<label class="muted" style="font-size:.8em;display:block;">תאריך ביצוע</label><input type="date" id="onb_at_${s.key}" value="${toLocalInput(it.scheduled_at).slice(0,10)}">`
+                      : `<input type="datetime-local" id="onb_at_${s.key}" value="${toLocalInput(it.scheduled_at)}">`}</td>
         <td><input type="checkbox" id="onb_done_${s.key}" ${it.done?"checked":""}></td>
-        <td><input type="text" id="onb_note_${s.key}" value="${esc(it.note||"")}" maxlength="300" style="width:160px;"></td>
+        <td>${s.shift ? `<label class="muted" style="font-size:.8em;display:block;">חונך</label><input type="text" id="onb_note_${s.key}" value="${esc(it.note||"")}" maxlength="300" style="width:160px;" list="onb_mentors" placeholder="שם החונך">`
+                      : `<input type="text" id="onb_note_${s.key}" value="${esc(it.note||"")}" maxlength="300" style="width:160px;">`}</td>
         <td><button class="btn small" data-action="portal-onb-save" data-key="${s.key}">${s.key==="training"?"לתאם הדרכה":"שמור"}</button></td></tr>`; }).join("")}
-      </tbody></table>`);
+      </tbody></table>
+      <datalist id="onb_mentors">${(PV.data.r||[]).filter(x=>x.team_id===w.team_id && x.id!==w.id).map(x=>`<option value="${esc(x.name)}">`).join("")}</datalist>`);
   }
   if(pg==="trn-controls" || pg==="k-controls"){
     if(needLoad(pg==="k-controls"?"kabat_controls_list":"trn_controls_list", {p_token:tok})) return loading();
@@ -4686,7 +4704,7 @@ function onbListHtml(App){
   const esc = App.escapeHtml;
   const all = (PV.data && PV.data.r) || [];
   const q = PV.filter.trim();
-  const ws = all.filter(w=> (!PV.onlyOpen || onbDone(w)<ONB_KEYS.length) && (!q || matches(w.name, q)));
+  const ws = all.filter(w=> (!PV.onlyOpen || onbDone(w, App)<onbTotal(w, App)) && (!q || matches(w.name, q)));
   if(!ws.length) return `<p class="muted">אין עובדים להצגה.</p>`;
   // מחולק לפי קב"טים, כמו עמוד Pro-Riding (לבקשת סרגיי, 2026-10-08)
   const groups = {};
@@ -4698,11 +4716,11 @@ function onbListHtml(App){
       const next = (w.items||[]).filter(i=>!i.done && i.scheduled_at).sort((x,y)=>String(x.scheduled_at).localeCompare(String(y.scheduled_at)))[0];
       const st = next ? onbStations(App, w).find(s=>s.key===next.key) : null;
       return `<tr><td style="text-align:right;">${esc(w.name)}</td><td style="text-align:right;">${esc(workerSector(App,w))}</td>
-        <td>${onbDone(w)}/${ONB_KEYS.length}</td><td style="text-align:right;">${next?`${fmtDT(App,next.scheduled_at)} · ${esc(st?st.who:"")}`:'<span class="muted">—</span>'}</td>
+        <td>${onbDone(w, App)}/${onbTotal(w, App)}</td><td style="text-align:right;">${next?`${fmtDT(App,next.scheduled_at)} · ${esc(st?st.who:"")}`:'<span class="muted">—</span>'}</td>
         <td style="white-space:nowrap;"><button class="btn small" data-action="portal-pv" data-page="trn-onb-worker" data-id="${w.id}">לתאם הדרכה / חפיפה</button>
-          ${onbDone(w)>=ONB_KEYS.length
+          ${onbDone(w, App)>=onbTotal(w, App)
             ? `<span class="portal-task-icon done" style="margin-inline-start:6px;">✔</span> הושלם <button class="btn small secondary" data-action="portal-onb-complete" data-id="${w.id}" data-done="0">בטל</button>`
-            : `<button class="btn small ok" data-action="portal-onb-complete" data-id="${w.id}" data-done="1" title="מסמן את כל 6 התחנות כבוצעו">✔ בוצע</button>`}</td></tr>`;
+            : `<button class="btn small ok" data-action="portal-onb-complete" data-id="${w.id}" data-done="1" title="מסמן את כל התחנות כבוצעו">✔ בוצע</button>`}</td></tr>`;
     }).join("")}</tbody></table>`).join("");
 }
 
@@ -4968,7 +4986,7 @@ async function trnAction(App, a, el){
       const k = el.dataset.key;
       const at = document.getElementById("onb_at_"+k).value;
       await App.apiRpc("trn_onboarding_set", {p_token:tok, p_worker_id:PV.args.id, p_item_key:k,
-        p_scheduled_at: at ? new Date(at).toISOString() : null, p_done: document.getElementById("onb_done_"+k).checked,
+        p_scheduled_at: at ? new Date(at.length===10 ? at + "T12:00" : at).toISOString() : null, p_done: document.getElementById("onb_done_"+k).checked,
         p_note: document.getElementById("onb_note_"+k).value});
       PV.data = null; I.data = null; ONBK.ok = null; PV.msg = "נשמר."; PV.error = null; return App.render();
     }
