@@ -288,7 +288,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=150"></script>
+<script src="portal.js?v=151"></script>
 <script>
 (function(){
 "use strict";
@@ -1658,6 +1658,8 @@ async function loadAggregateData(team){
     try{
       const tdates = periodDates(ui.periodStart, team);
       ui.schedTasks = group.citySectors.length ? await apiRpc("sched_tasks_list", {p_sectors: group.citySectors, p_from: tdates[0], p_to: tdates[tdates.length-1]}) : [];
+      // (2026-10-25, סרגיי) עובד שפותח את "הסידור המלא" רואה רק את המשימות (שאינן משמרת) שלו עצמו
+      if(ui.workerView) ui.schedTasks = (ui.schedTasks||[]).filter(t=>ui.viewerWorkerId && t.worker_id===ui.viewerWorkerId);
       try{ ui.schedTaskRows = group.citySectors.length ? await apiRpc("sched_task_rows_list", {p_sectors: group.citySectors, p_from: tdates[0], p_to: tdates[tdates.length-1]}) : []; }catch(e){ ui.schedTaskRows = []; }
     }catch(e){ ui.schedTasks = []; }
     // חופשה / מילואים / מחלה של עובדי הגזרה בתקופה (2026-10-25) - רק עם הרשאת עריכה
