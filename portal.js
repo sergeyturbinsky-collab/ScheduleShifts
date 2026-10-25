@@ -3536,6 +3536,108 @@ async function todoAction(App, a, el){
 }
 
 /* ================================================================
+   משימה למוקד (2026-10-25, סרגיי): באיזור האישי, בתוך "מוקד" - שולחים משימה לאפליקציית המוקד: מה לעשות, מתי
+   ולמי (כל המוקד / מוקדן / אחמ"ש). במוקד קופצת מיד הודעה "משימה חדשה" עם צליל, ובזמן הביצוע - תזכורת.
+   כשהמוקד מסמן "בוצע" - מגיעה התראה לטלפון (push_outbox). המוקד עצמו יכול גם להשאיר משימה למשמרת הבאה.
+   השרת (בפרויקט moked-tracker: moked-app/server/run-2026-10-25-tasks.sql): rpc_moked_task_add / _sent / _remove.
+   ================================================================ */
+const MT = { data:null, loading:false, token:null, form:null, busy:false, error:null, msg:null, delAsk:null, missing:false };
+function mtLoad(App, ms, force){
+  if(MT.token !== ms.token){ MT.token = ms.token; MT.data = null; MT.form = null; MT.missing = false; }
+  if(MT.loading || MT.missing || (MT.data && !force)) return;
+  MT.loading = true;
+  App.apiRpc("rpc_moked_task_sent", {p_token:ms.token}).then(d=>{ MT.data = Array.isArray(d) ? d : []; MT.loading = false; App.render(); })
+    .catch(e=>{ MT.loading = false; MT.data = [];
+      if(/rpc_moked_task_sent|Could not find the function/i.test(e.message)) MT.missing = true; else MT.error = e.message;
+      App.render(); });
+}
+function mtSync(){
+  if(!MT.form) return;
+  ["title","note","date","time","role"].forEach(k=>{ const x = document.getElementById("mt_"+k); if(x) MT.form[k] = x.value; });
+}
+function mtWhen(d){ const p = n=>String(n).padStart(2,"0"); return {date:`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`, time:`${p(d.getHours())}:${p(d.getMinutes())}`}; }
+function renderMokedTaskCard(App, ms){
+  mtSync();   // רענון של המסך לא מוחק מה שכבר הוקלד בטופס
+  mtLoad(App, ms);
+  const esc = App.escapeHtml, f = MT.form, RL = {all:"כל המוקד", disp:"מוקדן", lead:'אחמ"ש'};
+  const style = `<style>
+    .mt-row{display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);}
+    .mt-row.off{color:var(--muted);}
+    .mt-chip{display:inline-block;font-size:.8em;background:#eef3fa;border-radius:10px;padding:1px 8px;margin:3px 0 0 6px;}
+    .mt-form{background:#f6fbff;border:1px solid var(--border);border-radius:10px;padding:10px;margin:8px 0;}
+  </style>`;
+  if(MT.missing) return `${style}<div class="card"><h3 style="margin:0;">📨 משימה למוקד</h3>
+    <p class="muted" style="margin:6px 0 0;">כדי לשלוח משימות למוקד צריך להריץ פעם אחת את קובץ העדכון <b dir="ltr">run-2026-10-25-tasks.sql</b> ב-Supabase.</p></div>`;
+  const list = MT.data || [];
+  const st = t=> t.removed_at ? `<span class="mt-chip">🗑 בוטלה</span>`
+    : t.done_at ? `<span class="mt-chip" style="background:#e3f4e8;color:#1b7f3b;font-weight:600;">✅ בוצעה ${esc(fmtDT(App, t.done_at))}${t.done_by?` · ${esc(t.done_by)}`:""}</span>`
+    : `<span class="mt-chip" style="background:#fff3cd;color:#7a5200;font-weight:600;">⏳ ממתינה במוקד</span>`;
+  const form = f ? `<div class="mt-form">
+      <div class="field"><label>מה המוקד צריך לעשות</label><input type="text" id="mt_title" maxlength="300" value="${esc(f.title||"")}" placeholder="למשל: לבדוק מול קב&quot;ט באר שבע למה אין סידור לשבוע הבא"></div>
+      <div class="field"><label>פרטים <span class="muted">(לא חובה)</span></label><textarea id="mt_note" rows="2" maxlength="2000">${esc(f.note||"")}</textarea></div>
+      <div class="row">
+        <div class="field"><label>תאריך</label><input type="date" id="mt_date" value="${esc(f.date||"")}"></div>
+        <div class="field"><label>שעה</label><input type="time" id="mt_time" value="${esc(f.time||"")}">
+          <span class="backlink" style="margin:4px 0 0;" data-action="portal-mt-now">⚡ לביצוע עכשיו</span></div>
+        <div class="field"><label>למי במוקד</label><select id="mt_role">${["all","disp","lead"].map(r=>`<option value="${r}"${(f.role||"all")===r?" selected":""}>${RL[r]}</option>`).join("")}</select></div>
+      </div>
+      <p class="muted" style="font-size:.82em;margin:0 0 6px;">במוקד המשימה קופצת מיד עם צליל, ושוב בשעה שנבחרה — במשמרת שבה היא צריכה להתבצע. כשהמוקד מסמן "בוצע" תגיע אליך התראה.</p>
+      ${MT.error ? `<p class="shortage">${esc(MT.error)}</p>` : ""}
+      <div class="flexbar" style="gap:6px;">
+        <button class="btn ok" data-action="portal-mt-send" ${MT.busy?"disabled":""}>${MT.busy?"שולח...":"📨 שליחה למוקד"}</button>
+        <button class="btn secondary" data-action="portal-mt-cancel">ביטול</button>
+      </div></div>` : "";
+  const row = t=>{ const off = t.done_at || t.removed_at;
+    return `<div class="mt-row${off?" off":""}"><div style="flex:1;min-width:0;">
+      <div style="font-weight:600;">${off&&t.removed_at?`<s>${esc(t.title)}</s>`:esc(t.title)}</div>
+      ${t.note?`<div class="muted" style="font-size:.86em;white-space:pre-wrap;">${esc(t.note)}</div>`:""}
+      <div>${st(t)}<span class="mt-chip">🕒 ${esc(fmtDT(App, t.due_at))}</span><span class="mt-chip">👤 ${esc(RL[t.role]||"")}</span></div></div>
+      ${off ? "" : (MT.delAsk===t.id ? `<span style="white-space:nowrap;"><button class="btn small" style="background:#b42318;border-color:#b42318;" data-action="portal-mt-del" data-id="${t.id}">לבטל</button> <button class="btn small secondary" data-action="portal-mt-del-no">לא</button></span>`
+        : `<button class="btn small secondary" data-action="portal-mt-del-ask" data-id="${t.id}" title="ביטול המשימה במוקד">ביטול</button>`)}
+    </div>`; };
+  const openN = list.filter(t=>!t.done_at && !t.removed_at).length;
+  return `${style}<div class="card">
+    <div class="flexbar" style="justify-content:space-between;">
+      <h3 style="margin:0;">📨 משימה למוקד${openN?` <span class="muted" style="font-size:.8em;font-weight:400;">(${openN} ממתינות)</span>`:""}</h3>
+      <span>${f ? "" : `<button class="btn small" data-action="portal-mt-new">➕ משימה חדשה למוקד</button>`} <button class="btn small secondary" data-action="portal-mt-refresh" title="רענון הסטטוס">🔄</button></span>
+    </div>
+    <p class="muted" style="font-size:.82em;margin:4px 0 0;">המשימה מופיעה באפליקציית המוקד ("✅ משימות") וקופצת שם עם צליל. כאן רואים אם בוצעה ומי ביצע.</p>
+    ${MT.msg ? `<p style="color:#1b7f3b;font-weight:600;margin:6px 0 0;">${esc(MT.msg)}</p>` : ""}
+    ${form}
+    ${!f && MT.error ? `<p class="shortage">${esc(MT.error)}</p>` : ""}
+    ${MT.data===null ? `<p class="muted">טוען...</p>` : list.length ? list.map(row).join("") : (f ? "" : `<p class="muted" style="margin:8px 0 0;">עוד לא נשלחו משימות למוקד בשבועיים האחרונים.</p>`)}
+  </div>`;
+}
+async function mtAction(App, a, el){
+  const ms = loadMgr(App); if(!ms) return;
+  const id = el && el.dataset ? el.dataset.id : null;
+  if(a==="portal-mt-new"){ const d = new Date(Date.now()+30*60000); d.setMinutes(Math.ceil(d.getMinutes()/15)*15, 0, 0); MT.form = Object.assign({role:"all"}, mtWhen(d)); MT.error = null; MT.msg = null; App.render(); const x = document.getElementById("mt_title"); if(x) x.focus(); return; }
+  if(a==="portal-mt-cancel"){ MT.form = null; MT.error = null; return App.render(); }
+  if(a==="portal-mt-now"){ mtSync(); Object.assign(MT.form, mtWhen(new Date())); return App.render(); }
+  if(a==="portal-mt-refresh"){ MT.error = null; mtLoad(App, ms, true); return App.render(); }
+  if(a==="portal-mt-del-ask"){ MT.delAsk = id; return App.render(); }
+  if(a==="portal-mt-del-no"){ MT.delAsk = null; return App.render(); }
+  if(MT.busy) return;
+  try{
+    if(a==="portal-mt-send"){
+      mtSync(); const f = MT.form;
+      if(!(f.title||"").trim()){ MT.error = "צריך לכתוב מה המשימה"; return App.render(); }
+      if(!f.date || !f.time){ MT.error = "בחרו תאריך ושעה לביצוע"; return App.render(); }
+      const due = new Date(f.date+"T"+f.time);
+      if(isNaN(due)){ MT.error = "התאריך או השעה לא תקינים"; return App.render(); }
+      if(due.getTime() < Date.now() - 10*60000){ MT.error = "הזמן שנבחר כבר עבר — בחרו זמן עתידי (או \"לביצוע עכשיו\")"; return App.render(); }
+      MT.busy = true; MT.error = null; App.render();
+      await App.apiRpc("rpc_moked_task_add", {p_token:ms.token, p_title:f.title.trim(), p_note:(f.note||"").trim()||null, p_due_at:due.toISOString(), p_has_time:true, p_role:f.role||"all", p_by:null});
+      MT.form = null; MT.msg = "✅ המשימה נשלחה למוקד"; setTimeout(()=>{ MT.msg = null; App.render(); }, 6000);
+    }
+    else if(a==="portal-mt-del"){ MT.busy = true; MT.delAsk = null; await App.apiRpc("rpc_moked_task_remove", {p_token:ms.token, p_id:id, p_by:null}); }
+    MT.busy = false; MT.error = null;
+    mtLoad(App, ms, true);
+  }catch(e){ MT.busy = false; MT.error = /session expired/i.test(e.message) ? "פג תוקף ההתחברות — צריך להתחבר מחדש" : e.message; }
+  App.render();
+}
+
+/* ================================================================
    סטטוס התחברות משתמשים (2026-10-21, סרגיי): לסרגיי בלבד - לכל מאבטח/מוקדן ולכל מנהל: מחובר עכשיו (יש סשן
    בתוקף), התראות פעילות, כניסה אחרונה ומספר כניסות. השרת: admin_login_status (רישום כניסות: user_logins).
    ================================================================ */
@@ -4873,13 +4975,14 @@ function renderManagerHome(App, ms){
         <div class="team-tile" data-action="portal-pv" data-page="swap-mgr"><div style="font-size:1.1em;font-weight:700;">🔁 מבקש חילוף</div><div class="muted" style="font-size:.85em;margin-top:4px;">בקשות חילוף ופתיחת בקשה</div></div>
         ${areqMgrTile(App, ms)}
       </div>
-    </div>`;
+    </div>
+    ${renderMokedTaskCard(App, ms)}`;
   }
   const big = (s, icon, title, sub)=>`<div class="team-tile mh-big" data-action="portal-mh-section" data-s="${s}"><div style="font-size:2em;">${icon}</div><div style="font-size:1.25em;font-weight:800;margin-top:4px;">${title}</div><div class="muted" style="font-size:.88em;margin-top:4px;">${sub}</div></div>`;
   return `${head}
   <style>.mh-big{text-align:center;padding:22px 12px;} @media (max-width:520px){ .mh-big{padding:16px 8px;} }</style>
   <div class="grid-teams" style="grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:12px;">
-    ${big("moked", "📡", "מוקד", "סידור המוקד, עובדי המוקד, חילופים ובקשות")}
+    ${big("moked", "📡", "מוקד", "סידור המוקד, עובדי המוקד, חילופים, בקשות ומשימות למוקד")}
     ${big("unit", "🏢", "ניהול היחידה", "גזרות, אירועים, דוחות, לוגיסטי, הודעות וניהול")}
   </div>
   <div class="team-tile" data-action="portal-pv" data-page="login-status" style="margin-bottom:12px;text-align:center;"><div style="font-size:1.15em;font-weight:800;">🟢 סטטוס מחוברים</div><div class="muted" style="font-size:.85em;margin-top:4px;">מי התחבר למערכת, לפי גזרות — מחוברים, התראות וכניסה אחרונה</div></div>
@@ -5447,6 +5550,7 @@ function onClick(App, a, el){
   if(a==="portal-ls-jump"){ const d = document.getElementById("ls-g"+el.dataset.i); if(d){ d.open = true; d.scrollIntoView({behavior:"smooth", block:"start"}); } return; }
   if(a==="portal-ls-openall"){ LS.openAll = !LS.openAll; return App.render(); }
   if(a.indexOf("portal-todo-")===0) return todoAction(App, a, el);
+  if(a.indexOf("portal-mt-")===0) return mtAction(App, a, el);
   if(a.indexOf("portal-wtodo-")===0) return workerTodoAction(App, a, el);
   if(a.indexOf("portal-inc-")===0) return incClick(App, a, el);
   if(a.indexOf("portal-cal-")===0 || a.indexOf("portal-calw-")===0) return calClick(App, a, el);
