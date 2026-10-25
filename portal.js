@@ -1480,6 +1480,22 @@ const AREQ_DOCS = { vacation:[["vacation_doc","מסמך תומך (אם יש)"]],
   reserve:[["reserve_order","צו מילואים"],["form3010","טופס 3010 (אישור על שירות מילואים)"]],
   sick:[["sick_note","אישור מחלה"]] };
 const AREQ_DOCNAME = { vacation_doc:"מסמך תומך", reserve_order:"צו מילואים", form3010:"טופס 3010", sick_note:"אישור מחלה", other:"מסמך" };
+/* (2026-10-25, סרגיי) סוגי הבקשות נטענים מהשרת (areq_kinds) - הקב"ט יכול להוסיף סוגים ולשנות שמות.
+   לסוג שהקב"ט הוסיף - מסמך כללי (אם יש). סוג מוסתר לא מוצג בטופס, אבל בקשות קיימות שלו ממשיכות להופיע. */
+const AREQ_KLOAD = { at:0, busy:false };
+function areqLoadKinds(App, force){
+  if(AREQ_KLOAD.busy || (!force && AREQ_KLOAD.at && Date.now()-AREQ_KLOAD.at < 300000)) return;
+  AREQ_KLOAD.busy = true;
+  App.apiRpc("areq_kinds_list", {}).then(list=>{
+    (list||[]).forEach(k=>{ const old = AREQ_KINDS[k.key] || {}; AREQ_KINDS[k.key] = {label:k.label, icon:k.icon||"📝", sub:old.sub || "", active:k.active!==false, builtin:!!k.builtin}; });
+    AREQ_KLOAD.at = Date.now(); AREQ_KLOAD.busy = false; App.render();
+  }).catch(()=>{ AREQ_KLOAD.at = Date.now(); AREQ_KLOAD.busy = false; });
+}
+function areqDocsFor(kind){ return AREQ_DOCS[kind] || [["other","מסמך (אם יש)"]]; }
+function areqKindOptions(App, sel, includeInactive){
+  return Object.keys(AREQ_KINDS).filter(k=>includeInactive || AREQ_KINDS[k].active!==false || k===sel)
+    .map(k=>`<option value="${App.escapeHtml(k)}" ${k===sel?"selected":""}>${AREQ_KINDS[k].icon||""} ${App.escapeHtml(AREQ_KINDS[k].label)}</option>`).join("");
+}
 const AREQ_STATUS = { pending:"⏳ ממתינה לאישור", approved:"✅ אושרה", rejected:"❌ נדחתה", cancelled:"🚫 בוטלה ע\"י העובד" };
 function areqDates(r){ const f = d=>{ const [y,m,dd] = String(d||"").split("-"); return `${dd}/${m}/${y}`; }; return r.date_from===r.date_to ? f(r.date_from) : `${f(r.date_from)} – ${f(r.date_to)}`; }
 function areqDays(r){ return Math.round((new Date(r.date_to) - new Date(r.date_from)) / 864e5) + 1; }
@@ -1529,7 +1545,7 @@ function areqLoadMine(App, session){
 }
 function renderAdminReqWorker(App, session){
   const esc = App.escapeHtml;
-  areqLoadMine(App, session);
+  areqLoadMine(App, session); areqLoadKinds(App);
   const moked = isMokedWorker(App, session);
   if(AREQ.view){
     const r = AREQ.view;
@@ -1542,7 +1558,7 @@ function renderAdminReqWorker(App, session){
       <h4 style="margin:14px 0 4px;">📎 מסמכים</h4>
       ${AREQ.vfiles===null ? `<p class="muted">טוען...</p>` : areqDocsHtml(App, AREQ.vfiles)}
       ${r.status!=="rejected" && r.status!=="cancelled" ? `<div class="dmg-sub" style="margin-top:10px;"><b>➕ הוספת מסמך</b>${r.kind==="reserve"?`<p class="muted" style="margin:4px 0;">את טופס 3010 מוסיפים כאן בסוף המילואים.</p>`:""}
-        ${(AREQ_DOCS[r.kind]||[]).map(([dk,dl])=>`<div style="margin-top:6px;"><span style="font-weight:600;">${dl}</span> ${areqPick("portal-areq-addfile", dk)}</div>`).join("")}</div>` : ""}
+        ${areqDocsFor(r.kind).map(([dk,dl])=>`<div style="margin-top:6px;"><span style="font-weight:600;">${dl}</span> ${areqPick("portal-areq-addfile", dk)}</div>`).join("")}</div>` : ""}
       ${AREQ.busy ? `<p class="muted">${esc(AREQ.msg||"מעלה...")}</p>` : ""}${AREQ.error?`<p class="shortage">${esc(AREQ.error)}</p>`:""}${AREQ.okMsg?`<p style="color:#1b7f3b;font-weight:700;">${esc(AREQ.okMsg)}</p>`:""}`;
   }
   if(!AREQ.open){
@@ -1560,7 +1576,7 @@ function renderAdminReqWorker(App, session){
   const f = AREQ.form || {};
   if(!f.kind) return `<span class="backlink" data-action="portal-areq-cancel">◀ ביטול</span>
     <h3 style="margin-top:6px;">מה הבקשה?</h3>
-    <div class="grid-teams">${Object.keys(AREQ_KINDS).map(k=>`<div class="team-tile" data-action="portal-areq-kind" data-k="${k}"><div style="font-size:1.15em;font-weight:700;">${AREQ_KINDS[k].icon} ${AREQ_KINDS[k].label}</div><div class="muted" style="font-size:.85em;margin-top:4px;">${AREQ_KINDS[k].sub}</div></div>`).join("")}</div>`;
+    <div class="grid-teams">${Object.keys(AREQ_KINDS).filter(k=>AREQ_KINDS[k].active!==false).map(k=>`<div class="team-tile" data-action="portal-areq-kind" data-k="${k}"><div style="font-size:1.15em;font-weight:700;">${AREQ_KINDS[k].icon} ${AREQ_KINDS[k].label}</div>${AREQ_KINDS[k].sub?`<div class="muted" style="font-size:.85em;margin-top:4px;">${AREQ_KINDS[k].sub}</div>`:""}</div>`).join("")}</div>`;
   const today = App.fmtDate(new Date());
   return `<span class="backlink" data-action="portal-areq-cancel">◀ ביטול</span>
     <h3 style="margin-top:6px;">${AREQ_KINDS[f.kind].icon} בקשה ל${AREQ_KINDS[f.kind].label} <span class="backlink" data-action="portal-areq-kind" data-k="" style="font-size:.7em;font-weight:400;">שינוי סוג</span></h3>
@@ -1570,7 +1586,7 @@ function renderAdminReqWorker(App, session){
     </div>
     <div class="field"><label>הערה (לא חובה)</label><textarea id="areq_note" rows="2">${esc(f.note||"")}</textarea></div>
     <h3 style="margin:14px 0 6px;">📎 מסמכים</h3>
-    ${(AREQ_DOCS[f.kind]||[]).map(([dk,dl])=>`<div class="dmg-sub"><b>${dl}</b> ${areqPick("portal-areq-files", dk)}
+    ${areqDocsFor(f.kind).map(([dk,dl])=>`<div class="dmg-sub"><b>${dl}</b> ${areqPick("portal-areq-files", dk)}
       ${(AREQ.files[dk]||[]).length ? `<div class="dmg-imgs">${(AREQ.files[dk]||[]).map((src,j)=>areqThumb(src, `<span data-action="portal-areq-rmfile" data-kind="${dk}" data-j="${j}" class="areq-rm">✕</span>`)).join("")}</div>` : ""}</div>`).join("")}
     ${f.kind==="reserve" ? `<p class="muted" style="font-size:.88em;">אין עדיין 3010? אפשר לשלוח עכשיו ולהוסיף אותו אחר כך מתוך הבקשה.</p>` : ""}
     ${f.kind==="sick" ? `<p class="muted" style="font-size:.88em;">אין עדיין אישור מחלה? אפשר לשלוח עכשיו ולהוסיף אותו אחר כך מתוך הבקשה.</p>` : ""}
@@ -1705,9 +1721,12 @@ function renderAdminReqMgrPages(App, ms, pg, a, wrap, loading, msgs){
     const row = r=>`<div class="portal-task${r.seen?"":" portal-unread"}" data-action="portal-pv" data-page="areq-view" data-id="${r.id}">
       <span class="portal-task-icon">${(AREQ_KINDS[r.kind]||{}).icon||"📝"}</span>
       <span><b>${esc(r.worker_name)}</b> · ${esc((AREQ_KINDS[r.kind]||{}).label||"")} · ${esc(areqDates(r))} (${areqDays(r)} ימים) · ${esc(AREQ_STATUS[r.status]||"")}${r.prev_date_from && r.status==="pending" ? ` · <b style="color:#b45309;">📅 העובד שינה תאריכים</b>` : ""}
-      <span class="muted" style="display:block;font-size:.85em;">📎 ${esc(areqFilesSummary(r))}${r.note?` · ${esc(r.note.slice(0,80))}`:""}</span></span></div>`;
+      <span class="muted" style="display:block;font-size:.85em;">${r.created_by_name?`✍️ נרשם ע"י ${esc(r.created_by_name)} · `:""}📎 ${esc(areqFilesSummary(r))}${r.note?` · ${esc(r.note.slice(0,80))}`:""}</span></span></div>`;
     const pend = AREQ.list.filter(r=>r.status==="pending"), done = AREQ.list.filter(r=>r.status!=="pending");
+    areqLoadKinds(App);
     return wrap(`<h2 style="margin-top:4px;">📝 בקשות מנהלתיות</h2>${msgs}
+      <div class="row" style="margin:6px 0 10px;"><button class="btn" data-action="portal-pv" data-page="areq-add">➕ רישום חופשה / מילואים / מחלה לעובד</button>
+      <button class="btn secondary" data-action="portal-pv" data-page="areq-kinds">⚙️ סוגי בקשות</button></div>
       <h3 style="margin:10px 0 4px;">ממתינות (${pend.length})</h3>${pend.length ? pend.map(row).join("") : `<p class="muted">אין בקשות ממתינות.</p>`}
       ${done.length ? `<h3 style="margin:14px 0 4px;">טופלו</h3>${done.slice(0,60).map(row).join("")}` : ""}`);
   }
@@ -1723,6 +1742,7 @@ function renderAdminReqMgrPages(App, ms, pg, a, wrap, loading, msgs){
       ${areqDetailsTable(App, r)}
       <h4 style="margin:14px 0 4px;">📎 מסמכים</h4>${AREQ.mfiles===null ? `<p class="muted">טוען...</p>` : areqDocsHtml(App, AREQ.mfiles)}
       ${r.kind==="reserve" && !(r.files||{}).form3010 ? `<p class="muted" style="font-size:.88em;">טופס 3010 עדיין לא צורף — העובד יכול להוסיף אותו מתוך הבקשה, ותקבלו התראה.</p>` : ""}
+      ${areqMgrEditHtml(App, r)}
       <h4 style="margin:14px 0 4px;">💬 תגובות לעובד</h4>${rplMgrHtml(App, ms, "admin", r.id)}
       ${r.status==="cancelled" ? `<p class="note-box" style="margin-top:12px;">🚫 העובד ביטל את הבקשה הזו${r.cancelled_at?" ב-"+esc(dmgFmtDate(r.cancelled_at)):""}. אין צורך לטפל בה.</p>${msgs}` : `
       ${r.prev_date_from && r.status==="pending" ? `<p class="note-box" style="margin-top:12px;border-color:#e0a800;">📅 העובד שינה את התאריכים: היה ${esc(areqDates({date_from:r.prev_date_from, date_to:r.prev_date_to}))}, עכשיו ${esc(areqDates(r))}. צריך לאשר מחדש.</p>` : ""}
@@ -1733,7 +1753,99 @@ function renderAdminReqMgrPages(App, ms, pg, a, wrap, loading, msgs){
         ${r.status!=="pending" ? `<button class="btn secondary" data-action="portal-areq-resolve" data-id="${r.id}" data-s="pending" ${PV.busy?"disabled":""}>↩ החזרה להמתנה</button>` : ""}
       </div>${msgs}`}`);
   }
+  if(pg==="areq-add"){
+    areqLoadKinds(App);
+    if(AREQ.wTok!==ms.token){ AREQ.wTok = ms.token; AREQ.workers = null; }
+    if(AREQ.workers===null && !AREQ.wBusy){ AREQ.wBusy = true; App.apiRpc("mgr_areq_workers", {p_token:ms.token}).then(x=>{ AREQ.workers = x||[]; AREQ.wBusy = false; App.render(); }).catch(e=>{ AREQ.workers = []; AREQ.wBusy = false; PV.error = e.message; App.render(); }); }
+    if(AREQ.workers===null) return loading();
+    const today = App.fmtDate(new Date()), f = AREQ.mform || {};
+    return wrap(`<h2 style="margin-top:4px;">➕ רישום לעובד</h2>
+      <p class="muted" style="margin-top:0;">נרשם כמאושר, מופיע בסידור (בסגול) ובטבלת הזמינות, והעובד מקבל התראה.</p>
+      <div class="field"><label>עובד</label><select id="areqm_w"><option value="">בחרו עובד...</option>${AREQ.workers.map(w=>`<option value="${w.id}" ${f.w===w.id?"selected":""}>${esc(w.name)}</option>`).join("")}</select></div>
+      <div class="field"><label>סוג</label><select id="areqm_k">${areqKindOptions(App, f.k||"vacation", false)}</select></div>
+      <div class="dmg-pfields">
+        <div class="field"><label>מתאריך</label><input type="date" id="areqm_from" value="${esc(f.from||today)}"></div>
+        <div class="field"><label>עד תאריך (כולל)</label><input type="date" id="areqm_to" value="${esc(f.to||f.from||today)}"></div>
+      </div>
+      <div class="field"><label>הערה (לא חובה)</label><textarea id="areqm_note" rows="2">${esc(f.note||"")}</textarea></div>
+      <button class="btn ok" data-action="portal-areqm-add" ${PV.busy?"disabled":""}>✔ רישום</button>${msgs}`);
+  }
+  if(pg==="areq-kinds"){
+    areqLoadKinds(App);
+    const keys = Object.keys(AREQ_KINDS);
+    return wrap(`<h2 style="margin-top:4px;">⚙️ סוגי בקשות</h2>
+      <p class="muted" style="margin-top:0;">הסוגים שהעובדים בוחרים בבקשה מנהלתית ושהקב"ט רושם לעובדים. אפשר לשנות שם ואייקון ולהוסיף סוגים. סוג שמוסתר לא מוצג בטופס — הבקשות הקיימות שלו נשמרות.</p>${msgs}
+      <table><thead><tr><th>אייקון</th><th style="text-align:right;">שם</th><th>מוצג</th><th></th></tr></thead><tbody>
+      ${keys.map(k=>{ const x = AREQ_KINDS[k]; return `<tr>
+        <td><input type="text" id="akico_${esc(k)}" value="${esc(x.icon||"")}" maxlength="8" style="width:52px;text-align:center;"></td>
+        <td><input type="text" id="aklbl_${esc(k)}" value="${esc(x.label||"")}" maxlength="40"></td>
+        <td>${x.builtin ? `<span class="muted" title="סוג קבוע">✔</span>` : `<input type="checkbox" id="akact_${esc(k)}" ${x.active!==false?"checked":""}>`}</td>
+        <td><button class="btn small" data-action="portal-areqm-kind" data-k="${esc(k)}" ${PV.busy?"disabled":""}>שמירה</button></td></tr>`; }).join("")}
+      <tr><td><input type="text" id="akico_" value="📝" maxlength="8" style="width:52px;text-align:center;"></td>
+        <td><input type="text" id="aklbl_" placeholder="סוג חדש, למשל: לימודים" maxlength="40"></td><td></td>
+        <td><button class="btn small ok" data-action="portal-areqm-kind" data-k="" ${PV.busy?"disabled":""}>➕ הוספה</button></td></tr>
+      </tbody></table>`);
+  }
   return null;
+}
+/* עריכה / ביטול של בקשה ע"י הקב"ט (2026-10-25, סרגיי) */
+function areqMgrEditHtml(App, r){
+  const esc = App.escapeHtml;
+  if(r.status==="cancelled") return "";
+  if(AREQ.medit===r.id) return `<div class="dmg-sub" style="margin-top:12px;"><b>✏️ עריכת הבקשה</b>
+      <div class="field"><label>סוג</label><select id="areqe_k">${areqKindOptions(App, r.kind, false)}</select></div>
+      <div class="dmg-pfields">
+        <div class="field"><label>מתאריך</label><input type="date" id="areqe_from" value="${esc(r.date_from)}"></div>
+        <div class="field"><label>עד תאריך (כולל)</label><input type="date" id="areqe_to" value="${esc(r.date_to)}"></div>
+      </div>
+      <div class="field"><label>הערה</label><textarea id="areqe_note" rows="2">${esc(r.note||"")}</textarea></div>
+      <div class="row"><button class="btn ok" data-action="portal-areqm-edit-save" data-id="${r.id}" ${PV.busy?"disabled":""}>✔ שמירה</button>
+      <button class="btn secondary" data-action="portal-areqm-edit-close">ביטול</button></div></div>`;
+  if(AREQ.mdel===r.id) return `<div class="note-box" style="margin-top:12px;border-color:#b42318;background:#fff7f6;">
+      <b>🚫 לבטל את ה${esc((AREQ_KINDS[r.kind]||{}).label||"בקשה")} של ${esc(r.worker_name)} (${esc(areqDates(r))})?</b>
+      <p class="muted" style="margin:4px 0;">העובד יקבל הודעה. הבקשה נשמרת בהיסטוריה כ"בוטלה".</p>
+      <div class="row"><button class="btn danger" data-action="portal-areqm-del-go" data-id="${r.id}" ${PV.busy?"disabled":""}>כן, לבטל</button>
+      <button class="btn secondary" data-action="portal-areqm-del-no">לא</button></div></div>`;
+  return `<div class="row" style="margin-top:12px;"><button class="btn secondary" data-action="portal-areqm-edit">✏️ עריכת סוג / תאריכים</button>
+    <button class="btn secondary" data-action="portal-areqm-del" style="color:#b42318;border-color:#f3c4c0;">🚫 ביטול</button></div>`;
+}
+async function areqMgrAction(App, a, el){
+  const ms = loadMgr(App); if(!ms) return;
+  const v = id=>(document.getElementById(id)||{}).value;
+  if(a==="portal-areqm-edit"){ AREQ.medit = AREQ.mview && AREQ.mview.id; AREQ.mdel = null; PV.error = null; return App.render(); }
+  if(a==="portal-areqm-edit-close"){ AREQ.medit = null; return App.render(); }
+  if(a==="portal-areqm-del"){ AREQ.mdel = AREQ.mview && AREQ.mview.id; AREQ.medit = null; PV.error = null; return App.render(); }
+  if(a==="portal-areqm-del-no"){ AREQ.mdel = null; return App.render(); }
+  if(PV.busy) return;
+  const run = async (fn, args, ok, after)=>{
+    PV.busy = true; PV.error = null; PV.msg = null; App.render();
+    try{ await App.apiRpc(fn, args); PV.busy = false; AREQ.list = null; AREQ.mview = null; if(after) after(); PV.msg = ok; }
+    catch(e){ PV.busy = false; PV.error = e.message; }
+    App.render();
+  };
+  if(a==="portal-areqm-edit-save"){
+    const fr = v("areqe_from"), to = v("areqe_to");
+    if(!fr || !to || to < fr){ PV.error = "בדקו את התאריכים"; return App.render(); }
+    return run("mgr_admin_req_edit", {p_token:ms.token, p_req:el.dataset.id, p_kind:v("areqe_k"), p_from:fr, p_to:to, p_note:v("areqe_note")||""}, "✔ הבקשה עודכנה — העובד קיבל התראה.", ()=>{ AREQ.medit = null; });
+  }
+  if(a==="portal-areqm-del-go") return run("mgr_admin_req_cancel", {p_token:ms.token, p_req:el.dataset.id}, "✔ בוטל — העובד קיבל התראה.", ()=>{ AREQ.mdel = null; });
+  if(a==="portal-areqm-add"){
+    const f = {w:v("areqm_w"), k:v("areqm_k"), from:v("areqm_from"), to:v("areqm_to"), note:v("areqm_note")||""};
+    AREQ.mform = f;
+    if(!f.w){ PV.error = "בחרו עובד"; return App.render(); }
+    if(!f.from || !f.to || f.to < f.from){ PV.error = "בדקו את התאריכים"; return App.render(); }
+    PV.busy = true; PV.error = null; App.render();
+    try{
+      await App.apiRpc("mgr_admin_req_add", {p_token:ms.token, p_worker:f.w, p_kind:f.k, p_from:f.from, p_to:f.to, p_note:f.note});
+      PV.busy = false; AREQ.mform = null; AREQ.list = null; pvBack(App);
+      PV.msg = "✔ נרשם — מופיע בסידור, והעובד קיבל התראה."; return App.render();
+    }catch(e){ PV.busy = false; PV.error = e.message; return App.render(); }
+  }
+  if(a==="portal-areqm-kind"){
+    const k = el.dataset.k || "";
+    const act = document.getElementById("akact_" + k);
+    return run("mgr_areq_kind_save", {p_token:ms.token, p_key:k||null, p_label:v("aklbl_" + k), p_icon:v("akico_" + k), p_active: act ? act.checked : true}, k ? "✔ נשמר." : "✔ הסוג נוסף.", ()=>{ areqLoadKinds(App, true); });
+  }
 }
 async function areqResolve(App, el){
   const ms = loadMgr(App); if(!ms || PV.busy) return;
@@ -4004,7 +4116,7 @@ function renderLockCard(App, ms){
 }
 
 /* ---------- עמודי משנה (view "pview") ---------- */
-const PV_TITLES = { "login-status":"סטטוס מחוברים", "ar-list":"דוחות פעולה", "ar-view":"דוח פעולה", "equip-workers":"ציוד אישי לעובדים", "equip-edit":"ציוד אישי", "areq-list":"בקשות מנהלתיות", "areq-view":"בקשה מנהלתית", "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
+const PV_TITLES = { "login-status":"סטטוס מחוברים", "ar-list":"דוחות פעולה", "ar-view":"דוח פעולה", "equip-workers":"ציוד אישי לעובדים", "equip-edit":"ציוד אישי", "areq-list":"בקשות מנהלתיות", "areq-view":"בקשה מנהלתית", "areq-add":"רישום לעובד", "areq-kinds":"סוגי בקשות", "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
   "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "swap-hist":"היסטוריית החלפות", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה", "cal":"יומן משותף" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
@@ -4202,7 +4314,7 @@ function renderPView(App){
   if(pg==="equip-workers" || pg==="equip-edit"){ const h = renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
   if(pg==="login-status") return renderLoginStatus(App, ms, wrap, loading);
   if(pg==="ar-list" || pg==="ar-view"){ const h = renderActionReportMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
-  if(pg==="areq-list" || pg==="areq-view"){ const h = renderAdminReqMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
+  if(pg==="areq-list" || pg==="areq-view" || pg==="areq-add" || pg==="areq-kinds"){ const h = renderAdminReqMgrPages(App, ms, pg, a, wrap, loading, msgs); if(h) return h; }
   if(pg==="k-msg-guards" || pg==="k-msg-mgmt" || pg==="mgmt-inbox"){ const h = renderMsgPages(App, ms, pg, wrap, loading, msgs); if(h) return h; }
   if(pg==="unit-dash") return `<div class="card">${back}<h2 style="margin-bottom:0;">📊 לוח מנהל יחידה</h2><p class="muted">כך רואה את המערכת מנהל היחידה.</p></div>` + renderUnitDashboard(App, ms);
 
@@ -5642,6 +5754,7 @@ function onClick(App, a, el){
   if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; T.data = null; F.data = null; T.controlOpen = null; T.postOpen = null; T.quiz = null; return App.render(); }
   if(a==="portal-go-areq"){ S.view = "adminreq"; S.ui = {}; AREQ.open = false; AREQ.view = null; AREQ.mine = null; AREQ.okMsg = null; AREQ.error = null; return App.render(); }
   if(a.indexOf("portal-rpl-")===0) return rplAction(App, a, el);
+  if(a.indexOf("portal-areqm-")===0) return areqMgrAction(App, a, el);
   if(a.indexOf("portal-areq-")===0 && a!=="portal-areq-resolve") return areqAction(App, a, el);
   if(a==="portal-areq-resolve") return areqResolve(App, el);
   if(a==="portal-eqm-save") return eqmSave(App, el);

@@ -150,7 +150,7 @@
   .mg-n .ach-tag{font-size:.62em;padding:0 3px;}
   .mg-h{font-size:10px;color:#4b5563;white-space:nowrap;}
   .mg-role{font-size:9px;background:#eef3fa;border-radius:6px;padding:0 3px;color:#1f4e8c;}
-  .mg-bad{color:#b42318;font-weight:700;} .mg-tight{background:#fff3a6;}
+  .mg-bad{background:var(--danger-bg);color:#111;font-weight:700;} .mg-tight{background:#fff3a6;}
   .mg-sh{color:#6b7280;font-style:italic;}
   .mg-miss{color:#b42318;font-weight:700;font-size:11px;}
   .mg-table td.mg-na{background:#2a2a2a;}
@@ -171,7 +171,13 @@
   .tmpl-table tr td.tmpl-coord, .mg-table tr td.mg-coord, .mg-table tr th.mg-coord, .cpt-table tr td.cpt-coord{background:#fde047;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
   .tmpl-coord-head{background:#fde047!important;color:#713f12!important;font-weight:800!important;}
   .mg-coord .mg-n{font-weight:700;}
-  .hrs-early{background:#a5f3fc;color:#0e7490;font-weight:700;border-radius:4px;padding:0 3px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .hrs-early{background:#a5f3fc;color:#000;font-weight:700;border-radius:4px;padding:0 3px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  /* (2026-10-25, סרגיי: "שכל השמות והשעות יהיו בbold שחור, בכל המשמרות. כל מקום שבו נדרש צבע - שרק המשבצת עצמה תהיה בצבע") */
+  .tmpl-table td:not(.tmpl-pos):not(.tmpl-na), .tmpl-table td:not(.tmpl-pos) .muted, .tmpl-table td .tmpl-shadow{color:#111!important;font-weight:700;font-style:normal!important;}
+  .mg-table td, .mg-table td .mg-h, .mg-table td .mg-n{color:#111;font-weight:700;}
+  .cpt-table tbody td, .cpt-table .cpt-hrs{color:#000;font-weight:700;}
+  .tmpl-table tr td.tmpl-early, .cpt-table tr td.cpt-early, .mg-table .mg-n.mg-early{background:#a5f3fc;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .tmpl-restwarn{color:#111!important;}
   .tmpl-cell{cursor:pointer;}
   .tmpl-cell:hover{background:#eef6ff;}
   /* חוסר 8 שעות מנוחה בין משמרות עוקבות של אותו עובד (ידני/אוטומטי כאחד) - לבקשת סרגיי, 2026-09-28 */
@@ -282,7 +288,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=146"></script>
+<script src="portal.js?v=147"></script>
 <script>
 (function(){
 "use strict";
@@ -2410,7 +2416,7 @@ function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDa
       const list = tmplAssignedList(assignmentsByDate, d, sector, cq.shift_type);
       const a = list[cpos-1];
       const w = a ? (workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id]) : null;
-      if(!w) return `<td class="tmpl-missing tmpl-coord${mode==="manual"?" tmpl-cell":""}" style="font-style:italic;"${clickAttrs(d, cpos)}>חוסר</td>`;
+      if(!w) return `<td class="tmpl-missing tmpl-coord${mode==="manual"?" tmpl-cell":""}"${clickAttrs(d, cpos)}>חוסר</td>`;
       const cs = a.custom_start ? a.custom_start.slice(0,5) : cq.start_time.slice(0,5);
       const ce = a.custom_end ? a.custom_end.slice(0,5) : cq.end_time.slice(0,5);
       const q = bucket.perDate[d];
@@ -2420,7 +2426,7 @@ function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDa
       const restBad = restViolations.has(restKey(a));
       const restTight = !restBad && restViolations.tight && restViolations.tight.has(restKey(a));
       const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
-      return `<td class="tmpl-coord ${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${mode==="manual"?" tmpl-cell":""}" style="font-style:italic;"${clickAttrs(d, cpos)}>${isEarlyEnd(cq, a)?`<span class="hrs-early">${escapeHtml(w.name)}</span>`:escapeHtml(w.name)}<br><span class="${isEarlyEnd(cq, a)?"hrs-early":"muted"}" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
+      return `<td class="tmpl-coord${isEarlyEnd(cq, a)?" tmpl-early":""} ${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${mode==="manual"?" tmpl-cell":""}"${clickAttrs(d, cpos)}>${escapeHtml(w.name)}<br><span class="muted" style="font-size:.85em;">${hoursTxt}</span>${restNote}</td>`;
     }).join("");
     return `<tr class="tmpl-mirror-row"><td class="tmpl-pos">סייר ${pos}<br><span class="muted" style="font-size:.75em;font-weight:400;">(מתואמת)</span>${tmplBucketHoursHtml(coordBucket)}</td>${cells}</tr>`;
   }).join("");
@@ -2476,14 +2482,15 @@ function renderTemplateGrid(group, dates, ui, mode){
           const shadowHtml = tmplShadowHtml(tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, a?[a.worker_id]:[], pos===1), q, id=>{ const x = workers.find(y=>y.id===id) || allWorkersById[id]; return x?x.name:"?"; });
           const coordCls = bucket.key==="coordinated" ? " tmpl-coord" : "";
           const early = isEarlyEnd(q, a);
-          const nm = w ? (early ? `<span class="hrs-early">${escapeHtml(w.name)}</span>` : escapeHtml(w.name)) : "";
-          const hrsSpan = early ? `<span class="hrs-early" style="font-size:.85em;" title="מסיים לפני סוף המשמרת">${hoursTxt}</span>` : `<span class="muted" style="font-size:.85em;">${hoursTxt}</span>`;
+          const nm = w ? escapeHtml(w.name) : "";
+          const hrsSpan = `<span class="muted" style="font-size:.85em;">${hoursTxt}</span>`;
+          const earlyCls = early ? " tmpl-early" : "";
           if(mode==="manual"){
-            const cls = "tmpl-cell" + coordCls + (w? (restBad?" tmpl-restwarn":(restTight?" tmpl-resttight":"")) + longCls(restViolations, a) : " tmpl-missing");
+            const cls = "tmpl-cell" + coordCls + earlyCls + (w? (restBad?" tmpl-restwarn":(restTight?" tmpl-resttight":"")) + longCls(restViolations, a) : " tmpl-missing");
             const label = (w? `${nm}${achTagHtml(w)}<br>${hrsSpan}${restNote}` : "חוסר") + shadowHtml;
             return `<td class="${cls}" data-action="tmpl-cell" data-sector="${escapeHtml(secData.sector)}" data-date="${d}" data-type="${q.shift_type}" data-pos="${pos}">${label}</td>`;
           }
-          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${coordCls}">${nm}${achTagHtml(w)}<br>${hrsSpan}${restNote}${shadowHtml}</td>`;
+          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${coordCls}${earlyCls}">${nm}${achTagHtml(w)}<br>${hrsSpan}${restNote}${shadowHtml}</td>`;
           return `<td class="tmpl-missing${coordCls}">חוסר${shadowHtml}</td>`;
         }).join("");
         return `<tr><td class="tmpl-pos">סייר ${pos}${bucketHrs}</td>${cells}</tr>`;
@@ -2537,11 +2544,11 @@ function renderCompactPrintGrid(group, dates, ui){
           const a = tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type)[pos-1];
           const shadows = tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, a?[a.worker_id]:[], pos===1)
             .map(sh=> sh.split ? ` / ${escapeHtml(nameOf(sh.worker_id))} <span class="cpt-hrs" dir="ltr">(${tmplHoursTxt(q, sh)})</span>` : ` + ${escapeHtml(nameOf(sh.worker_id))} (ח)`).join("");
-          const cc = bucket.key==="coordinated" ? " cpt-coord" : "";
+          const cc = (bucket.key==="coordinated" ? " cpt-coord" : "") + (a && isEarlyEnd(q, a) ? " cpt-early" : "");
           if(!a) return `<td class="cpt-missing${cc}">חוסר${shadows}</td>`;
           const w = workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id];
           const hrs = tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate);
-          return `<td${cc?` class="${cc.trim()}"`:""}>${isEarlyEnd(q, a)?`<span class="hrs-early">${escapeHtml(nameOf(a.worker_id))}</span>`:escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="cpt-ach">אחמ"ש</span>`:""}${hrs!==std?` <span class="cpt-hrs${isEarlyEnd(q, a)?" hrs-early":""}" dir="ltr">(${hrs})</span>`:""}${shadows}</td>`;
+          return `<td${cc?` class="${cc.trim()}"`:""}>${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="cpt-ach">אחמ"ש</span>`:""}${hrs!==std?` <span class="cpt-hrs" dir="ltr">(${hrs})</span>`:""}${shadows}</td>`;
         }).join("");
         const lead = pos===1 ? `<td class="cpt-shift${bucket.key==="coordinated"?" cpt-coord":""}" rowspan="${n}">${label}</td><td class="cpt-hcol${bucket.key==="coordinated"?" cpt-coord":""}" rowspan="${n}">${tmplBucketHoursHtml(bucket) || `<span dir="ltr">${std||""}</span>`}</td>` : "";
         return `<tr class="${pos===1?"cpt-first":""}">${lead}${cells}</tr>`;
@@ -2582,13 +2589,14 @@ const STASK_DEFAULT_ROWS = 0;
    השיבוץ (כמו המשימות, בצבע סגול נפרד) ובטבלת הזמינות שהוגשה, בתאריכים הרלוונטיים. נטען מ-sched_absences (רק עם הרשאת עריכה). */
 const ABS_KINDS = { vacation:{l:"חופשה", i:"🏖️"}, reserve:{l:"מילואים", i:"🪖"}, sick:{l:"מחלה", i:"🤒"} };
 function absOn(ui, workerId, d){ return (ui.absences||[]).filter(x=>x.worker_id===workerId && x.from<=d && x.to>=d); }
-function absTagHtml(x){ const k = ABS_KINDS[x.kind]||{l:x.kind, i:"📝"}; return `<span class="abs-tag${x.status==="pending"?" abs-pend":""}" title="${x.status==="pending"?"ממתין לאישור":"מאושר"}">${k.i} ${escapeHtml(k.l)}${x.status==="pending"?" ⏳":""}</span>`; }
+function absKind(x){ const b = ABS_KINDS[x.kind]||{}; return {l: x.label || b.l || x.kind, i: x.icon || b.i || "📝"}; }
+function absTagHtml(x){ const k = absKind(x); return `<span class="abs-tag${x.status==="pending"?" abs-pend":""}" title="${x.status==="pending"?"ממתין לאישור":"מאושר"}">${k.i} ${escapeHtml(k.l)}${x.status==="pending"?" ⏳":""}</span>`; }
 function absencesBlock(dates, ui){
   if(ui.workerView || ui.previewOpen) return "";
   const list = (ui.absences||[]).filter(x=>x.from<=dates[dates.length-1] && x.to>=dates[0]);
   if(!list.length) return "";
   const rows = list.map(x=>{
-    const k = ABS_KINDS[x.kind]||{l:x.kind, i:"📝"};
+    const k = absKind(x);
     return `<tr><td class="tmpl-pos" style="background:#faf5ff;color:#6b21a8;">${escapeHtml(x.worker_name||"")}</td>${dates.map(d=> (x.from<=d && x.to>=d)
       ? `<td class="abs-cell${x.status==="pending"?" abs-pend":""}">${k.i} ${escapeHtml(k.l)}${x.status==="pending"?`<br><span style="font-size:.85em;">⏳ ממתין לאישור</span>`:""}</td>` : `<td></td>`).join("")}</tr>`;
   }).join("");
@@ -3472,7 +3480,7 @@ function renderMobileGrid(group, dates, ui){
           const w = wOf(a.worker_id), hrs = tmplHoursTxt2(group, d, sec.sector, q, a, abd);
           const role = q.role_counts ? assignmentRole(a, workersById) : null;
           const bad = rest.has(restKey(a)), tight = !bad && rest.tight && rest.tight.has(restKey(a));
-          return `<div class="mg-n${bad?" mg-bad":(tight?" mg-tight":"")}">${role?`<span class="mg-role">${escapeHtml(role)}</span> `:""}${isEarlyEnd(q, a)?`<span class="hrs-early">${escapeHtml(nameOf(a.worker_id))}</span>`:escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="ach-tag">אחמ"ש</span>`:""}${hrs!==std?` <span class="mg-h${isEarlyEnd(q, a)?" hrs-early":""}" dir="ltr">${escapeHtml(hrs)}</span>`:""}</div>`;
+          return `<div class="mg-n${bad?" mg-bad":(tight?" mg-tight":"")}${isEarlyEnd(q, a)?" mg-early":""}">${role?`<span class="mg-role">${escapeHtml(role)}</span> `:""}${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="ach-tag">אחמ"ש</span>`:""}${hrs!==std?` <span class="mg-h" dir="ltr">${escapeHtml(hrs)}</span>`:""}</div>`;
         });
         tmplShadowList(abd, d, sec.sector, q.shift_type).forEach(sh=>lines.push(sh.split ? `<div class="mg-n mg-sh">⇄ ${escapeHtml(nameOf(sh.worker_id))} <span class="mg-h" dir="ltr">${escapeHtml(tmplHoursTxt(q, sh))}</span></div>` : `<div class="mg-n mg-sh">${escapeHtml(nameOf(sh.worker_id))} (ח)</div>`));
         const miss = (q.required_count||0) - list.length;
