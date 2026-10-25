@@ -291,7 +291,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=152"></script>
+<script src="portal.js?v=153"></script>
 <script>
 (function(){
 "use strict";
@@ -1662,7 +1662,7 @@ async function loadAggregateData(team){
     // משימות שאינן משמרת (3 שורות לכל יום בתחתית טבלת השיבוץ) - 2026-10-20
     try{
       const tdates = periodDates(ui.periodStart, team);
-      ui.schedTasks = group.citySectors.length ? await apiRpc("sched_tasks_list", {p_sectors: group.citySectors, p_from: tdates[0], p_to: tdates[tdates.length-1]}) : [];
+      ui.schedTasks = group.citySectors.length ? await apiRpc("sched_tasks_list_v2", {p_sectors: group.citySectors, p_from: tdates[0], p_to: tdates[tdates.length-1], p_auth: schedTasksAuth()}) : [];
       // (2026-10-25, סרגיי) עובד שפותח את "הסידור המלא" רואה רק את המשימות (שאינן משמרת) שלו עצמו
       if(ui.workerView) ui.schedTasks = (ui.schedTasks||[]).filter(t=>ui.viewerWorkerId && t.worker_id===ui.viewerWorkerId);
       try{ ui.schedTaskRows = group.citySectors.length ? await apiRpc("sched_task_rows_list", {p_sectors: group.citySectors, p_from: tdates[0], p_to: tdates[tdates.length-1]}) : []; }catch(e){ ui.schedTaskRows = []; }
@@ -2593,6 +2593,12 @@ function renderCompactPrintGrid(group, dates, ui){
    בשיבוץ ידני (schedule_task_days, rpc_sched_task_rows). אין כמות קבועה - רק השורות שיש בהן משימות, ומה שהקב"ט
    הוסיף בלחצן (סרגיי, 2026-10-21). אי אפשר להסיר שורה שיש בה משימה. */
 const STASK_DEFAULT_ROWS = 0;
+/* מי מבקש את המשימות (2026-10-25, סרגיי: רק העובד עצמו, הקב"ט, סרגיי ומנהל היחידה) - השרת מסנן לפי זה */
+function schedTasksAuth(){
+  const ui = S.ui || {};
+  if(ui.workerView) return ui.viewerToken ? "wtok:" + ui.viewerToken : null;
+  return typeof S.pin==="string" && S.pin ? S.pin : null;
+}
 /* חופשה / מילואים / מחלה (2026-10-25, סרגיי): בקשות מנהלתיות ממתינות ומאושרות של עובדי הגזרה - מוצגות לקב"ט מתחת לטבלת
    השיבוץ (כמו המשימות, בצבע סגול נפרד) ובטבלת הזמינות שהוגשה, בתאריכים הרלוונטיים. נטען מ-sched_absences (רק עם הרשאת עריכה). */
 const ABS_KINDS = { vacation:{l:"חופשה", i:"🏖️"}, reserve:{l:"מילואים", i:"🪖"}, sick:{l:"מחלה", i:"🤒"} };
@@ -2677,7 +2683,7 @@ async function staskReload(){
   const ui = S.ui;
   const team = teamById(ui.teamId), group = sectorGroupForTeam(team), dts = periodDates(ui.periodStart, team);
   const args = {p_sectors: group.citySectors, p_from: dts[0], p_to: dts[dts.length-1]};
-  ui.schedTasks = await apiRpc("sched_tasks_list", args);
+  ui.schedTasks = await apiRpc("sched_tasks_list_v2", Object.assign({p_auth: schedTasksAuth()}, args));
   try{ ui.schedTaskRows = await apiRpc("sched_task_rows_list", args); }catch(e){}
 }
 async function schedTaskAction(a){
