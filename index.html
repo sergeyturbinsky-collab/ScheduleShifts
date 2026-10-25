@@ -288,7 +288,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=148"></script>
+<script src="portal.js?v=149"></script>
 <script>
 (function(){
 "use strict";
@@ -1183,7 +1183,8 @@ function renderAggregate(){
       ${ui.teamCodeError? `<p class="shortage">${escapeHtml(ui.teamCodeError)}</p>`:""}
     </div>`;
   }
-  if(!ui.periodStart) ui.periodStart = currentPeriodStart(team);
+  // (2026-10-25, סרגיי) בכניסה למסך הסידור - תמיד הסידור הנוכחי (התקופה של היום), לא הבא. לבא עוברים ב"תקופה הבאה ▶"
+  if(!ui.periodStart) ui.periodStart = shiftPeriod(currentPeriodStart(team), team, -1);
   if(!ui.loaded){ loadAggregateData(team); return `<div class="card"><p>טוען...</p></div>`; }
   // (2026-10-20) אם הטעינה נכשלה - מציגים את השגיאה ולחצן "נסה שוב" במקום מסך ריק/"טוען..." לנצח.
   if(ui.loadError || !ui.workers) return `<div class="card"><span class="backlink" data-action="go-home">◀ חזרה</span><h3>הטעינה נכשלה</h3><p class="shortage">${escapeHtml(ui.loadError||"שגיאה לא ידועה")}</p><button class="btn" data-action="agg-reload">🔄 נסה שוב</button></div>`;
@@ -3578,7 +3579,7 @@ function renderMgrScheduleView(){
   const team = teamById(ui.teamId);
   if(!team){ S.view = "home"; S.ui = {}; return renderHome(); }
   // עובד ("סידור מלא", 2026-10-18): נפתח על התקופה הנוכחית (שבה נמצא היום), לא על התקופה הבאה
-  if(!ui.periodStart) ui.periodStart = ui.workerView ? shiftPeriod(currentPeriodStart(team), team, -1) : currentPeriodStart(team);
+  if(!ui.periodStart) ui.periodStart = shiftPeriod(currentPeriodStart(team), team, -1); // (2026-10-25, סרגיי) גם למנהלים - הסידור הנוכחי
   if(!ui.loaded){ loadAggregateData(team); return `<div class="card"><p>טוען...</p></div>`; }
   // (2026-10-20) אם הטעינה נכשלה - מציגים את השגיאה ולחצן "נסה שוב" במקום מסך ריק/"טוען..." לנצח.
   if(ui.loadError || !ui.workers) return `<div class="card"><span class="backlink" data-action="go-home">◀ חזרה</span><h3>הטעינה נכשלה</h3><p class="shortage">${escapeHtml(ui.loadError||"שגיאה לא ידועה")}</p><button class="btn" data-action="agg-reload">🔄 נסה שוב</button></div>`;
