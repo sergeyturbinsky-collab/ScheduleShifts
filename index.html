@@ -145,7 +145,7 @@
   .mg-table thead th{background:#f4f7fb;font-size:12px;}
   .mg-table th.mg-day{width:44px;background:#f4f7fb;font-size:11px;vertical-align:middle;}
   .mg-table tr.mg-row{border-top:2px solid #c9d4e2;}
-  .mg-sub{font-size:9.5px;font-weight:400;color:#6b7280;}
+  .mg-sub{font-size:9.5px;font-weight:700;color:#000;}
   .mg-n{line-height:1.25;padding:2px 0;} .mg-n + .mg-n{border-top:1px dashed #e5e9f0;}
   .mg-n .ach-tag{font-size:.62em;padding:0 3px;}
   .mg-h{font-size:10px;color:#4b5563;white-space:nowrap;}
@@ -164,7 +164,7 @@
   .mg-abs td{background:#faf5ff;color:#6b21a8;text-align:right;font-size:11px;}
   .tmpl-fixed th,.tmpl-fixed td{white-space:normal;overflow-wrap:anywhere;}
   .stask-cell{font-size:.9em;min-width:70px;}
-  .tmpl-pos-hrs{font-size:.72em;font-weight:400;color:#4b5563;white-space:nowrap;line-height:1.35;}
+  .tmpl-pos-hrs{font-size:.72em;font-weight:700;color:#000;white-space:nowrap;line-height:1.35;} /* (2026-10-25, סרגיי) שעות המשמרת בעמודה הימנית - בולד שחור */
   .tmpl-na{background:#2a2a2a;}
   .tmpl-missing{font-weight:800;}
   /* (2026-10-25, סרגיי) משמרת מתואמת - צהוב, גם בפלט; סיום לפני הזמן - תכלת */
@@ -202,7 +202,7 @@
   .cpt-table .cpt-sub{font-size:9px;font-weight:400;color:#374151;}
   .cpt-table td.cpt-shift{background:#e8eef7;font-weight:700;}
   .cpt-table td.cpt-hcol{background:#f4f7fb;font-size:10px;padding:2px 1px;}
-  .cpt-table td.cpt-hcol .tmpl-pos-hrs{font-size:9.5px;color:#111;white-space:nowrap;}
+  .cpt-table td.cpt-hcol .tmpl-pos-hrs{font-size:9.5px;color:#000;font-weight:700;white-space:nowrap;}
   .cpt-table tr.cpt-first td{border-top:2px solid #1f4e8c;}
   .cpt-table td.cpt-na{background:#4b5563;}
   .cpt-table td.cpt-missing{color:#b42318;font-style:italic;}
@@ -288,7 +288,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=147"></script>
+<script src="portal.js?v=148"></script>
 <script>
 (function(){
 "use strict";
