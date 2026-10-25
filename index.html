@@ -270,7 +270,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=136"></script>
+<script src="portal.js?v=137"></script>
 <script>
 (function(){
 "use strict";
@@ -548,7 +548,7 @@ const S = {
   view:"home",
   teams:[], quotas:[],
   identity: loadJSON("cst_identity"),
-  pin: localStorage.getItem("cst_pin") || null,
+  pin: (()=>{ try{ return localStorage.getItem("cst_pin"); }catch(e){ return null; } })() || null,
   teamAccess: loadJSON("cst_team_access") || {}, // {teamId: true} - קב"ט שאימת את קוד הצוות שלו במכשיר הזה
   ui:{}
 };
@@ -696,6 +696,14 @@ async function init(){
     if(hasCache) return; // ממשיכים עם העותק השמור; פס "בעיית תקשורת" כבר מוצג
     document.getElementById("app").innerHTML = `<div class="card"><p class="shortage">שגיאה בטעינת הנתונים: ${escapeHtml(e.message)}</p><button class="btn" onclick="location.reload()">🔄 נסו שוב</button></div>`;
   }
+}
+/* (2026-10-25) שורות שהן "המשך" של אותה משמרת בשעות מותאמות שחוצה 2 בלוקים: אותו עובד ואותו יום,
+   והשעה שבה השורה מתחילה = השעה שבה שורה אחרת שלו מסתיימת. כך המשמרת נספרת פעם אחת בספירות. */
+function splitContinuations(rows){
+  const ends = new Set(), out = new Set();
+  (rows||[]).forEach(a=>{ if(a.custom_start && a.custom_end) ends.add(a.worker_id+"|"+a.entry_date+"|"+String(a.custom_end).slice(0,5)); });
+  (rows||[]).forEach(a=>{ if(a.custom_start && a.custom_end && String(a.custom_start).slice(0,5)!==String(a.custom_end).slice(0,5) && ends.has(a.worker_id+"|"+a.entry_date+"|"+String(a.custom_start).slice(0,5))) out.add(a); });
+  return out;
 }
 function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
@@ -887,7 +895,10 @@ function renderSubmitPeriod(){
   }
   const prevP = shiftPeriod(ui.periodStart, team, -1);
   if(S.pubAt[team.id+"|"+prevP]===undefined){ loadPubAt(team, prevP).then(render); return `<div class="card"><p>טוען...</p></div>`; }
-  if(!ui.entries){ loadMySubmission(team); return `<div class="card"><p>טוען...</p></div>`; }
+  if(!ui.entries){
+    if(ui.subError) return `<div class="card"><p>לא הצלחנו לטעון את האילוצים שכבר הגשת (${escapeHtml(ui.subError)}). כדי לא לדרוס אותם — הטופס לא מוצג עד שהטעינה תצליח.</p><button class="btn" data-action="sub-retry">נסו שוב</button></div>`;
+    loadMySubmission(team); return `<div class="card"><p>טוען...</p></div>`;
+  }
 
   const dates = periodDates(ui.periodStart, team);
   let windowState = computeWindowState(team, ui.periodStart);
@@ -932,8 +943,8 @@ function renderSubmitPeriod(){
       </div>
       ${(sel.customOn && !guardBlocking)? `
         <div class="row" style="margin-top:8px;">
-          <div class="field"><label>${positiveChips?"משעה":"יכול/ה משעה"}</label><input type="time" data-action="custom-start" data-date="${d}" value="${sel.customStart}"${readOnly?" disabled":""}></div>
-          <div class="field"><label>עד שעה</label><input type="time" data-action="custom-end" data-date="${d}" value="${sel.customEnd}"${readOnly?" disabled":""}></div>
+          <div class="field"><label>${positiveChips?"משעה":"יכול/ה משעה"}</label><input type="time" data-action="custom-start" data-date="${d}" value="${escapeHtml(sel.customStart)}"${readOnly?" disabled":""}></div>
+          <div class="field"><label>עד שעה</label><input type="time" data-action="custom-end" data-date="${d}" value="${escapeHtml(sel.customEnd)}"${readOnly?" disabled":""}></div>
         </div>
         ${positiveChips?"":`<p class="muted" style="margin:4px 0 0;font-size:.85em;">אלה השעות שבהן את/ה <b>כן</b> יכול/ה לעבוד ביום הזה — כל שאר השעות של היום ייחשבו כלא זמין. אם השעות מכסות רק חלק ממשמרת, תשובץ/י רק לחלק הזה.</p>`}`:""}
       ${dayStatusRow}
@@ -1022,27 +1033,37 @@ function computeWindowState(team, periodStart){
 }
 
 async function loadMySubmission(team){
-  const ui = S.ui;
+  // (2026-10-25, סריקה) טעינה אחת בכל פעם, ותוצאה שמגיעה אחרי מעבר תקופה נזרקת. כשל טעינה לא מציג טופס ריק
+  // (שמירה של טופס ריק הייתה מוחקת את ההגשה הקיימת) - מוצגת הודעה עם "נסו שוב".
+  const ui = S.ui, ps = ui.periodStart;
+  if(ui.subLoading === ps) return;
+  ui.subLoading = ps; ui.subError = null;
+  const stale = ()=> S.ui !== ui || ui.periodStart !== ps;
   try{
-    const exc = await apiGet("constraint_exceptions", `select=id&worker_id=eq.${S.identity.workerId}&period_start=eq.${ui.periodStart}`);
-    ui.hasException = exc && exc.length>0;
-    const subs = await apiGet("constraint_submissions", `select=id,note&worker_id=eq.${S.identity.workerId}&period_start=eq.${ui.periodStart}`);
-    ui.entries = {};
-    ui.note = "";
+    const exc = await apiGet("constraint_exceptions", `select=id&worker_id=eq.${S.identity.workerId}&period_start=eq.${ps}`);
+    const subs = await apiGet("constraint_submissions", `select=id,note&worker_id=eq.${S.identity.workerId}&period_start=eq.${ps}`);
+    const entries = {}; let note = "";
     if(subs && subs[0]){
-      ui.note = subs[0].note || "";
+      note = subs[0].note || "";
       const rows = await apiGet("constraint_entries", `select=entry_date,shift_type,custom_start,custom_end&submission_id=eq.${subs[0].id}`);
       rows.forEach(r=>{
-        const e = ui.entries[r.entry_date] || {types:[], customOn:false, customStart:"07:00", customEnd:"15:00", dayStatus:null};
+        const e = entries[r.entry_date] || {types:[], customOn:false, customStart:"07:00", customEnd:"15:00", dayStatus:null};
         if(r.shift_type==="custom"){ e.customOn=true; e.customStart=r.custom_start||"07:00"; e.customEnd=r.custom_end||"15:00"; }
         else if(DAY_STATUS_TYPES.includes(r.shift_type)){ e.dayStatus = r.shift_type; }
         else e.types.push(r.shift_type);
-        ui.entries[r.entry_date] = e;
+        entries[r.entry_date] = e;
       });
     }
-  }catch(e){ ui.entries = {}; ui.note=""; }
+    if(stale()) return;
+    ui.hasException = exc && exc.length>0; ui.note = note; ui.entries = entries;
+  }catch(e){
+    if(stale()) return;
+    ui.subError = /failed to fetch|networkerror|load failed/i.test(e.message||"") ? "אין חיבור לשרת." : (e.message||"שגיאה");
+  }finally{ if(ui.subLoading === ps) ui.subLoading = null; }
   render();
 }
+// ההערה בטופס ההגשה נשמרת תוך כדי הקלדה - כדי שלחיצה על משמרת (שמציירת מחדש) לא תמחק אותה
+document.addEventListener("input", e=>{ if(e.target && e.target.id==="submitNote" && S.ui) S.ui.note = e.target.value; });
 
 async function saveSubmission(){
   const ui = S.ui;
@@ -1407,9 +1428,10 @@ function renderWorkloadSummary(team, dates, ui){
     const set = new Set(rangeDates);
     const counts = {}; workers.forEach(w=>counts[w.id]=0);
     // משמרת בשעות מותאמות שחוצה 2 בלוקים נשמרת כ-2 שורות עם אותן שעות - נספרת כמשמרת אחת בלבד (2026-10-07)
-    const seen = new Set();
+    const seen = new Set(), cont = splitContinuations(ui.assignments);
     (ui.assignments||[]).forEach(a=>{
       if(!set.has(a.entry_date) || !counts.hasOwnProperty(a.worker_id)) return;
+      if(cont.has(a)) return; // (2026-10-25) חלק שני של משמרת שחולקה בשעות (16:30-22:30 + 22:30-04:30) - לא נספר שוב
       const key = (a.custom_start && a.custom_end) ? `${a.worker_id}|${a.entry_date}|${a.custom_start}|${a.custom_end}` : null;
       if(key){ if(seen.has(key)) return; seen.add(key); }
       counts[a.worker_id]++;
@@ -1471,7 +1493,7 @@ async function runMonthlyReport(){
     const submittedCount = {}; workers.forEach(w=>submittedCount[w.id]=0);
     const assignedCount = {}; workers.forEach(w=>assignedCount[w.id]=0);
     if(workerIds.length){
-      const subs = await apiGet("constraint_submissions", `select=id,worker_id&worker_id=in.(${workerIds.join(",")})`);
+      const subs = await apiGet("constraint_submissions", `select=id,worker_id&worker_id=in.(${workerIds.join(",")})&period_start=gte.${fmtDate(addDays(parseDate(monthStart),-14))}&period_start=lte.${monthEnd}`); // (2026-10-25) רק תקופות שנוגעות בחודש - אחרת הבקשה גדלה עם הזמן
       if(subs.length){
         const subIds = subs.map(s=>s.id);
         const subToWorker = {}; subs.forEach(s=>subToWorker[s.id]=s.worker_id);
@@ -1556,7 +1578,7 @@ async function loadAggregateData(team){
     try{
       const otherIds = (ui.otherWorkers||[]).map(w=>w.id);
       if(otherIds.length && dates.length){
-        const oSubs = await apiGet("constraint_submissions", `select=id,worker_id&worker_id=in.(${otherIds.join(",")})`);
+        const oSubs = await apiGet("constraint_submissions", `select=id,worker_id&worker_id=in.(${otherIds.join(",")})&period_start=gte.${fmtDate(addDays(parseDate(dates.slice().sort()[0]),-14))}&period_start=lte.${dates.slice().sort().pop()}`); // (2026-10-25) רק תקופות שנוגעות בתאריכים המוצגים
         if(oSubs.length){
           const oSubIds = oSubs.map(s=>s.id);
           const oSubToWorker = {}; oSubs.forEach(s=>oSubToWorker[s.id]=s.worker_id);
@@ -1643,7 +1665,7 @@ function renderPivot(dates, workers, entriesByWorker, submittedIds, exceptionIds
             // מוקד: שעות מותאמות = "רק בשעות האלה כן יכול" - מוצג בירוק בנפרד, כי שאר הסימונים במוקד הם חסימות
             const mk = workerIsMoked(w, "");
             const gb = guardBlockingAt(teamById(w.team_id), d); // חיפה מ-01/11: הסימונים הם חסימות
-            return `<td>${es.map(e=> e.shift_type==="custom" ? (gb ? "" : mk ? `<span style="color:var(--ok);font-weight:700;">✓ יכול רק ${e.custom_start}-${e.custom_end}</span>` : `${e.custom_start}-${e.custom_end}`)
+            return `<td>${es.map(e=> e.shift_type==="custom" ? (gb ? "" : mk ? `<span style="color:var(--ok);font-weight:700;">✓ יכול רק ${escapeHtml(e.custom_start)}-${escapeHtml(e.custom_end)}</span>` : `${escapeHtml(e.custom_start)}-${escapeHtml(e.custom_end)}`)
               : (gb && !DAY_STATUS_TYPES.includes(e.shift_type) ? `<span style="color:var(--danger);font-weight:700;">✕ ${SHIFT_LABELS[e.shift_type]}</span>` : SHIFT_LABELS[e.shift_type])).filter(Boolean).join(", ")}</td>`;
           }).join("")}
         </tr>`;
@@ -3265,7 +3287,8 @@ async function confirmTmplCustomHours(){
       }
       await setAssignmentListPreservingHours(c.sector, c.date, shiftType, list, "manual", workerId, hcs, hce);
       // מרעננים את ui.assignments אחרי כל בלוק כדי שהחישוב הבא (אם יש בלוק נוסף) יראה את המצב העדכני
-      ui.assignments = await apiGet("shift_assignments", `select=*&sector=eq.${c.sector}&entry_date=eq.${c.date}&order=created_at.asc`).catch(()=>ui.assignments);
+      { const fresh = await apiGet("shift_assignments", `select=*&sector=eq.${c.sector}&entry_date=eq.${c.date}&order=created_at.asc`).catch(()=>null);
+        if(fresh) ui.assignments = (ui.assignments||[]).filter(x=>!(x.sector===c.sector && x.entry_date===c.date)).concat(fresh); } // מיזוג (לא החלפה) - שאר הימים נשארים בטבלה
     }
     ui.tmplCell = null; ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCustomStart=null; ui.tmplCustomEnd=null; ui.tmplCellMsg = null; ui.tmplShowOtherSectors=false;
     ui.loaded = false;
@@ -3313,7 +3336,8 @@ async function confirmMokedCustomHours(){
       }
       const list = otherRoleIds.concat(roleIds);
       await setAssignmentListPreservingHours(c.sector, c.date, shiftType, list, "manual", workerId, cs, ce);
-      ui.assignments = await apiGet("shift_assignments", `select=*&sector=eq.${c.sector}&entry_date=eq.${c.date}&order=created_at.asc`).catch(()=>ui.assignments);
+      { const fresh = await apiGet("shift_assignments", `select=*&sector=eq.${c.sector}&entry_date=eq.${c.date}&order=created_at.asc`).catch(()=>null);
+        if(fresh) ui.assignments = (ui.assignments||[]).filter(x=>!(x.sector===c.sector && x.entry_date===c.date)).concat(fresh); } // מיזוג (לא החלפה) - שאר הימים נשארים בטבלה
     }
     ui.tmplCell = null; ui.tmplPickedWorker=null; ui.tmplHoursMode=null; ui.tmplCustomStart=null; ui.tmplCustomEnd=null; ui.tmplCellMsg = null; ui.tmplShowOtherSectors=false;
     ui.loaded = false;
@@ -3597,7 +3621,8 @@ async function runAutoAssign(){
   // השיבוץ האוטומטי לא עובר את המספר הזה; שיבוץ ידני יכול לעבור אותו.
   const weekOf = d => Math.max(0, Math.floor(dates.indexOf(d)/7));
   const tgtCount = {};
-  (ui.assignments||[]).forEach(a=>{ if(a.shadow_of) return; const k = a.worker_id+"|"+weekOf(a.entry_date); tgtCount[k] = (tgtCount[k]||0) + 1; });
+  const tgtCont = splitContinuations(ui.assignments);
+  (ui.assignments||[]).forEach(a=>{ if(a.shadow_of || tgtCont.has(a)) return; const k = a.worker_id+"|"+weekOf(a.entry_date); tgtCount[k] = (tgtCount[k]||0) + 1; });
   const underTarget = (w, d)=> w.target_shifts==null || (tgtCount[w.id+"|"+weekOf(d)]||0) < w.target_shifts;
   const fairnessRatio = w => availCount[w.id]>0 ? (assignCount[w.id]/availCount[w.id]) : Infinity;
   const byFairness = (a,b)=> (fairnessRatio(a)-fairnessRatio(b)) || (assignCount[a.id]-assignCount[b.id]) || a.name.localeCompare(b.name,"he");
@@ -4157,7 +4182,7 @@ function exportPivot(){
     const cells = dates.map(d=>{
       const es = (ui.entriesByWorker[w.id]||{})[d];
       if(!es||!es.length) return "-";
-      return es.map(e=> e.shift_type==="custom" ? (workerIsMoked(w,"")?`יכול רק ${e.custom_start}-${e.custom_end}`:`${e.custom_start}-${e.custom_end}`) : SHIFT_LABELS[e.shift_type]).join(", ");
+      return es.map(e=> e.shift_type==="custom" ? (workerIsMoked(w,"")?`יכול רק ${escapeHtml(e.custom_start)}-${escapeHtml(e.custom_end)}`:`${escapeHtml(e.custom_start)}-${escapeHtml(e.custom_end)}`) : SHIFT_LABELS[e.shift_type]).join(", ");
     });
     lines.push([w.name, ...cells].join("\t"));
   });
@@ -4376,7 +4401,8 @@ function attachHandlers(){
   app.onchange = e=>{ const act = e.target && e.target.dataset ? String(e.target.dataset.action||"") : ""; if(window.Portal && act.startsWith("portal-")) return window.Portal.onChange(App, e); return onAppChange(e); };
   app.oninput = e=>{ if(window.Portal) window.Portal.onInput(App, e); };
   app.onkeydown = e=>{ if(window.Portal) window.Portal.onKey(App, e); };
-  ["dragover","dragleave","drop"].forEach(t=>app.addEventListener(t, e=>{ if(window.Portal && window.Portal.onDrag) window.Portal.onDrag(App, e); }));
+  // (2026-10-25) נרשם פעם אחת בלבד - אחרת כל ציור מחדש הוסיף מאזין, וקבצים שנגררו צורפו כמה פעמים
+  if(!app.__dragBound){ app.__dragBound = true; ["dragover","dragleave","drop"].forEach(t=>app.addEventListener(t, e=>{ if(window.Portal && window.Portal.onDrag) window.Portal.onDrag(App, e); })); }
   document.getElementById("headerActions").onclick = onAppClick;
 }
 
@@ -4496,8 +4522,9 @@ function onAppClick(e){
   if(a==="period-prev" || a==="period-next"){
     const team = teamById(S.identity.teamId);
     ui.periodStart = shiftPeriod(ui.periodStart, team, a==="period-prev"?-1:1);
-    ui.entries = null; return render();
+    ui.entries = null; ui.subError = null; ui.saveMsg = null; ui.blockMsg = null; return render();
   }
+  if(a==="sub-retry"){ ui.subError = null; return render(); }
   if(a==="toggle-shift"){
     const d = el.dataset.date, ty = el.dataset.type;
     ui.entries[d] = ui.entries[d] || {types:[], customOn:false, customStart:"07:00", customEnd:"15:00", dayStatus:null};

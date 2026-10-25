@@ -272,8 +272,8 @@ function renderTraining(App, session){
     <thead><tr><th style="text-align:right;">לומדה</th><th>פורסמה</th><th>סטטוס</th></tr></thead>
     <tbody>${list.map(t=>`<tr class="portal-click" data-action="portal-open-quiz" data-id="${t.id}">
       <td style="text-align:right;">${esc(t.title)}${t.passed?"":' <span class="muted" style="font-size:.85em;">— לחצו למעבר על הבוחן</span>'}</td>
-      <td>${App.fmtDateHeb(String(t.published_at).slice(0,10))}</td>
-      <td>${t.passed ? `<span class="portal-task-icon done">✔</span> בוצע ${t.completed_at?App.fmtDateHeb(String(t.completed_at).slice(0,10)):""}` : `🕒 טרם בוצע`}</td>
+      <td>${App.fmtDateHeb(locDay(App, t.published_at))}</td>
+      <td>${t.passed ? `<span class="portal-task-icon done">✔</span> בוצע ${t.completed_at?App.fmtDateHeb(locDay(App, t.completed_at)):""}` : `🕒 טרם בוצע`}</td>
     </tr>`).join("")}</tbody>
   </table></div>` + renderWorkerTrainingExtras(App, session);
 }
@@ -502,12 +502,13 @@ function hbFromCache(App, session){
 }
 function hbClear(session){ try{ if(session) localStorage.removeItem(hbKey(session)); }catch(e){} }
 async function hbLoad(App, session){
-  if(HB.pending) return; HB.pending = true; P.checkedSession = true;
+  if(HB.pending) return; HB.pending = true; P.checkedSession = true; const gen = USER_GEN;
   try{
     const team = App.teamById(session.team_id);
     let periodStart = null; try{ periodStart = team ? await App.submitPeriodStart(team) : null; }catch(e){}
     const from = App.fmtDate(App.addDays(new Date(), -1)), to = App.fmtDate(App.addDays(new Date(), 35));
     const d = await App.apiRpc("worker_home_bundle", {p_token: session.token, p_from: from, p_to: to, p_period_start: periodStart});
+    const curS = loadSession(App); if(gen !== USER_GEN || !curS || curS.token !== session.token){ if(gen === USER_GEN) HB.pending = false; return; } // התשובה הגיעה אחרי החלפת משתמש - מתעלמים
     if(!d || !d.info){ HB.pending = false; hbClear(session); saveSession(App, null); P.shifts = null; T.data = null; F.data = null; return App.render(); }
     const info = d.info;
     if(!!info.schedule_editor !== !!session.schedule_editor){ const cur = loadSession(App); if(cur) saveSession(App, Object.assign({}, cur, {schedule_editor: !!info.schedule_editor})); }
@@ -737,7 +738,7 @@ function dmgReportHtml(App, r, images){
     <table class="dmg-table">${dmgFieldsFor(r).map(([k,l])=>`<tr><th>${l}</th><td style="white-space:pre-wrap;">${esc(dmgVal(r,k))||'<span class="muted">—</span>'}</td></tr>`).join("")}</table>
     ${(()=>{
       const imgs = images===null ? null : (images||[]).map(x=>typeof x==="string" ? {src:x, meta:{}} : x);
-      const thumbs = list=>list.length?`<div class="dmg-imgs">${list.map(x=>`<a href="${x.src}" target="_blank"><img src="${x.src}" alt=""></a>`).join("")}</div>`:"";
+      const thumbs = list=>list.length?`<div class="dmg-imgs">${list.map(x=>`<a href="${safeSrc(x.src)}" target="_blank"><img src="${safeSrc(x.src)}" alt=""></a>`).join("")}</div>`:"";
       const docName = k=>((DMG_DOCS.find(d=>d[0]===k)||[])[1]||"");
       let h = "";
       const partyBlock = (p,i)=>{
@@ -793,7 +794,7 @@ function dmgFormHtml(App, reporterName){
   const pick = (sec, i, kind)=>`<span class="dmg-pick">
       <label class="btn secondary small" style="cursor:pointer;">📷 צילום<input type="file" accept="image/*" capture="environment" data-action="portal-dmg-files" data-sec="${sec}" data-i="${i}" data-kind="${kind}" style="display:none;"></label>
       <label class="btn secondary small" style="cursor:pointer;">🖼️ מהגלריה<input type="file" accept="image/*" multiple data-action="portal-dmg-files" data-sec="${sec}" data-i="${i}" data-kind="${kind}" style="display:none;"></label></span>`;
-  const thumbs = (list, sec, i, kind)=>list.length?`<div class="dmg-imgs">${list.map((src,j)=>`<span style="position:relative;display:inline-block;"><img src="${src}" alt=""><span data-action="portal-dmg-rmimg" data-sec="${sec}" data-i="${i}" data-kind="${kind}" data-j="${j}" style="position:absolute;top:2px;left:2px;background:#fff;border-radius:50%;padding:0 6px;cursor:pointer;">✕</span></span>`).join("")}</div>`:"";
+  const thumbs = (list, sec, i, kind)=>list.length?`<div class="dmg-imgs">${list.map((src,j)=>`<span style="position:relative;display:inline-block;"><img src="${safeSrc(src)}" alt=""><span data-action="portal-dmg-rmimg" data-sec="${sec}" data-i="${i}" data-kind="${kind}" data-j="${j}" style="position:absolute;top:2px;left:2px;background:#fff;border-radius:50%;padding:0 6px;cursor:pointer;">✕</span></span>`).join("")}</div>`:"";
   const partyCard = (pt, i, roles, title)=>`<div class="dmg-sub">
       <div class="flexbar" style="justify-content:space-between;"><b>👤 ${title}</b>
         <span>${roles.length>1?`<select id="dmg_p${i}_role">${roles.map(o=>`<option ${pt.role===o?"selected":""}>${o}</option>`).join("")}</select>`:""}
@@ -1030,7 +1031,7 @@ async function dmgMakePdf(App, r, images){
     .dmg-table th{background:#f1f1f1;width:32%;} h3{font-size:19px;} h4{font-size:15px;} .dmg-imgs{display:flex;flex-wrap:wrap;gap:6px;} .dmg-imgs img{width:230px;height:auto;max-height:230px;object-fit:contain;border:1px solid #ccc;page-break-inside:avoid;} .muted{color:#666;}</style>
     ${App.logoStripHtml ? App.logoStripHtml(50) : ""}<div style="font-size:12px;color:#666;margin-bottom:6px;">הופק ${App.escapeHtml(dmgFmtDate(new Date().toISOString()))}</div>${dmgReportHtml(App, r, images)}`;
   document.body.appendChild(box);
-  const nm = String(r.worker_name||"").replace(/\s+/g,"-"), dt = String(r.event_at||"").slice(0,10);
+  const nm = String(r.worker_name||"").replace(/\s+/g,"-"), dt = locDay(App, r.event_at);
   try{
     await window.html2pdf().set({margin:[10,8,10,8], filename:`${r.kind==="equipment"?"נזק-לציוד":"תאונה"}-${nm}-${dt}.pdf`, image:{type:"jpeg", quality:0.92},
       html2canvas:{scale:2, useCORS:true}, jsPDF:{unit:"mm", format:"a4", orientation:"portrait"}, pagebreak:{mode:["css","legacy"]}}).from(box).save();
@@ -1173,7 +1174,7 @@ function arReportHtml(App, r, images){
   if(inList) html += "</ul>";
   return `<div class="ar-doc">${html}
     <div class="ar-meta">${esc(r.worker_name||"")}${r.branch?` · ${esc(r.branch)}`:""} · נשלח ${esc(dmgFmtDate(r.created_at))}</div>
-    ${images && images.length ? `<div class="ar-h">תמונות מהזירה</div><div class="dmg-imgs ar-imgs">${images.map(s=>`<img src="${s}" alt="">`).join("")}</div>` : ""}</div>`;
+    ${images && images.length ? `<div class="ar-h">תמונות מהזירה</div><div class="dmg-imgs ar-imgs">${images.map(s=>`<img src="${safeSrc(s)}" alt="">`).join("")}</div>` : ""}</div>`;
 }
 /* זמן הגעה (2026-10-21, סרגיי): בחירה מרשימה נפתחת (חץ) במקום טווחים */
 const AR_MINUTES = Array.from({length:30}, (_,i)=>`${i+1} דק׳`).concat(["35 דק׳","40 דק׳","45 דק׳","50 דק׳","55 דק׳","60 דק׳","יותר משעה"]);
@@ -1224,7 +1225,7 @@ function arFormHtml(App, session){
       + `<div class="field" style="margin-top:6px;">${inp("matesOther","מישהו שלא ברשימה (לא חובה)","text",'maxlength="120"')}</div>`)}
     ${sec("📷 תמונות מהזירה (לא חובה, עד 8)", `<span><label class="btn secondary small" style="cursor:pointer;">📷 צילום<input type="file" accept="image/*" capture="environment" data-action="portal-ar-files" style="display:none;"></label>
       <label class="btn secondary small" style="cursor:pointer;">🖼️ מהגלריה<input type="file" accept="image/*" multiple data-action="portal-ar-files" style="display:none;"></label></span>
-      ${AR.photos.length ? `<div class="dmg-imgs">${AR.photos.map((s,j)=>`<span style="position:relative;display:inline-block;"><img src="${s}" alt=""><span data-action="portal-ar-rmimg" data-j="${j}" style="position:absolute;top:2px;left:2px;background:#fff;border-radius:50%;padding:0 6px;cursor:pointer;">✕</span></span>`).join("")}</div>` : ""}`)}
+      ${AR.photos.length ? `<div class="dmg-imgs">${AR.photos.map((s,j)=>`<span style="position:relative;display:inline-block;"><img src="${safeSrc(s)}" alt=""><span data-action="portal-ar-rmimg" data-j="${j}" style="position:absolute;top:2px;left:2px;background:#fff;border-radius:50%;padding:0 6px;cursor:pointer;">✕</span></span>`).join("")}</div>` : ""}`)}
     ${sec("תיאור האירוע במלל חופשי", `<textarea data-arf="notes" rows="5" maxlength="4000" placeholder="תארו את השתלשלות האירוע במילים שלכם">${esc(f.notes||"")}</textarea>`, true)}
     ${AR.error ? `<p class="shortage">${esc(AR.error)}</p>` : ""}
     <div class="flexbar" style="gap:6px;flex-wrap:wrap;margin-top:8px;">
@@ -1293,7 +1294,7 @@ async function arMakePdf(App, r, images){
   box.innerHTML = `<style>${AR_CSS} .ar-doc{border:none;padding:0;font-size:14px;} .dmg-imgs{display:flex;flex-wrap:wrap;gap:6px;} .dmg-imgs img{width:230px;height:auto;max-height:230px;object-fit:contain;border:1px solid #ccc;page-break-inside:avoid;}</style>
     ${App.logoStripHtml ? App.logoStripHtml(50) : ""}${arReportHtml(App, r, images)}`;
   document.body.appendChild(box);
-  const nm = String(r.worker_name||"").replace(/\s+/g,"-"), dt = String(r.event_at||"").slice(0,10);
+  const nm = String(r.worker_name||"").replace(/\s+/g,"-"), dt = locDay(App, r.event_at);
   try{
     await window.html2pdf().set({margin:[10,8,10,8], filename:`דוח-פעולה-${nm}-${dt}.pdf`, image:{type:"jpeg", quality:0.92},
       html2canvas:{scale:2, useCORS:true}, jsPDF:{unit:"mm", format:"a4", orientation:"portrait"}, pagebreak:{mode:["css","legacy"]}}).from(box).save();
@@ -1404,11 +1405,11 @@ function areqBlobUrl(src){
   if(AREQ_BLOBS.has(src)) return AREQ_BLOBS.get(src);
   try{ const [h, b] = src.split(","); const mime = (h.match(/data:([^;]+)/)||[])[1] || "application/octet-stream";
     const bin = atob(b); const u = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u[i] = bin.charCodeAt(i);
-    const url = URL.createObjectURL(new Blob([u], {type:mime})); AREQ_BLOBS.set(src, url); return url; }catch(e){ return src; }
+    const url = URL.createObjectURL(new Blob([u], {type:mime})); AREQ_BLOBS.set(src, url); return url; }catch(e){ return safeSrc(src); }
 }
 function areqThumb(src, rm){
   const isPdf = String(src).startsWith("data:application/pdf");
-  return `<span class="areq-file">${isPdf ? `<a href="${areqBlobUrl(src)}" target="_blank" class="areq-pdf">📄 PDF</a>` : `<a href="${areqBlobUrl(src)}" target="_blank"><img src="${src}" alt=""></a>`}${rm||""}</span>`;
+  return `<span class="areq-file">${isPdf ? `<a href="${areqBlobUrl(src)}" target="_blank" class="areq-pdf">📄 PDF</a>` : `<a href="${areqBlobUrl(src)}" target="_blank"><img src="${safeSrc(src)}" alt=""></a>`}${rm||""}</span>`;
 }
 function areqPick(action, kind){
   return `<span class="dmg-pick">
@@ -1760,7 +1761,7 @@ function renderLogisticsInner(App, session){
     ${(()=>{ const wt = L.items.filter(it=>eqById[it.id] && eqById[it.id].waiting);
       return wt.length ? `<h3>⏳ ממתין ל...</h3><p class="muted" style="margin-top:-6px;">ציוד שהקב"ט רשם שאת/ה ממתין/ה לקבל. "📦 הוזמן" — הציוד הוזמן ובדרך.</p>
         <ul style="margin:0;padding-inline-start:20px;line-height:1.9;">${wt.map(it=>{ const e = eqById[it.id];
-          return `<li><b>${esc(it.name)}</b>${e.size?` (${esc(e.size)})`:""} <span class="eqs-tag eqs-${e.status==="ordered"?"ordered":"not_received"}">${e.status==="ordered"?"📦 הוזמן":"❌ טרם התקבל"}</span>${e.waiting_since?` <span class="muted" style="font-size:.85em;">· מ-${esc(App.fmtDateHeb(String(e.waiting_since).slice(0,10)))}</span>`:""}</li>`; }).join("")}</ul>` : ""; })()}
+          return `<li><b>${esc(it.name)}</b>${e.size?` (${esc(e.size)})`:""} <span class="eqs-tag eqs-${e.status==="ordered"?"ordered":"not_received"}">${e.status==="ordered"?"📦 הוזמן":"❌ טרם התקבל"}</span>${e.waiting_since?` <span class="muted" style="font-size:.85em;">· מ-${esc(App.fmtDateHeb(locDay(App, e.waiting_since)))}</span>`:""}</li>`; }).join("")}</ul>` : ""; })()}
 
     <h3>בקשת החלפה / ציוד נוסף</h3>
     <p class="muted" style="margin-top:-6px;">הבקשה נשלחת למנהל שלך. הוא מסמן אם הפריט הוחלף או שנופק לך פריט נוסף, והרשימה שלך מתעדכנת לבד.</p>
@@ -1780,7 +1781,7 @@ function renderLogisticsInner(App, session){
     <h3>הבקשות שלי</h3>
     ${reqs.length? `<div style="overflow-x:auto;"><table>
       <thead><tr><th>תאריך</th><th style="text-align:right;">פריט</th><th>כמות</th><th>מידה</th><th>סיבה</th><th>סטטוס</th></tr></thead>
-      <tbody>${reqs.map(r=>`<tr><td>${App.fmtDateHeb(String(r.created_at).slice(0,10))}</td><td style="text-align:right;">${esc(itemName(r.item_id))}${r.note?`<br><span class="muted" style="font-size:.85em;">${esc(r.note)}</span>`:""}</td><td>${r.quantity}</td><td>${esc(r.size||"-")}</td><td>${esc(REQ_REASON[r.reason]||"-")}</td><td>${esc(REQ_STATUS[r.status]||r.status)}</td></tr>`).join("")}</tbody>
+      <tbody>${reqs.map(r=>`<tr><td>${App.fmtDateHeb(locDay(App, r.created_at))}</td><td style="text-align:right;">${esc(itemName(r.item_id))}${r.note?`<br><span class="muted" style="font-size:.85em;">${esc(r.note)}</span>`:""}</td><td>${r.quantity}</td><td>${esc(r.size||"-")}</td><td>${esc(REQ_REASON[r.reason]||"-")}</td><td>${esc(REQ_STATUS[r.status]||r.status)}</td></tr>`).join("")}</tbody>
     </table></div>` : `<p class="muted">עוד לא שלחת בקשות.</p>`}`;
 }
 
@@ -1876,7 +1877,7 @@ function renderManagerRequestsList(App, backHtml, label){
   const pending = list.filter(r=>r.status==="pending");
   const done = list.filter(r=>r.status!=="pending");
   const row = (r, actions)=>`<tr>
-      <td>${App.fmtDateHeb(String(r.created_at).slice(0,10))}</td>
+      <td>${App.fmtDateHeb(locDay(App, r.created_at))}</td>
       <td style="text-align:right;">${esc(r.worker_name)}</td>
       <td style="text-align:right;">${esc(r.item_name)}${r.note?`<br><span class="muted" style="font-size:.85em;">${esc(r.note)}</span>`:""}</td>
       <td>${r.quantity}</td><td>${esc(r.size||"-")}</td><td>${esc(REQ_REASON[r.reason]||"-")}</td><td>${r.current_quantity}</td>
@@ -1994,7 +1995,11 @@ const K = { data:null };            // פיד והתראות של הקב"ט
 const I = { data:null, showAll:false }; // לוח הבקרה של ישראל
 const PV = { page:null, args:{}, stack:[], data:null, form:{}, msg:null, error:null, busy:false, filter:"", onlyOpen:true };
 
-function fmtD(App, s){ return s ? App.fmtDateHeb(String(s).slice(0,10)) : ""; }
+/* (2026-10-25) רק תמונה/PDF כ-data: או קישור https/blob - כדי שערך זדוני לא יריץ קוד אצל המנהל */
+function safeSrc(v){ const t = String(v||""); return /^data:(image\/[a-z0-9.+-]+|application\/pdf);base64,[A-Za-z0-9+/=\s]+$/i.test(t) || /^(https:|blob:)[^"'<>\s]+$/i.test(t) ? t : ""; }
+/* תאריך מקומי (ישראל) של חותמת זמן מהשרת (UTC) - אחרת אחרי חצות מוצג היום הקודם */
+function locDay(App, v){ const t = String(v||""); if(/^\d{4}-\d{2}-\d{2}[T ]\d/.test(t)){ const d = new Date(t.replace(" ","T").replace(/([+-]\d{2})$/,"$1:00")); if(!isNaN(d)) return App.fmtDate(d); } return t.slice(0,10); }
+function fmtD(App, s){ return s ? App.fmtDateHeb(locDay(App, s)) : ""; }
 function pct(n, d){ return d ? Math.round(n*100/d) : 0; }
 /* הקב"ט של העובד = שם הצוות שלו (דניאל כתב, אביחי קדוש, אלירן חמו, עידן בסעד) */
 function workerKabat(App, w){ const t = App.teamById(w.team_id); if(!t) return "ללא קב\"ט"; return (t.sectors||[]).length ? `קב"ט ${t.name}` : t.name; }
@@ -2067,8 +2072,8 @@ function docHtml(App, title, meta, body, link, image, attHtml){
     ${meta?`<p class="muted" style="margin-top:-6px;">${esc(meta)}</p>`:""}
     ${body?`<div style="white-space:pre-wrap;line-height:1.7;">${esc(body)}</div>`:""}
     ${yt?`<div style="position:relative;padding-top:56.25%;margin-top:12px;"><iframe src="https://www.youtube.com/embed/${yt}" style="position:absolute;inset:0;width:100%;height:100%;border:0;" allowfullscreen></iframe></div>`
-        : (link?`<p style="margin-top:12px;"><a href="${esc(link)}" target="_blank" rel="noopener">פתיחת הקישור ↗</a></p>`:"")}
-    ${image?`<img src="${image}" alt="" style="max-width:100%;margin-top:12px;border-radius:8px;">`:""}
+        : (link && /^https?:\/\//i.test(String(link))?`<p style="margin-top:12px;"><a href="${esc(link)}" target="_blank" rel="noopener">פתיחת הקישור ↗</a></p>`:"")}
+    ${image?`<img src="${safeSrc(image)}" alt="" style="max-width:100%;margin-top:12px;border-radius:8px;">`:""}
     ${attHtml||""}
   </div>`;
 }
@@ -2358,7 +2363,7 @@ function incStatusChip(st){
        : st==="pending" ? '<span style="color:#b25e00;font-weight:700;">🕒 ממתין למילוי</span>'
        : '<span style="color:#7a5c00;font-weight:700;">📝 טיוטה</span>';
 }
-function incFmtDate(App, d){ return d ? App.fmtDateHeb(String(d).slice(0,10)) : ""; }
+function incFmtDate(App, d){ return d ? App.fmtDateHeb(locDay(App, d)) : ""; }
 async function incLoadForm(App, ms){
   INC.loadedFor = INC.id;
   try{
@@ -2709,7 +2714,7 @@ function renderIncident(App, ms, pg, a, wrap, loading, msgs){
     const err = INC.error?`<p class="shortage">${esc(INC.error)}</p>`:"";
     const ok = INC.msg?`<p style="color:#1b7f3b;font-weight:600;">${esc(INC.msg)}</p>`:"";
     if(!editable){
-      const imgs = INC.images.map(i=>`<img src="${i.image_data}" alt="">`).join("");
+      const imgs = INC.images.map(i=>`<img src="${safeSrc(i.image_data)}" alt="">`).join("");
       return `${INC_CSS}<div class="card" id="printArea">
         <div class="no-print flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;">
           <span class="backlink" data-action="portal-pv-back">◀ חזרה</span>
@@ -2729,7 +2734,7 @@ function renderIncident(App, ms, pg, a, wrap, loading, msgs){
         ${INC.images.length?`<h3 class="inc-sec">תמונות</h3><div class="inc-imgs">${imgs}</div>`:""}
       </div>`;
     }
-    const imgs = INC.images.map(i=>`<div class="inc-img"><img src="${i.image_data}" alt=""><button class="btn small secondary" style="position:absolute;top:4px;left:4px;padding:2px 7px;" data-action="portal-inc-img-del" data-id="${i.id}" title="הסר">✕</button></div>`).join("");
+    const imgs = INC.images.map(i=>`<div class="inc-img"><img src="${safeSrc(i.image_data)}" alt=""><button class="btn small secondary" style="position:absolute;top:4px;left:4px;padding:2px 7px;" data-action="portal-inc-img-del" data-id="${i.id}" title="הסר">✕</button></div>`).join("");
     const nMissing = Object.keys(INC.missing).length;
     return `${INC_CSS}<div class="card">
       <div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;">
@@ -2987,7 +2992,7 @@ function renderUnitDashboard(App, ms){
       <thead>${head(teams)}</thead>
       <tbody>
         ${secRow("לומדות ובחנים", teams)}
-        ${tr.length ? tr.map(x=>rowOf(x.title, x.published_at?`פורסם ${App.fmtDateHeb(String(x.published_at).slice(0,10))}`:"", x.per_team, teams)).join("") : `<tr><td colspan="${teams.length+2}" class="muted">אין לומדות פעילות</td></tr>`}
+        ${tr.length ? tr.map(x=>rowOf(x.title, x.published_at?`פורסם ${App.fmtDateHeb(locDay(App, x.published_at))}`:"", x.per_team, teams)).join("") : `<tr><td colspan="${teams.length+2}" class="muted">אין לומדות פעילות</td></tr>`}
         ${secRow("קריאת הודעות ותכנים", teams)}
         ${po.length ? po.map(x=>rowOf(x.title, kindLbl[x.kind]||"", x.per_team, teams)).join("") : `<tr><td colspan="${teams.length+2}" class="muted">אין פרסומים</td></tr>`}
         ${secRow("סיכומי תרגיל — נקראו ע\"י המאבטח (30 יום)", teams)}
@@ -3705,6 +3710,7 @@ function pvGo(App, page, args, push){
   if(page==="trn-quiz-new" || page==="trn-quiz-edit") PV.quiz = null;
   PV.delAsk = false;
   if(page==="swap-mgr") PV.swap = null;
+  if(page==="equip-edit"){ EQM.edit = null; EQM.statusSel = null; EQM.statusFor = null; }
   if(page==="swap-hist") PV.swapHist = null;
   if(page==="login-status"){ LS.data = null; LS.filter = "all"; }
   App.S.view = "pview"; App.S.ui = {};
@@ -3907,7 +3913,7 @@ function renderPView(App){
     if(needLoad("trn_report_list", {p_token:tok, p_program_id:Number(a.program), p_worker_id:a.id})) return loading();
     const imgs = PV.data.r||[];
     return wrap(`<h2>דו"חות — ${esc(a.name||"")}</h2>
-      ${imgs.length ? imgs.map(i=>`<div style="margin:10px 0;"><div class="muted">${fmtDT(App,i.uploaded_at)}</div><img src="${i.image_data}" alt="" style="max-width:100%;border:1px solid #e3e9f0;border-radius:8px;"></div>`).join("") : `<p class="muted">אין דו"חות.</p>`}`);
+      ${imgs.length ? imgs.map(i=>`<div style="margin:10px 0;"><div class="muted">${fmtDT(App,i.uploaded_at)}</div><img src="${safeSrc(i.image_data)}" alt="" style="max-width:100%;border:1px solid #e3e9f0;border-radius:8px;"></div>`).join("") : `<p class="muted">אין דו"חות.</p>`}`);
   }
   if(pg==="trn-onboarding"){
     if(needLoad("trn_onboarding_list", {p_token:tok})) return loading();
@@ -4911,6 +4917,16 @@ function navRoot(){ if(!MHS.section) return false; MHS.section = ""; try{ sessio
    (help_log) כדי שאפשר יהיה לשפר את המאגר.
    ================================================================ */
 const HELP = { open:false, msgs:[], draft:"", busy:false, ai:null };
+/* (2026-10-25, סריקה) איפוס נתונים של המשתמש הקודם בכניסה/יציאה - שעובד אחר באותו טלפון לא יראה דיווחים/צ'אט/התראות של הקודם */
+let USER_GEN = 0;
+function resetUserState(){
+  DMG.mine = null; DMG.loadingMine = false; DMG.view = null; DMG.images = null; DMG.list = null; DMG.listAt = 0;
+  AR.mates = null; AR.matesLoading = false; AR.mine = null; AR.view = null;
+  HELP.msgs = []; HELP.draft = ""; HELP.ai = null;
+  N.state = null; MN.state = null; HB.pending = false; HB.fresh = false;
+  EQM.edit = null; EQM.statusSel = null; EQM.statusFor = null; EQM.workers = null;
+  USER_GEN++;
+}
 // who: "w" = עובדים (מאבטח/מוקדן), "m" = מנהלים/קב"טים, "a" = כולם
 const HELP_KB = [
   // ---------- עובדים ----------
@@ -5177,14 +5193,14 @@ async function doLogin(App){
       const res = await App.apiRpc("manager_login", {p_manager_id: sel.id, p_password: code});
       P.busy = false;
       if(!res){ P.error = "קוד שגוי"; P.code=""; return App.render(); }
-      saveSession(App, null); saveMgr(App, res); I.data = null; K.data = null;
+      resetUserState(); saveSession(App, null); saveMgr(App, res); I.data = null; K.data = null;
       P.selectedId = null; P.code = ""; P.query = ""; P.checkedMgr = true; P.firstCode = false;
       return App.render();
     }
     const res = await App.apiRpc("worker_login", {p_worker_id: sel.id, p_code: code});
     P.busy = false;
     if(!res){ P.error = "קוד שגוי"; P.code=""; return App.render(); }
-    saveMgr(App, null); clearMgrMode(App);
+    saveMgr(App, null); clearMgrMode(App); resetUserState();
     saveSession(App, res);
     P.selectedId = null; P.code = ""; P.query = ""; P.shifts = null; P.checkedSession = false; T.data = null; F.data = null; // false: לבדוק מיד הרשאות (למשל עריכת סידור)
     App.render();
@@ -5210,7 +5226,7 @@ async function firstManagerCode(App){
     const res = await App.apiRpc("manager_login", {p_manager_id: sel.id, p_password: code});
     P.busy = false;
     if(!res){ P.error = "הקוד נשמר אבל הכניסה נכשלה - נסו להיכנס שוב"; return App.render(); }
-    saveSession(App, null); saveMgr(App, res); I.data = null; K.data = null;
+    resetUserState(); saveSession(App, null); saveMgr(App, res); I.data = null; K.data = null;
     P.selectedId = null; P.code = ""; P.query = ""; P.checkedMgr = true; P.firstCode = false;
     App.render();
   }catch(err){
@@ -5231,7 +5247,7 @@ function onClick(App, a, el){
     const noteEl = document.getElementById("swapmNote");
     PV.busy = true; PV.error = null; App.render();
     return App.apiRpc("mgr_swap_request", {p_token:ms.token, p_sector:sector, p_date:date, p_shift_type:shiftType, p_worker_id:workerId, p_note: noteEl?noteEl.value:""})
-      .then(()=>{ PV.busy = false; PV.msg = "בקשת החילוף נשמרה."; S2.sel = null; S2.list = null; App.render(); })
+      .then(()=>{ PV.busy = false; PV.msg = "בקשת החילוף נשמרה."; S2.sel = null; S2.list = null; S2.listAt = 0; App.render(); })
       .catch(e=>{ PV.busy = false; PV.error = e.message; App.render(); });
   }
   if(a==="portal-swapm-handle"){
@@ -5245,12 +5261,12 @@ function onClick(App, a, el){
     if(!S2.hsel){ PV.error = "יש לבחור מי החליף"; PV.msg = null; return App.render(); }
     PV.busy = true; PV.error = null; App.render();
     return App.apiRpc("mgr_swap_resolve", {p_token:ms.token, p_id:el.dataset.id, p_new_worker:S2.hsel})
-      .then(r=>{ PV.busy = false; PV.msg = `טופל — ${r && r.new_worker ? r.new_worker + " שובץ במשמרת, והסידור עודכן." : "הסידור עודכן."}`; S2.handle = null; S2.list = null; S2.hist = undefined; S2.rows = null; App.render(); })
+      .then(r=>{ PV.busy = false; PV.msg = `טופל — ${r && r.new_worker ? r.new_worker + " שובץ במשמרת, והסידור עודכן." : "הסידור עודכן."}`; S2.handle = null; S2.list = null; S2.listAt = 0; S2.hist = undefined; S2.rows = null; App.render(); })
       .catch(e=>{ PV.busy = false; PV.error = e.message; App.render(); });
   }
   if(a==="portal-swapm-cancel"){
     const ms = loadMgr(App); if(!ms) return App.render();
-    return App.apiRpc("mgr_swap_cancel", {p_token:ms.token, p_id:el.dataset.id}).then(()=>{ if(PV.swap) PV.swap.list = null; PV.msg = "הבקשה בוטלה."; App.render(); }).catch(e=>{ PV.error = e.message; App.render(); });
+    return App.apiRpc("mgr_swap_cancel", {p_token:ms.token, p_id:el.dataset.id}).then(()=>{ if(PV.swap){ PV.swap.list = null; PV.swap.listAt = 0; } PV.msg = "הבקשה בוטלה."; App.render(); }).catch(e=>{ PV.error = e.message; App.render(); });
   }
   if(a==="portal-mgr-push-enable"){ const ms = loadMgr(App); if(ms && !MN.busy) enableMgrPush(App, ms); return; }
   if(a==="portal-full-schedule"){ const ss = loadSession(App); if(!ss) return App.render(); S.view = "mgrview"; S.ui = {teamId: ss.team_id, workerView: true}; return App.render(); }
@@ -5278,7 +5294,7 @@ function onClick(App, a, el){
     hbClear(s); HB.fresh = false;
     if(s) logoutServer(App, "worker", s.token);
     clearMgrMode(App);
-    saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null; T.data = null; F.data = null; N.state = null; SW.list = null; SW.open = false; SW.msg = null; ST.list = null; ST.at = 0;
+    resetUserState(); saveSession(App, null); P.shifts = null; P.checkedSession = false; L.data = null; L.items = null; T.data = null; F.data = null; N.state = null; SW.list = null; SW.open = false; SW.msg = null; ST.list = null; ST.at = 0;
     return App.render();
   }
   if(a==="portal-go-updates"){ S.view = "updates"; S.ui = {}; F.data = null; T.postOpen = null; T.controlOpen = null; T.attError = null; return App.render(); }
@@ -5289,7 +5305,7 @@ function onClick(App, a, el){
   if(a==="portal-eqm-save") return eqmSave(App, el);
   if(a==="portal-go-ar"){ S.view = "actreport"; S.ui = {}; AR.open = false; AR.view = null; AR.mine = null; AR.okMsg = null; AR.error = null; return App.render(); }
   if(a.indexOf("portal-ar-")===0) return arAction(App, a, el);
-  if(a==="portal-go-damage"){ S.view = "damage"; S.ui = {}; DMG.open = false; DMG.view = null; DMG.images = null; DMG.mgrMode = false; DMG.okMsg = null; return App.render(); }
+  if(a==="portal-go-damage"){ S.view = "damage"; S.ui = {}; DMG.open = false; DMG.view = null; DMG.mine = null; DMG.loadingMine = false; DMG.images = null; DMG.mgrMode = false; DMG.okMsg = null; return App.render(); }
   if(a==="portal-go-logistics"){ S.view = "logistics"; S.ui = {}; T.data = null; L.data = null; L.msg = null; L.error = null; return App.render(); }
   if(a==="portal-log-save") return saveLogistics(App);
   if(a==="portal-log-request") return sendRequest(App);
@@ -5319,7 +5335,7 @@ function onClick(App, a, el){
     if(App.navReset) App.navReset();
     const ms = loadMgr(App);
     if(ms) logoutServer(App, "manager", ms.token);
-    saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null; MN.state = null; INC.pendCount = undefined; INC.opts = null; C.data = null; C.homeCount = undefined; C.month = null; C.sel = null; C.edit = null; CW.data = null; CW.my = null; CW.week = null; CW.lastDone = null; U.data = null; U.error = null; U.loading = false;
+    resetUserState(); saveMgr(App, null); clearMgrMode(App); P.checkedMgr = false; M.session = null; I.data = null; K.data = null; MN.state = null; INC.pendCount = undefined; INC.opts = null; C.data = null; C.homeCount = undefined; C.month = null; C.sel = null; C.edit = null; CW.data = null; CW.my = null; CW.week = null; CW.lastDone = null; U.data = null; U.error = null; U.loading = false;
     S.view = "home"; S.ui = {};
     return App.render();
   }
