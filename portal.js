@@ -2548,6 +2548,29 @@ function onbStations(App, w){
   ];
 }
 function onbDone(w){ return (w.items||[]).filter(i=>i.done).length; }
+/* קליטת עובד חדש גם אצל קב"ט גזרתי (2026-10-25, סרגיי: "אותה רובריקה עם אותן פונקציות גם אצל אלירן ועידן") -
+   אותו מסך בדיוק, לעובדים של הגזרה שלו. ההרשאה בשרת: managers.can_onboarding (onb_access / onb_scope). */
+const ONBK = { tok:null, ok:null, list:null, at:0, busy:false };
+function onbKabatLoad(App, ms){
+  if(ONBK.tok!==ms.token){ ONBK.tok = ms.token; ONBK.ok = null; ONBK.list = null; ONBK.at = 0; }
+  if(ONBK.busy || (ONBK.ok!==null && Date.now()-ONBK.at < 60000)) return;
+  ONBK.busy = true;
+  App.apiRpc("onb_access", {p_token:ms.token}).then(ok=>{
+    ONBK.ok = !!ok;
+    return ok ? App.apiRpc("trn_onboarding_list", {p_token:ms.token}).then(l=>{ ONBK.list = l||[]; }) : null;
+  }).catch(()=>{ ONBK.ok = ONBK.ok || false; }).finally(()=>{ ONBK.at = Date.now(); ONBK.busy = false; App.render(); });
+}
+function onbKabatTile(App, ms){
+  if(ms.can_training) return "";
+  onbKabatLoad(App, ms);
+  if(!ONBK.ok) return "";
+  const l = ONBK.list || [];
+  const notDone = l.filter(w=>onbDone(w)<ONB_KEYS.length).length;
+  const waitKabat = l.filter(w=>!(w.items||[]).some(i=>i.key==="kabat" && i.done)).length;
+  return `<div class="team-tile" data-action="portal-pv" data-page="trn-onboarding"${notDone?' data-open="1"':""}${waitKabat?' style="border-color:#b42318;"':""}>
+    <div style="font-size:1.1em;font-weight:700;">🆕 קליטת עובד חדש${notDone?` (${notDone})`:""}</div>
+    <div class="muted" style="font-size:.85em;margin-top:4px;">${notDone ? `${notDone} לא השלימו את כל התחנות${waitKabat?` · ${waitKabat} ממתינים לתחנת הקב"ט`:""}` : "כל העובדים השלימו"}</div></div>`;
+}
 async function loadIsrael(App, ms){
   I.data = {loading:true};
   try{
@@ -4939,7 +4962,7 @@ async function trnAction(App, a, el){
     if(a==="portal-onb-complete"){
       el.disabled = true;
       await App.apiRpc("trn_onboarding_complete", {p_token:tok, p_worker_id:el.dataset.id, p_done:el.dataset.done==="1"});
-      PV.data = null; I.data = null; PV.msg = null; PV.error = null; return App.render();
+      PV.data = null; I.data = null; ONBK.ok = null; PV.msg = null; PV.error = null; return App.render();
     }
     if(a==="portal-onb-save"){
       const k = el.dataset.key;
@@ -4947,7 +4970,7 @@ async function trnAction(App, a, el){
       await App.apiRpc("trn_onboarding_set", {p_token:tok, p_worker_id:PV.args.id, p_item_key:k,
         p_scheduled_at: at ? new Date(at).toISOString() : null, p_done: document.getElementById("onb_done_"+k).checked,
         p_note: document.getElementById("onb_note_"+k).value});
-      PV.data = null; I.data = null; PV.msg = "נשמר."; PV.error = null; return App.render();
+      PV.data = null; I.data = null; ONBK.ok = null; PV.msg = "נשמר."; PV.error = null; return App.render();
     }
     if(a==="portal-ctl-send"){
       const f = PV.form;
@@ -5252,6 +5275,7 @@ function renderManagerHome(App, ms){
     <div class="grid-teams">
       <div class="team-tile" data-action="portal-pv" data-page="k-controls"><div style="font-size:1.1em;font-weight:700;">סיכומי תרגילים</div><div class="muted" style="font-size:.85em;margin-top:4px;">של המאבטחים שלך</div></div>
       <div class="team-tile" data-action="portal-pv" data-page="k-feed"><div style="font-size:1.1em;font-weight:700;">תכנים והודעות</div><div class="muted" style="font-size:.85em;margin-top:4px;">מקב"ט ההדרכות</div></div>
+      ${onbKabatTile(App, ms)}
     </div>
   </div>`:""}
   ${mgrViewCard(App, ms, sched)}
