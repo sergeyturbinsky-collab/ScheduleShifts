@@ -166,10 +166,10 @@
   .stask-cell{min-width:70px;} /* (2026-10-25, סרגיי) משימות באותו גופן כמו המשמרות */
   .tmpl-pos-hrs{font-size:.72em;font-weight:700;color:#000;white-space:nowrap;line-height:1.35;} /* (2026-10-25, סרגיי) שעות המשמרת בעמודה הימנית - בולד שחור */
   .tmpl-na{background:#2a2a2a;}
-  .tmpl-missing{font-weight:800;}
+  .tmpl-missing{font-weight:700;}
   /* (2026-10-25, סרגיי) משמרת מתואמת - צהוב, גם בפלט; סיום לפני הזמן - תכלת */
   .tmpl-table tr td.tmpl-coord, .mg-table tr td.mg-coord, .mg-table tr th.mg-coord, .cpt-table tr td.cpt-coord{background:#fde047;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-  .tmpl-coord-head{background:#fde047!important;color:#713f12!important;font-weight:800!important;}
+  .tmpl-coord-head{background:#fde047!important;color:#713f12!important;font-weight:700!important;}
   .mg-coord .mg-n{font-weight:700;}
   .hrs-early{background:#a5f3fc;color:#000;font-weight:700;border-radius:4px;padding:0 3px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
   /* (2026-10-25, סרגיי: "שכל השמות והשעות יהיו בbold שחור, בכל המשמרות. כל מקום שבו נדרש צבע - שרק המשבצת עצמה תהיה בצבע") */
@@ -181,7 +181,7 @@
   .tmpl-cell{cursor:pointer;}
   .tmpl-cell:hover{background:#eef6ff;}
   /* חוסר 8 שעות מנוחה בין משמרות עוקבות של אותו עובד (ידני/אוטומטי כאחד) - לבקשת סרגיי, 2026-09-28 */
-  .tmpl-restwarn{background:var(--danger-bg)!important;color:var(--danger)!important;font-weight:800;box-shadow:inset 0 0 0 2px var(--danger);}
+  .tmpl-restwarn{background:var(--danger-bg)!important;color:var(--danger)!important;font-weight:700;box-shadow:inset 0 0 0 2px var(--danger);}
   .tmpl-resttight{background:#fff3a6!important;}
   .tmpl-longwarn{box-shadow:inset 0 0 0 2px #e8590c!important;background-color:#fff4e6;} .tmpl-longwarn-note{display:block;color:#c2410c;font-size:.78em;font-weight:700;}
   /* בפלט הסידור (מסך התצוגה להדפסה + ההדפסה עצמה) לא מוצגים סימוני מגבלות - לא אדום ולא צהוב (2026-10-07) */
@@ -209,6 +209,9 @@
   .cpt-table td.cpt-task{background:#fde7c8;}
   .cpt-table td.cpt-task-cell{background:#fff7ec;vertical-align:top;padding:0;}
   .cpt-task-item{padding:2px 3px;}
+  /* (2026-10-25, סרגיי: "בגרסת המחשב הגופן נראה שונה") <b> בתוך תא שכבר מודגש הופך ל"bolder" (900), ובמחשב (Segoe UI) אין משקל כזה
+     בעברית - הדפדפן מחליף לגופן אחר. קובעים 700 לכל הטקסט בטבלאות הסידור, כמו בטלפון. */
+  .tmpl-table td b, .tmpl-table td strong, .cpt-table td b, .cpt-table td strong, .mg-table td b, .mg-table td strong{font-weight:700;}
   .cpt-task-item + .cpt-task-item{border-top:1px solid #d6c3a5;}
   .cpt-hrs{font-size:10px;color:#1f2937;white-space:nowrap;}
   .cpt-ach{display:inline-block;background:#0c3a6e;color:#fff;font-size:8.5px;font-weight:700;border-radius:6px;padding:0 4px;vertical-align:middle;}
@@ -288,7 +291,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=151"></script>
+<script src="portal.js?v=152"></script>
 <script>
 (function(){
 "use strict";
@@ -1244,7 +1247,7 @@ function renderAggregate(){
              <button class="btn secondary" data-action="open-pin" data-next="unpublish">בטל פרסום</button>`
           : `<button class="btn ok" data-action="open-pin" data-next="publish">📢 פרסם סידור לעובדים</button>`) : ""}
         <button class="btn ok" data-action="share-open">📤 שליחה בוואטסאפ / מייל</button>
-        ${group.citySectors.length ? `<button class="btn secondary" data-action="sched-preview">👁 הצג בתצוגה</button>` : ""}
+        ${group.citySectors.length ? `<button class="btn secondary" data-action="sched-preview">🖼 הצג בתמונה</button>` : ""}
       </div>
       ${group.citySectors.length ? `<p class="muted" style="margin-top:8px;">${isSchedulePublished(group, ui) ? "✅ הסידור לתקופה הזו פורסם — העובדים רואים אותו ב\"המשמרות שלי\"." : "📝 טיוטה — העובדים עדיין לא רואים את הסידור לתקופה הזו."}</p>` : ""}
       ${publishInfoHtml(group, ui)}
@@ -1302,13 +1305,15 @@ function printAreaHtml(team, compact, id){
   const dates = periodDates(ui.periodStart, team);
   const isMoked = group.citySectors[0]==="מוקד";
   const weeks = (isMoked && dates.length>7) ? [dates.slice(0,7), dates.slice(7)] : [dates];
-  const grid = !group.citySectors.length ? `<p class="muted">אין נתוני התקנים להצגה.</p>`
+  ui._printing = true; // חופשות/מילואים/מחלה לא נכנסים לפלט, לתמונה ולהדפסה (2026-10-25)
+  let grid;
+  try{ grid = !group.citySectors.length ? `<p class="muted">אין נתוני התקנים להצגה.</p>`
     : weeks.map((wk,i)=>{
         const g = isMoked ? renderMokedTemplateGrid(group, wk, ui, "view") : (compact ? renderCompactPrintGrid(group, wk, ui) : renderTemplateGrid(group, wk, ui, "view"));
         if(weeks.length===1) return g;
         return `<div class="print-week"${i>0?' style="break-before:page;page-break-before:always;margin-top:18px;"':''}>
           <h3 style="margin:0 0 8px;">שבוע ${i+1}: ${fmtDateHeb(wk[0])} — ${fmtDateHeb(wk[wk.length-1])}</h3>${g}</div>`;
-      }).join("");
+      }).join(""); } finally { ui._printing = false; }
   return `<div id="${id}"${compact?' class="cpt-print"':''}>
     ${compact ? `<div class="print-header">
       ${logoStripHtml(30)}
@@ -2595,7 +2600,7 @@ function absOn(ui, workerId, d){ return (ui.absences||[]).filter(x=>x.worker_id=
 function absKind(x){ const b = ABS_KINDS[x.kind]||{}; return {l: x.label || b.l || x.kind, i: x.icon || b.i || "📝"}; }
 function absTagHtml(x){ const k = absKind(x); return `<span class="abs-tag${x.status==="pending"?" abs-pend":""}" title="${x.status==="pending"?"ממתין לאישור":"מאושר"}">${k.i} ${escapeHtml(k.l)}${x.status==="pending"?" ⏳":""}</span>`; }
 function absencesBlock(dates, ui){
-  if(ui.workerView || ui.previewOpen) return "";
+  if(ui.workerView || ui.previewOpen || ui._printing) return "";
   const list = (ui.absences||[]).filter(x=>x.from<=dates[dates.length-1] && x.to>=dates[0]);
   if(!list.length) return "";
   const rows = list.map(x=>{
@@ -3513,16 +3518,16 @@ function renderScheduleViewer(team){
     <h3 style="margin:4px 0 8px;">${escapeHtml(group.label)} — ${fmtDateHeb(dates[0])} — ${fmtDateHeb(dates[dates.length-1])}</h3>
     ${grid}`;
 }
-/* "הצג בתצוגה" (2026-10-25, סרגיי: "שיציג את זה כתמונה של הפלט, כפי שהיא נשלחת בוואטסאפ, רק ללא צורך בשליחה"):
+/* "הצג בתמונה" (2026-10-25, סרגיי: "שיציג את זה כתמונה של הפלט, כפי שהיא נשלחת בוואטסאפ, רק ללא צורך בשליחה"):
    אותה תמונה בדיוק שנשלחת בוואטסאפ/מייל (makeScheduleImage), מוצגת במסך - בלי לפרסם, להוריד או לשלוח. */
 function renderSchedPreview(team){
   const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
   const pub = isSchedulePublished(group, ui);
-  const back = `◀ חזרה ${ui.mode==="manual"?"לשיבוץ הידני":"לטבלה המרוכזת"}`;
+  const back = `◀ חזרה ${S.view==="mgrview" ? "לסידור" : ui.mode==="manual"?"לשיבוץ הידני":"לטבלה המרוכזת"}`;
   return `<div class="card">
     <span class="backlink" data-action="sched-preview-close">${back}</span>
-    <h2 style="margin:6px 0;">👁 תצוגת הפלט — ${escapeHtml(group.label)}</h2>
-    <p class="muted" style="margin:0 0 10px;">${fmtDateHeb(dates[0])} — ${fmtDateHeb(dates[dates.length-1])} · זו התמונה שנשלחת בוואטסאפ / מייל. ${pub ? "" : "📝 הסידור עדיין טיוטה — לא פורסם לעובדים."}</p>
+    <h2 style="margin:6px 0;">🖼 הסידור בתמונה — ${escapeHtml(group.label)}</h2>
+    <p class="muted" style="margin:0 0 10px;">${fmtDateHeb(dates[0])} — ${fmtDateHeb(dates[dates.length-1])} · ${ui.workerView ? "הסידור כתמונה, כמו שהקב\"ט שולח אותו." : `זו התמונה שנשלחת בוואטסאפ / מייל. ${pub ? "" : "📝 הסידור עדיין טיוטה — לא פורסם לעובדים."}`}</p>
     ${ui.previewErr ? `<p class="shortage">${escapeHtml(ui.previewErr)}</p><button class="btn small" data-action="sched-preview">🔄 נסה שוב</button>`
       : !ui.previewUrl ? `<p class="muted">⏳ יוצר את התמונה...</p>`
       : `<div style="overflow:auto;border:1px solid var(--border);border-radius:8px;background:#fff;">
@@ -3585,6 +3590,7 @@ function renderMgrScheduleView(){
   if(!ui.loaded){ loadAggregateData(team); return `<div class="card"><p>טוען...</p></div>`; }
   // (2026-10-20) אם הטעינה נכשלה - מציגים את השגיאה ולחצן "נסה שוב" במקום מסך ריק/"טוען..." לנצח.
   if(ui.loadError || !ui.workers) return `<div class="card"><span class="backlink" data-action="go-home">◀ חזרה</span><h3>הטעינה נכשלה</h3><p class="shortage">${escapeHtml(ui.loadError||"שגיאה לא ידועה")}</p><button class="btn" data-action="agg-reload">🔄 נסה שוב</button></div>`;
+  if(ui.previewOpen) return renderSchedPreview(team);
   const group = sectorGroupForTeam(team);
   const published = isSchedulePublished(group, ui);
   const viewLabel = !(team.sectors||[]).length ? "מוקד" : (group.citySectors.some(c=>POOLED_CITY_SECTORS.includes(c)) ? "ירושלים וסובב ירושלים" : group.citySectors.join(" / "));
@@ -3594,6 +3600,7 @@ function renderMgrScheduleView(){
     <div class="flexbar no-print" style="margin-bottom:8px;">
       <button class="btn small secondary" data-action="mgrview-prev">◀ תקופה קודמת</button>
       <button class="btn small secondary" data-action="mgrview-next">תקופה הבאה ▶</button>
+      ${published ? `<button class="btn small secondary" data-action="sched-preview">🖼 הצג בתמונה</button>` : ""}
       ${ui.workerView ? "" : `<button class="btn small" data-action="portal-pv" data-page="swap-mgr" data-id="${team.id}" style="margin-inline-start:auto;">🔁 מבקש חילוף</button>`}
     </div>
     ${published ? `
@@ -4246,7 +4253,7 @@ function renderManualBuild(team){
       <button class="btn ok" data-action="manual-done" style="margin-top:8px;">✔ סיימתי</button>
       <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
       <button class="btn ok small" data-action="share-open" style="margin-top:8px;">📤 שליחה בוואטסאפ / מייל</button>
-      <button class="btn secondary small" data-action="sched-preview" style="margin-top:8px;">👁 הצג בתצוגה</button>
+      <button class="btn secondary small" data-action="sched-preview" style="margin-top:8px;">🖼 הצג בתמונה</button>
     </div>
     ${bottomTables}
     ${renderTmplCellOverlay()}
@@ -4263,7 +4270,7 @@ function renderManualBuild(team){
     <button class="btn ok" data-action="manual-done" style="margin-top:8px;">✔ סיימתי</button>
     <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
     <button class="btn ok small" data-action="share-open" style="margin-top:8px;">📤 שליחה בוואטסאפ / מייל</button>
-    <button class="btn secondary small" data-action="sched-preview" style="margin-top:8px;">👁 הצג בתצוגה</button>
+    <button class="btn secondary small" data-action="sched-preview" style="margin-top:8px;">🖼 הצג בתמונה</button>
   </div>
   ${bottomTables}
   ${renderMokedCellOverlay()}`;
