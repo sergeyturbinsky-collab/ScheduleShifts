@@ -2537,8 +2537,9 @@ function renderKabatUpdates(App, ms){
 const ONB_KEYS = ["general","training","kabat","moked","weapon","logistics"];
 function onbStations(App, w){
   const t = App.teamById(w.team_id) || {};
-  /* חיפה (2026-10-25, סרגיי - "אלו הרובריקות הסופיות"): 3 משמרות חפיפה, לכל אחת תאריך ביצוע וחונך */
-  if((t.sectors||[]).includes("חיפה")) return [
+  /* (2026-10-25, סרגיי - "אלו הרובריקות הסופיות", בחיפה; 2026-10-26: "תעתיק את האיזור האישי של אלירן גם לעידן, אביחי ודניאל")
+     כל גזרות המאבטחים: 3 משמרות חפיפה, לכל אחת תאריך ביצוע וחונך */
+  if((t.sectors||[]).length) return [
     {key:"general",   who:"קב\"ט הגזרה", what:"שיחה כללית"},
     {key:"kabat",     who:"קב\"ט / אחמ\"ש / ישראל ב.", what:"נהלים והכרת הגזרה"},
     {key:"moked",     who:"קב\"ט / אחמ\"ש", what:"מוקד ומכשירים"},

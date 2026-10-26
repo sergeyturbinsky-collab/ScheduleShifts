@@ -145,12 +145,12 @@
   .mg-table thead th{background:#f4f7fb;font-size:12px;}
   .mg-table th.mg-day{width:44px;background:#f4f7fb;font-size:11px;vertical-align:middle;}
   .mg-table tr.mg-row{border-top:2px solid #c9d4e2;}
-  .mg-sub{font-size:9.5px;font-weight:700;color:#000;}
+  .mg-sub{font-size:9.5px;font-weight:400;color:#6b7280;} .hstyle .mg-sub{font-weight:700;color:#000;}
   .mg-n{line-height:1.25;padding:2px 0;} .mg-n + .mg-n{border-top:1px dashed #e5e9f0;}
   .mg-n .ach-tag{font-size:.62em;padding:0 3px;}
   .mg-h{font-size:10px;color:#4b5563;white-space:nowrap;}
   .mg-role{font-size:9px;background:#eef3fa;border-radius:6px;padding:0 3px;color:#1f4e8c;}
-  .mg-bad{background:var(--danger-bg);color:#111;font-weight:700;} .mg-tight{background:#fff3a6;}
+  .mg-bad{color:#b42318;font-weight:700;} .hstyle .mg-bad{background:var(--danger-bg);color:#111;} .mg-tight{background:#fff3a6;}
   .mg-sh{color:#6b7280;font-style:italic;}
   .mg-miss{color:#b42318;font-weight:700;font-size:11px;}
   .mg-table td.mg-na{background:#2a2a2a;}
@@ -164,7 +164,7 @@
   .mg-abs td{background:#faf5ff;color:#6b21a8;text-align:right;font-size:11px;}
   .tmpl-fixed th,.tmpl-fixed td{white-space:normal;overflow-wrap:anywhere;}
   .stask-cell{min-width:70px;} /* (2026-10-25, סרגיי) משימות באותו גופן כמו המשמרות */
-  .tmpl-pos-hrs{font-size:.72em;font-weight:700;color:#000;white-space:nowrap;line-height:1.35;} /* (2026-10-25, סרגיי) שעות המשמרת בעמודה הימנית - בולד שחור */
+  .tmpl-pos-hrs{font-size:.72em;font-weight:400;color:#4b5563;white-space:nowrap;line-height:1.35;} .hstyle .tmpl-pos-hrs{font-weight:700;color:#000;} /* (2026-10-26, סרגיי) העיצוב החדש של הסידור (בולד שחור, תכלת, צהוב) - רק בחיפה (hstyle) */
   .tmpl-na{background:#2a2a2a;}
   .tmpl-missing{font-weight:700;}
   /* (2026-10-25, סרגיי) משמרת מתואמת - צהוב, גם בפלט; סיום לפני הזמן - תכלת */
@@ -173,11 +173,11 @@
   .mg-coord .mg-n{font-weight:700;}
   .hrs-early{background:#a5f3fc;color:#000;font-weight:700;border-radius:4px;padding:0 3px;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
   /* (2026-10-25, סרגיי: "שכל השמות והשעות יהיו בbold שחור, בכל המשמרות. כל מקום שבו נדרש צבע - שרק המשבצת עצמה תהיה בצבע") */
-  .tmpl-table td:not(.tmpl-pos):not(.tmpl-na), .tmpl-table td:not(.tmpl-pos) .muted, .tmpl-table td .tmpl-shadow{color:#111!important;font-weight:700;font-style:normal!important;}
-  .mg-table td, .mg-table td .mg-h, .mg-table td .mg-n{color:#111;font-weight:700;}
-  .cpt-table tbody td, .cpt-table .cpt-hrs{color:#000;font-weight:700;}
-  .tmpl-table tr td.tmpl-early, .cpt-table tr td.cpt-early, .mg-table .mg-n.mg-early{background:#a5f3fc;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-  .tmpl-restwarn{color:#111!important;}
+  .hstyle .tmpl-table td:not(.tmpl-pos):not(.tmpl-na), .hstyle .tmpl-table td:not(.tmpl-pos) .muted, .hstyle .tmpl-table td .tmpl-shadow{color:#111!important;font-weight:700;font-style:normal!important;}
+  .hstyle .mg-table td, .hstyle .mg-table td .mg-h, .hstyle .mg-table td .mg-n{color:#111;font-weight:700;}
+  .hstyle .cpt-table tbody td, .hstyle .cpt-table .cpt-hrs{color:#000;font-weight:700;}
+  .hstyle .tmpl-table tr td.tmpl-early, .hstyle .cpt-table tr td.cpt-early, .hstyle .mg-table .mg-n.mg-early{background:#a5f3fc;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  .hstyle .tmpl-restwarn{color:#111!important;}
   .tmpl-cell{cursor:pointer;}
   .tmpl-cell:hover{background:#eef6ff;}
   /* חוסר 8 שעות מנוחה בין משמרות עוקבות של אותו עובד (ידני/אוטומטי כאחד) - לבקשת סרגיי, 2026-09-28 */
@@ -202,7 +202,7 @@
   .cpt-table .cpt-sub{font-size:9px;font-weight:400;color:#374151;}
   .cpt-table td.cpt-shift{background:#e8eef7;font-weight:700;}
   .cpt-table td.cpt-hcol{background:#f4f7fb;font-size:10px;padding:2px 1px;}
-  .cpt-table td.cpt-hcol .tmpl-pos-hrs{font-size:9.5px;color:#000;font-weight:700;white-space:nowrap;}
+  .cpt-table td.cpt-hcol .tmpl-pos-hrs{font-size:9.5px;color:#111;font-weight:400;white-space:nowrap;} .hstyle .cpt-table td.cpt-hcol .tmpl-pos-hrs{color:#000;font-weight:700;}
   .cpt-table tr.cpt-first td{border-top:2px solid #1f4e8c;}
   .cpt-table td.cpt-na{background:#4b5563;}
   .cpt-table td.cpt-missing{color:#b42318;font-style:italic;}
@@ -291,7 +291,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=156"></script>
+<script src="portal.js?v=157"></script>
 <script>
 (function(){
 "use strict";
@@ -2517,7 +2517,7 @@ function renderTemplateGrid(group, dates, ui, mode){
   }).join("");
 
   const banner = mode==="manual" ? longChainBanner(restViolations, dates, id=>{ const x = workers.find(y=>y.id===id) || allWorkersById[id]; return x?x.name:"?"; }) : "";
-  return blocksHtml ? banner + blocksHtml + absencesBlock(dates, ui) : `<p class="muted">אין תקן מוגדר לגזרות אלו.</p>`;
+  return blocksHtml ? hsWrap(group, banner + blocksHtml + absencesBlock(dates, ui)) : `<p class="muted">אין תקן מוגדר לגזרות אלו.</p>`;
 }
 
 /* פלט PDF מתומצת (2026-10-21, סרגיי: "שהפלט לא יתפרס על פני כל כך הרבה עמודים... כדוגמת טבלת האקסל"):
@@ -2581,7 +2581,7 @@ function renderCompactPrintGrid(group, dates, ui){
     return `<table class="cpt-table"><colgroup><col style="width:54px"><col style="width:104px">${dates.map(()=>"<col>").join("")}</colgroup>
       <thead>${head}</thead><tbody>${body}${taskRows}</tbody></table>`;
   }).join("");
-  return tables || `<p class="muted">אין תקן מוגדר לגזרות אלו.</p>`;
+  return tables ? hsWrap(group, tables) : `<p class="muted">אין תקן מוגדר לגזרות אלו.</p>`;
 }
 
 /* ================================================================
@@ -3474,7 +3474,7 @@ function renderMobileGrid(group, dates, ui){
   const rest = computeRestViolations(ui.allAssignments || ui.assignments || []);
   const tdata = buildTemplateData(group, dates, S.quotas);
   const absSector = (tdata.find(x=>x.buckets.length)||{}).sector; // חופשות - פעם אחת, בטבלה הראשונה
-  return tdata.map(sec=>{
+  return hsWrap(group, tdata.map(sec=>{
     if(!sec.buckets.length) return "";
     const buckets = sec.buckets.slice().sort((a,b)=>(MG_ORDER[a.key]||9)-(MG_ORDER[b.key]||9) || a.minStart.localeCompare(b.minStart));
     const stdOf = b=>{ const cnt = {}; Object.values(b.perDate).forEach(q=>{ if(q){ const k = `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`; cnt[k]=(cnt[k]||0)+1; } }); return Object.keys(cnt).sort((x,y)=>cnt[y]-cnt[x])[0]||""; };
@@ -3508,7 +3508,7 @@ function renderMobileGrid(group, dates, ui){
       return `<tr class="mg-row"><th class="mg-day">${MG_DOW[dow]}<br>${String(dt.getDate()).padStart(2,"0")}/${String(dt.getMonth()+1).padStart(2,"0")}${extra?`<div class="mg-sub">${extra}</div>`:""}</th>${cells}</tr>${taskRow}${absRow}`;
     }).join("");
     return `<div class="tmpl-sector-head">${escapeHtml(sec.sector)}</div><table class="mg-table"><thead>${head}</thead><tbody>${rows}</tbody></table>`;
-  }).join("");
+  }).join(""));
 }
 function responsiveGrid(desktopHtml, group, dates, ui){
   return `<div class="sched-desk">${desktopHtml}</div><div class="sched-mob">${renderMobileGrid(group, dates, ui)}</div>`;
@@ -4234,10 +4234,17 @@ function renderPivotCard(group, dates, ui){
 }
 /* (2026-10-25, סרגיי: "בתצורה אצל אלירן חמו בשיבוצי משמרת") סדר אחר במסכי השיבוץ של הגזרה של אלירן (חיפה):
    טבלת הסידור, טבלת הזמינות של כל עובד, מי לא הגיש, מי זמין בכל יום, כמה משמרות לכל עובד. בשאר הגזרות - ללא שינוי. */
+/* (2026-10-26, סרגיי: "תעתיק את האיזור האישי של אלירן גם לעידן, אביחי ודניאל") - הסדר הזה בכל גזרות המאבטחים (לא מוקד) */
 function isEliranLayout(group){
-  const t = teamByName("אלירן חמו");
-  return !!t && (group.teamIds||[]).includes(t.id);
+  return !!group && (group.citySectors||[]).length > 0 && group.citySectors[0] !== "מוקד";
 }
+/* העיצוב החדש של טבלת הסידור (שמות ושעות בבולד שחור, תכלת לסיום מוקדם, צבע רק במשבצת) - רק בחיפה של אלירן.
+   בשאר הגזרות הצבעים נשארים כמו שהיו (2026-10-26, סרגיי: "את הצבעים תשאיר פרגמטיים כמו שהם, ללא צהוב וכו'") */
+function isHaifaStyle(group){
+  const t = teamByName("אלירן חמו");
+  return !!t && !!group && (group.teamIds||[]).includes(t.id);
+}
+function hsWrap(group, html){ return isHaifaStyle(group) ? `<div class="hstyle">${html}</div>` : html; }
 
 function renderManualBuild(team){
   const ui = S.ui;
