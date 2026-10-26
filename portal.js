@@ -4023,7 +4023,7 @@ function renderLoginStatus(App, ms, wrap, loading){
   const f = LS.filter;
   const show = u=> f==="all" || lsState(u)===f;
   const row = u=>`<div class="ls-row"><span class="ls-name">${esc(u.name)}${u.role?` <span class="muted" style="font-size:.8em;">${esc(u.role)}</span>`:""}</span>${badge[lsState(u)]} ${devOf(u)}
-      <span class="muted ls-when">${u.last_at ? `כניסה אחרונה: ${esc(fmtDT(App, u.last_at))} (${ago(u.last_at)})${u.logins>1?` · ${u.logins} כניסות`:""}` : "לא נרשמה כניסה"}${u.seen_at?` · פעיל לאחרונה ${ago(u.seen_at)}`:""}${u.push_ok_at?` · התראה אחרונה נמסרה ${ago(u.push_ok_at)}`:""}</span></div>`;
+      <span class="muted ls-when">${u.seen_at ? `פתח את האפליקציה לאחרונה: ${esc(fmtDT(App, u.seen_at))} (${ago(u.seen_at)})` : ""}${u.seen_at && u.last_at ? " · " : ""}${u.last_at ? `הזדהה עם קוד: ${esc(fmtDT(App, u.last_at))} (${ago(u.last_at)})${u.logins>1?` · ${u.logins} פעמים`:""}` : (u.seen_at ? "" : "לא נרשמה כניסה")}${u.push_ok_at?` · התראה אחרונה נמסרה ${ago(u.push_ok_at)}`:""}</span></div>`;
   const groups = []; const gIdx = {};
   const add = (title, u)=>{ if(!(title in gIdx)){ gIdx[title] = groups.length; groups.push({title, list:[]}); } groups[gIdx[title]].list.push(u); };
   mgs.forEach(u=>add("מנהלים וקב\"טים", u));
@@ -4044,7 +4044,7 @@ function renderLoginStatus(App, ms, wrap, loading){
       .ls-sum .ls-tot td{font-weight:800;background:#f6f8fa;} .ls-g{border:1px solid var(--border);border-radius:8px;padding:6px 10px;margin:8px 0;} .ls-g summary{cursor:pointer;padding:4px 0;}</style>
     <div class="flexbar" style="justify-content:space-between;flex-wrap:wrap;gap:6px;"><h2 style="margin:0;">🟢 סטטוס מחוברים</h2>
       <span><button class="btn small secondary" data-action="portal-ls-openall">${LS.openAll?"➖ לסגור הכל":"➕ לפתוח הכל"}</button> <button class="btn small secondary" data-action="portal-ls-refresh">🔄 רענון</button></span></div>
-    <p class="muted" style="font-size:.85em;margin:4px 0 8px;">"מחובר" = נכנס לאיזור האישי והכניסה עדיין בתוקף (30 יום). "התראות" = הפעיל התראות במכשיר. "אפליקציה מותקנת"/"דפדפן" = מאיפה נכנס לאחרונה (נרשם מהיום). לחיצה על שם גזרה פותחת את הרשימה שלה.</p>
+    <p class="muted" style="font-size:.85em;margin:4px 0 8px;">"מחובר" = נכנס לאיזור האישי והכניסה עדיין בתוקף (30 יום). "התראות" = הפעיל התראות במכשיר. "אפליקציה מותקנת"/"דפדפן" = מאיפה נכנס לאחרונה (נרשם מהיום). "פתח את האפליקציה לאחרונה" = מתי השתמש לאחרונה; "הזדהה עם קוד" = מתי הקליד את הקוד האישי (אחרי זה הכניסה נשמרת 30 יום, ולכן התאריך יכול להיות ישן). לחיצה על שם גזרה פותחת את הרשימה שלה.</p>
     ${summary}
     <div class="ar-chips" style="margin-bottom:6px;">${chip("all", `הכל (${all.length})`)}${chip("ok", `🟢 מחוברים + התראות (${cnt("ok")})`)}${chip("nopush", `🟡 בלי התראות (${cnt("nopush")})`)}${chip("off", `⚪ לא מחוברים (${cnt("off")})`)}</div>
     ${groups.map(grpHtml).join("")}
