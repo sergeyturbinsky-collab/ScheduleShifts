@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=191"></script>
+<script src="portal.js?v=192"></script>
 <script>
 (function(){
 "use strict";
@@ -3914,6 +3914,11 @@ async function runAutoAssign(){
     (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a);
     assignCount[a.worker_id] = (assignCount[a.worker_id]||0) + 1;
   });
+  { // ימים עם משימה מחוץ למשמרת נספרים כיום עבודה גם בשוויון (2026-10-28)
+    const sd = new Set((ui.assignments||[]).map(a=>a.worker_id+"|"+a.entry_date)), td = new Set();
+    (ui.schedTasks||[]).forEach(t=>{ if(t.worker_id && dates.includes(t.date) && !sd.has(t.worker_id+"|"+t.date)) td.add(t.worker_id+"|"+t.date); });
+    td.forEach(k=>{ const wid = k.split("|")[0]; if(wid in assignCount) assignCount[wid]++; });
+  }
   // כמה משמרות המשבץ רוצה לתת לעובד בשבוע (roster_workers.target_shifts, "ניהול עובדים") - 2026-10-20.
   // השיבוץ האוטומטי לא עובר את המספר הזה; שיבוץ ידני יכול לעבור אותו.
   const weekOf = d => Math.max(0, Math.floor(dates.indexOf(d)/7));
@@ -3943,8 +3948,14 @@ async function runAutoAssign(){
     dates.forEach(d=>((ui.entriesByWorker[w.id]||{})[d]||[]).forEach(x=>{ if(x.shift_type==="morning") m = true; if(x.shift_type==="evening" || x.shift_type==="coordinated") e = true; }));
     return (canBothCache[w.id] = m && e);
   };
+  // (2026-10-28) האיזון בוקר/ערב חל רק ביום שבו העובד זמין גם לבוקר וגם לערב/מתואמת - ביום שבו הוא יכול רק סוג אחד, הוא לא נדחה
+  const canBothDay = (w, d)=>{
+    if(notSubmittedOpen(w, d)) return true;
+    const es = (ui.entriesByWorker[w.id]||{})[d] || [];
+    return es.some(x=>x.shift_type==="morning") && es.some(x=>x.shift_type==="evening" || x.shift_type==="coordinated");
+  };
   const mixPen = (slot, w)=>{
-    const k = slot.sector!=="מוקד" && MIX_OF[slot.shiftType]; if(!k || !canBoth(w)) return 0;
+    const k = slot.sector!=="מוקד" && MIX_OF[slot.shiftType]; if(!k || !canBothDay(w, slot.date)) return 0;
     const c = mixCount[w.id] || {m:0, e:0};
     return Math.max(0, k==="m" ? c.m - c.e : c.e - c.m);
   };
@@ -4008,10 +4019,14 @@ async function runAutoAssign(){
   // מבין הזמינים למשמרת, שלושת מי שהגישו ראשונים את טופס ההגשה לתקופה (constraint_submissions.created_at - ההגשה
   // הראשונה, עדכון מאוחר לא מוריד מקום) קודמים לכל השאר; אחריהם - מנוחה והוגנות כרגיל.
   // (2026-10-24) חיפה עברה חזרה ל"מה כן יכולים" - העדיפות ל-3 הראשונים נשארת לחיפה בכל מקרה
-  const earlyPriority = guardBlockingAt(team, ui.periodStart) || (team.sectors||[]).includes("חיפה");
+  // (2026-10-28, סרגיי: "תתעלם מהכלל של ההתניה של סדר ההגשה, אלא תעשה שיבוץ שוויוני באופן כללי") - בוטלה העדיפות לפי סדר ההגשה
+  const earlyPriority = false;
   const earlyBySlot = new Map(); // slot -> Map(workerId -> מקום בסדר ההגשה)
   const earlyRank = (slot, w)=>{ const e = earlyBySlot.get(slot); if(!e) return 0; return e.has(w.id) ? e.get(w.id) : 1e6; };
-  const tl = (slot, cmp)=>(a,b)=>{ const t = tightBySlot.get(slot); return (mixPen(slot, a) - mixPen(slot, b)) || (earlyRank(slot, a) - earlyRank(slot, b)) || (t ? (t.has(a.id)?1:0)-(t.has(b.id)?1:0) : 0) || cmp(a,b); };
+  // סדר עדיפות: מי שסימן זמינות לפני מי שלא סימן/לא הגיש; אחר כך מי שקיבל פחות משמרות עד עכשיו (כולל ימי משימה) - שוויון;
+  // אחר כך איזון בוקר/ערב; אחר כך מנוחה; ואז ההוגנות הרגילה (יחס לזמינות)
+  const openRank = (slot, w)=>notSubmittedOpen(w, slot.date) ? 1 : 0;
+  const tl = (slot, cmp)=>(a,b)=>{ const t = tightBySlot.get(slot); return (openRank(slot, a) - openRank(slot, b)) || ((assignCount[a.id]||0) - (assignCount[b.id]||0)) || (mixPen(slot, a) - mixPen(slot, b)) || (earlyRank(slot, a) - earlyRank(slot, b)) || (t ? (t.has(a.id)?1:0)-(t.has(b.id)?1:0) : 0) || cmp(a,b); };
   function recordChosenInterval(workerId, newInterval){
     if(!newInterval) return;
     (workerIntervals[workerId] = workerIntervals[workerId]||[]).push(newInterval);
