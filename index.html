@@ -127,12 +127,12 @@
   .overlay{position:fixed;inset:0;background:rgba(10,30,55,.55);display:flex;align-items:center;justify-content:center;z-index:50;}
   .overlay .card{max-width:360px;width:90%;}
   /* חלונית השיבוץ הידני (2026-10-28, סרגיי: "תקטין את החלונית שנפתחת ב-30%, ותוסיף גלגלת מהצד") */
-  .overlay[data-action="tmpl-cell-bg"] .card{width:63%;min-width:270px;max-width:360px;max-height:70vh;overflow-y:scroll;font-size:.9em;padding:12px 14px;margin:0;
-    scrollbar-width:thin;scrollbar-color:#1f4e8c #e3e9f0;overscroll-behavior:contain;}
+  .overlay[data-action="tmpl-cell-bg"] .card{width:63%;min-width:270px;max-width:360px;max-height:70vh;overflow-y:auto;font-size:.9em;padding:12px 14px 12px 20px;margin:0;
+    scrollbar-width:none;overscroll-behavior:contain;}
+  .overlay[data-action="tmpl-cell-bg"] .card::-webkit-scrollbar{display:none;}
   .overlay[data-action="tmpl-cell-bg"] .card h3{font-size:1.05em;margin-top:0;}
-  .overlay[data-action="tmpl-cell-bg"] .card::-webkit-scrollbar{width:8px;}
-  .overlay[data-action="tmpl-cell-bg"] .card::-webkit-scrollbar-track{background:#e3e9f0;border-radius:8px;}
-  .overlay[data-action="tmpl-cell-bg"] .card::-webkit-scrollbar-thumb{background:#1f4e8c;border-radius:8px;}
+  #asgBar{position:fixed;z-index:60;width:6px;border-radius:6px;background:#dbe4ee;pointer-events:none;}
+  #asgBar > div{position:absolute;left:0;right:0;background:#1f4e8c;border-radius:6px;}
   .slot-row{cursor:pointer;}
   .slot-row:hover{background:#f2f8ff;}
   .tmpl-block{border:1px solid var(--border);border-radius:8px;margin-bottom:16px;overflow:hidden;}
@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=172"></script>
+<script src="portal.js?v=173"></script>
 <script>
 (function(){
 "use strict";
@@ -564,6 +564,25 @@ function blockingEntryTypes(quotaShiftType){
   if(quotaShiftType==="combined") return ["morning","evening","combined"];
   return [quotaShiftType];
 }
+
+/* גלגלת גלילה גלויה בחלונית השיבוץ הידני (2026-10-28, סרגיי) - גם בטלפון, שבו פס הגלילה של הדפדפן מוסתר */
+function asgScrollBar(){
+  const card = document.querySelector('.overlay[data-action="tmpl-cell-bg"] > .card');
+  let bar = document.getElementById("asgBar");
+  if(!card || card.scrollHeight <= card.clientHeight + 2){ if(bar) bar.remove(); return; }
+  if(!bar){ bar = document.createElement("div"); bar.id = "asgBar"; bar.appendChild(document.createElement("div")); document.body.appendChild(bar); }
+  const r = card.getBoundingClientRect(), trackH = r.height - 16;
+  bar.style.top = (r.top + 8) + "px"; bar.style.height = trackH + "px"; bar.style.left = (r.left + 6) + "px";
+  const h = Math.max(28, trackH * card.clientHeight / card.scrollHeight);
+  const top = (card.scrollTop / Math.max(1, card.scrollHeight - card.clientHeight)) * (trackH - h);
+  bar.firstChild.style.height = h + "px"; bar.firstChild.style.top = top + "px";
+}
+(function(){
+  let q = false; const go = ()=>{ if(q) return; q = true; requestAnimationFrame(()=>{ q = false; try{ asgScrollBar(); }catch(e){} }); };
+  document.addEventListener("scroll", go, true); window.addEventListener("resize", go);
+  const start = ()=>{ try{ new MutationObserver(go).observe(document.body, {childList:true, subtree:true}); }catch(e){} };
+  if(document.body) start(); else document.addEventListener("DOMContentLoaded", start);
+})();
 
 /* ============== STATE ============== */
 const S = {
