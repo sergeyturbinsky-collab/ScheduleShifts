@@ -5498,7 +5498,7 @@ function navRestore(s){
 function restoreEditSession(App, kind){
   const S = App.S;
   if(kind==="mgr"){
-    const ms = loadMgr(App); if(!ms || !ms.token) return false;
+    const ms = loadMgr(App); if(!ms || !ms.token || !(ms.is_admin || (ms.schedule_team_ids||[]).length)) return false;
     S.pin = "mgr:" + ms.token; S.actorName = ms.name;
     const acc = {}; mgrTeams(App, ms.schedule_team_ids).forEach(t=>acc[t.id] = true);
     S.teamAccess = Object.assign({}, S.teamAccess, acc);

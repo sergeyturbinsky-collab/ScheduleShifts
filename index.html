@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=184"></script>
+<script src="portal.js?v=185"></script>
 <script>
 (function(){
 "use strict";
@@ -725,7 +725,8 @@ async function init(){
   try{ cached = JSON.parse(localStorage.getItem(CFG_KEY) || "null"); }catch(e){}
   const hasCache = !!(cached && Array.isArray(cached.teams) && Array.isArray(cached.quotas));
   // הסשן האישי של המנהל/העורך (לא נשמר כקוד) - משוחזר אחרי שהצוותים ידועים, כדי שלא תתבקש סיסמה אחרי ריענון
-  const reEdit = ()=>{ if(restored && NAV.pinKind && window.Portal && window.Portal.restoreEditSession){ try{ window.Portal.restoreEditSession(App, NAV.pinKind); }catch(e){} } };
+  const reEdit = ()=>{ if(!restored || isSessionPin()) return; if(NAV.pinKind && window.Portal && window.Portal.restoreEditSession){ try{ if(window.Portal.restoreEditSession(App, NAV.pinKind)) return; }catch(e){} }
+    if(["aggregate","admin"].includes(S.view)) tryRestoreEditSession(); };
   if(hasCache){ S.teams = cached.teams; S.quotas = cached.quotas; reEdit(); safeRender(); }
   try{
     const [teams, quotas] = await Promise.all([
@@ -3607,6 +3608,11 @@ function renderPinOverlay(){
   </div>`;
 }
 
+/* (2026-10-28, סרגיי: "המערכת עדיין מבקשת קוד בעת ניסיון לשיבוץ ידני") - מנהל/עורך מחובר באיזור האישי לא צריך קוד:
+   אם הסשן האישי לא פעיל במסך (למשל אחרי ריענון), משחזרים אותו במקום לבקש קוד */
+function tryRestoreEditSession(){
+  try{ return !!(window.Portal && window.Portal.restoreEditSession && (window.Portal.restoreEditSession(App, "mgr") || window.Portal.restoreEditSession(App, "wrk"))); }catch(e){ return false; }
+}
 async function confirmPin(){
   const ui = S.ui;
   const isMgr = isSessionPin(); // מנהל מחובר: הסשן שלו במקום הקוד
@@ -3614,7 +3620,10 @@ async function confirmPin(){
   ui.pinError = null;
   try{
     const ok = await apiRpc("verify_edit_pin", {p_pin: pin});
-    if(!ok){ ui.pinError = "קוד שגוי"; render(); return; }
+    if(!ok){
+      if(isMgr){ ui.pinError = "הכניסה האישית שלך פגה — צא/י מהמערכת והיכנס/י מחדש באיזור האישי."; S.pin = localStorage.getItem("cst_pin") || null; ui.pinPromptFor = ui.pinPromptFor || "manual"; render(); return; }
+      ui.pinError = "קוד שגוי"; render(); return;
+    }
     S.pin = pin; if(!isMgr) localStorage.setItem("cst_pin", pin);
     const next = ui.pinPromptFor;
     const workerId = ui.pinPromptWorkerId, period = ui.pinPromptPeriod;
@@ -5087,6 +5096,7 @@ function onAppClick(e){
     return render();
   }
   if(a==="run-monthly") return runMonthlyReport();
+  if(a==="open-pin" && !isSessionPin() && tryRestoreEditSession()){ ui.pinPromptFor = el.dataset.next; ui.pinPromptWorkerId = el.dataset.worker||null; ui.pinPromptPeriod = el.dataset.period||null; ui.pinError=null; return confirmPin(); }
   if(a==="open-pin"){ ui.pinPromptFor = el.dataset.next; ui.pinPromptWorkerId = el.dataset.worker||null; ui.pinPromptPeriod = el.dataset.period||null; ui.pinError=null; if(isSessionPin()) return confirmPin(); return render(); }
   if(a==="overlay-bg" || a==="cancel-pin"){ ui.pinPromptFor=null; return render(); }
   if(a==="confirm-pin") return confirmPin();
