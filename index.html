@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=175"></script>
+<script src="portal.js?v=176"></script>
 <script>
 (function(){
 "use strict";
@@ -2718,6 +2718,12 @@ function schedTasksAuth(){
 /* חופשה / מילואים / מחלה (2026-10-25, סרגיי): בקשות מנהלתיות ממתינות ומאושרות של עובדי הגזרה - מוצגות לקב"ט מתחת לטבלת
    השיבוץ (כמו המשימות, בצבע סגול נפרד) ובטבלת הזמינות שהוגשה, בתאריכים הרלוונטיים. נטען מ-sched_absences (רק עם הרשאת עריכה). */
 const ABS_KINDS = { vacation:{l:"חופשה", i:"🏖️"}, reserve:{l:"מילואים", i:"🪖"}, sick:{l:"מחלה", i:"🤒"} };
+/* (2026-10-28, סרגיי: "הבקשות מחלה/חופש מאושר וכו' חוסם אפשרות לשיבוץ") - בקשה מאושרת חוסמת גם שיבוץ ידני */
+function absBlock(workerId, d){ return (S.ui && S.ui.absences ? absOn(S.ui, workerId, d) : []).filter(x=>x.status==="approved"); }
+function absBlockedNote(c){
+  const list = ((S.ui && S.ui.workers) || []).map(w=>({w, a:absBlock(w.id, c.date)})).filter(x=>x.a.length);
+  return list.length ? `<p class="muted" style="margin:6px 0;">⛔ לא ניתן לשבץ (בקשה מאושרת): ${list.map(x=>`${escapeHtml(x.w.name)} ${absTagHtml(x.a[0])}`).join(" · ")}</p>` : "";
+}
 function absOn(ui, workerId, d){ return (ui.absences||[]).filter(x=>x.worker_id===workerId && x.from<=d && x.to>=d); }
 function absKind(x){ const b = ABS_KINDS[x.kind]||{}; return {l: x.label || b.l || x.kind, i: x.icon || b.i || "📝"}; }
 function absTagHtml(x){ const k = absKind(x); return `<span class="abs-tag${x.status==="pending"?" abs-pend":""}" title="${x.status==="pending"?"ממתין לאישור":"מאושר"}">${k.i} ${escapeHtml(k.l)}${x.status==="pending"?" ⏳":""}</span>`; }
@@ -3020,7 +3026,7 @@ function renderTmplCellOverlay(){
   const slot = slots.find(s=>s.sector===c.sector && s.date===c.date && s.shiftType===c.type);
   const assignmentsByDate = {};
   (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
-  const workers = ui.workers.filter(w=>!shabbatBlocked(w, c.date, c.type)); // שומרי שבת לא מוצגים בשישי ערב/לילה ושבת ערב
+  const workers = ui.workers.filter(w=>!shabbatBlocked(w, c.date, c.type) && !absBlock(w.id, c.date).length); // שומרי שבת לא מוצגים בשישי ערב/לילה ושבת ערב; בקשה מאושרת - חסום
   const currentList = tmplAssignedList(assignmentsByDate, c.date, c.sector, c.type);
   const currentIds = new Set(currentList.map(a=>a.worker_id));
   const avail = slot ? availableForSlot(slot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(c.sector,c.type)) : [];
@@ -3031,7 +3037,7 @@ function renderTmplCellOverlay(){
   const currentWorker = currentList[c.pos-1] ? (workers.find(w=>w.id===currentList[c.pos-1].worker_id) || (ui.allWorkersById||{})[currentList[c.pos-1].worker_id]) : null;
 
   // --- "הצג זמינים מגזרות אחרות": רק עובדים שסימנו בעצמם זמינות ליום/משמרת הזו, מכל גזרה אחרת - לבקשת סרגיי (2026-09-28) ---
-  const otherWorkers = (ui.otherWorkers || []).filter(w=>!shabbatBlocked(w, c.date, c.type));
+  const otherWorkers = (ui.otherWorkers || []).filter(w=>!shabbatBlocked(w, c.date, c.type) && !absBlock(w.id, c.date).length);
   const allAssignmentsByDate = {};
   (ui.allAssignments||[]).forEach(a=>{ (allAssignmentsByDate[a.entry_date] = allAssignmentsByDate[a.entry_date]||[]).push(a); });
   const otherAvail = slot ? availableForSlot(slot, otherWorkers, ui.otherEntriesByWorker||{}, allAssignmentsByDate, slotKey(c.sector,c.type)) : [];
@@ -3094,6 +3100,7 @@ function renderTmplCellOverlay(){
       <div class="avail-list">
         <button class="btn small ${!currentWorker?"secondary":""}" data-action="tmpl-pick" data-worker="">חוסר / נקה</button>
       </div>
+      ${absBlockedNote(c)}
       <p class="muted" style="margin:8px 0 2px;font-weight:600;">זמינים</p>
       <div class="avail-list">
         ${availOptions.length? availOptions.map(pickBtn).join("") : '<span class="muted">אין עובדים זמינים</span>'}
@@ -3142,7 +3149,7 @@ function renderMokedCellOverlay(){
   const slot = slots.find(s=>s.sector===c.sector && s.date===c.date && s.shiftType===c.type);
   const assignmentsByDate = {};
   (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
-  const workers = ui.workers.filter(w=>!shabbatBlocked(w, c.date, c.type)); // שומרי שבת לא מוצגים בשישי ערב/לילה ושבת ערב
+  const workers = ui.workers.filter(w=>!shabbatBlocked(w, c.date, c.type) && !absBlock(w.id, c.date).length); // שומרי שבת לא מוצגים בשישי ערב/לילה ושבת ערב; בקשה מאושרת - חסום
   const workersById = ui.allWorkersById && Object.keys(ui.allWorkersById).length ? ui.allWorkersById : (()=>{ const m={}; ui.workers.forEach(w=>m[w.id]=w); return m; })();
   const candidates = tmplRoleAssignedListWithOverride(assignmentsByDate, c.date, c.sector, c.type, c.role, workersById, slot?slot.roleCounts:null);
   const currentIds = new Set(candidates.map(a=>a.worker_id));
@@ -3236,6 +3243,7 @@ function renderMokedCellOverlay(){
       <div class="avail-list">
         <button class="btn small ${!currentNames?"secondary":""}" data-action="tmpl-pick" data-worker="">חוסר / נקה</button>
       </div>
+      ${absBlockedNote(c)}
       <p class="muted" style="margin:8px 0 2px;font-weight:600;">זמינים</p>
       <div class="avail-list">
         ${availOptions.length? availOptions.map(pickBtn).join("") : '<span class="muted">אין עובדים זמינים בתפקיד זה</span>'}
@@ -3379,6 +3387,8 @@ async function assignAtPosition(sector, date, shiftType, pos, workerId, customSt
     const team = teamById(ui.teamId);
     ui.loaded = false;
     await loadAggregateData(team);
+    // (2026-10-28, סרגיי) גם בשיבוץ ידני: פחות מ-8 שעות בין משמרות - המשמרת הקודמת מתקצרת (עד שעתיים) ומסומנת בתכלת
+    if(workerId){ try{ const cut = await shortenForRest(team, workerId); if(cut){ ui.buildMsg = `✂ ${cut===1?"משמרת אחת קוצרה":cut+" משמרות קוצרו"} כדי לשמור על 8 שעות מנוחה לפני המשמרת הבאה (מסומן בתכלת).`; render(); } }catch(e){ console.error(e); } }
   }catch(e){
     ui.tmplCellMsg = "שגיאה בשמירה: " + e.message; render();
   }
@@ -4265,7 +4275,7 @@ function scheduleGapsHtml(ui){
    אחרי השיבוץ האוטומטי, במאבטחים: לכל עובד, משמרת שאחריה פחות מ-8 שעות עד המשמרת הבאה - שעת הסיום שלה מוקדמת כך שיישארו
    בדיוק 8 שעות. רק אם הקיצור עד שעתיים, והמשמרת עוד לא בשעות מותאמות; המשמרת המקוצרת מסומנת בתכלת (סיום מוקדם). */
 const REST_CUT_MAX_MIN = 120;
-async function shortenForRest(team){
+async function shortenForRest(team, onlyWorker){
   const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
   const secs = new Set((group.citySectors||[]).filter(x=>x!=="מוקד")); if(!secs.size) return 0;
   const inPeriod = new Set(dates);
@@ -4275,6 +4285,7 @@ async function shortenForRest(team){
   const p2 = n=>String(n).padStart(2,"0");
   let cut = 0;
   for(const wid of Object.keys(byW)){
+    if(onlyWorker && wid!==onlyWorker) continue;
     const list = byW[wid].sort((x,y)=>x.iv.start - y.iv.start);
     for(let i=0; i+1<list.length; i++){
       const P = list[i], N = list[i+1];
@@ -4494,6 +4505,7 @@ function renderManualBuild(team){
       <div class="flexbar"><b>תקופה: ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(dates[dates.length-1])}</b></div>
       <p class="muted">לחצו על משבצת כדי לבחור מי ישובץ אליה, או לסמן "חוסר". משבצות שחורות = לא נדרש באותו יום.</p>
       ${renderTemplateGrid(group, dates, ui, "manual")}
+      ${ui.buildMsg && /^✂/.test(ui.buildMsg) ? `<p style="margin-top:8px;color:#0369a1;font-weight:600;">${escapeHtml(ui.buildMsg)}</p>` : ""}
       ${ui.loaded ? scheduleGapsLive(team, ui) : ""}
       <button class="btn ok" data-action="manual-done" style="margin-top:8px;">✔ סיימתי</button>
       <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
@@ -5054,6 +5066,7 @@ function onAppClick(e){
     if(!workerId){ // חוסר/נקה - מיידי
       return c.role ? assignRoleAtPosition(c.sector, c.date, c.type, c.role, c.ridx, null) : assignAtPosition(c.sector, c.date, c.type, c.pos, null);
     }
+    if(absBlock(workerId, c.date).length){ ui.tmplCellMsg = "לא ניתן לשבץ — לעובד יש בקשה מאושרת (" + absKind(absBlock(workerId, c.date)[0]).l + ") בתאריך הזה."; return render(); }
     ui.tmplPickedWorker = workerId; ui.tmplHoursMode = null; ui.tmplCellMsg = null; ui.tmplRoleOverride = null; ui.tmplCustomStart = null; ui.tmplCustomEnd = null; ui.tmplCellChoice = null;
     return render();
   }
@@ -5063,6 +5076,7 @@ function onAppClick(e){
     const c = ui.tmplCell; if(!c) return;
     const workerId = el.dataset.worker||null;
     if(!workerId) return;
+    if(absBlock(workerId, c.date).length){ ui.tmplCellMsg = "לא ניתן לשבץ — לעובד יש בקשה מאושרת (" + absKind(absBlock(workerId, c.date)[0]).l + ") בתאריך הזה."; return render(); }
     ui.tmplPickedWorker = workerId; ui.tmplHoursMode = null; ui.tmplCellMsg = null; ui.tmplRoleOverride = true; ui.tmplCellChoice = null;
     return render();
   }
