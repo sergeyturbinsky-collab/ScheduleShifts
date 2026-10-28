@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=200"></script>
+<script src="portal.js?v=201"></script>
 <script>
 (function(){
 "use strict";
@@ -4368,6 +4368,10 @@ async function runAutoAssign(){
     if(st){ ui.buildMsg = (ui.buildMsg||"") + ` 🔗 ${st===1?"עובד אחד שובץ":st+" עובדים שובצו"} במשמרת מחוברת (עד ${LONG_CHAIN_HOURS} שעות) כדי לכסות חוסר בשתי משמרות סמוכות.`; }
   }catch(e){ console.error(e); }
   try{
+    const mm = await morningMinPass(team);
+    if(mm){ ui.buildMsg = (ui.buildMsg||"") + ` 🌅 ${mm===1?"עובד אחד הועבר":mm+" עובדים הועברו"} למשמרת הבוקר כדי שבתחילת הבוקר יהיו לפחות 2 מאבטחים.`; }
+  }catch(e){ console.error(e); }
+  try{
     const cut = await shortenForRest(team, null, ui.autoPreKeys);
     if(cut){ ui.buildMsg = (ui.buildMsg||"") + ` ✂ ${cut} משמרות קוצרו כדי לשמור על 8 שעות מנוחה לפני המשמרת הבאה (מסומנות בתכלת).`; }
   }catch(e){ console.error(e); }
@@ -4552,6 +4556,52 @@ async function balancePass(team){
    אחת רציפה של עד 12 שעות: את B במלואה, ואת A מהשעה שבה 12 השעות מתחילות. נשמר כשתי שורות (A עד תחילת B, ו-B), כמו פיצול.
    מתואמת לא נכללת. כל הבדיקות הרגילות חלות: זמינות לשתי המשמרות, 8 שעות מנוחה, 7 ימים ברצף, משימה, חופשה ו-6 בשבוע
    (משמרת מחוברת = 2 משמרות במניין). */
+/* (2026-10-28, סרגיי: "לעולם אל תשאיר מאבטח 1 במשמרת בוקר שמתחיל 07, אלא 2 או יותר, בהתאם לתנאים שרשמנו עד כה") -
+   אחרי כל הסבבים, במאבטחים: משמרת שמתחילה ב-07:00 שבתחילתה יש פחות מ-2 - מעבירים אליה עובד ששובץ בהרצה הזו באותו יום
+   למשמרת אחרת (קודם מתואמת, אחר כך ערב/אחרת), אם הוא זמין לבוקר ועומד בכל הכללים. לא נוגעים בשיבוצים ידניים. */
+async function morningMinPass(team){
+  const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
+  const secs = (group.citySectors||[]).filter(x=>x!=="מוקד"); if(!secs.length) return 0;
+  const slots = buildSlots(dates, group, S.quotas).filter(x=>secs.includes(x.sector) && !x.roleCounts && String(x.start||"").slice(0,5)==="07:00" && (x.required||0) >= 2);
+  const groupHasAch = (ui.workers||[]).some(isGuardAchmash);
+  const wOf = id=>(ui.workers||[]).find(x=>x.id===id);
+  let moved = 0;
+  for(const M of slots){
+    for(let guard=0; guard<3; guard++){
+      const rows = ui.assignments || [];
+      const ivM = shiftInterval({sector:M.sector, shift_type:M.shiftType, entry_date:M.date}); if(!ivM) break;
+      const atStart = rows.filter(a=>a.sector===M.sector && a.entry_date===M.date && a.shift_type===M.shiftType && !a.shadow_of)
+        .map(a=>shiftInterval(a)).filter(x=>x && +x.start<=+ivM.start && +x.end>+ivM.start).length;
+      if(atStart >= 2) break;
+      const abd = {}; rows.forEach(a=>{ (abd[a.entry_date]=abd[a.entry_date]||[]).push(a); });
+      const all = ui.allAssignments || rows;
+      const order = t=>t==="coordinated" ? 0 : t==="evening" ? 1 : 2;
+      const src = rows.filter(a=>a.sector===M.sector && a.entry_date===M.date && a.shift_type!==M.shiftType && !a.shadow_of && !a.custom_start && !a.custom_end && !a.filled_role
+            && !(ui.autoPreKeys && ui.autoPreKeys.has(a.sector+"|"+a.entry_date+"|"+a.shift_type+"|"+a.worker_id)))
+        .sort((x,y)=>order(x.shift_type)-order(y.shift_type));
+      let done = false;
+      for(const r of src){
+        const w = wOf(r.worker_id); if(!w || w.auto_assign_exempt) continue;
+        if(!availableForSlot(M, [w], ui.entriesByWorker, abd, null, false, true).length) continue;
+        if(wouldViolateRest(w.id, ivM, buildWorkerIntervals(all.filter(a=>a!==r && !(a.worker_id===r.worker_id && a.entry_date===r.entry_date && a.shift_type===r.shift_type))))) continue;
+        // לא משאירים את המשמרת שממנה הוא יוצא בלי אחמ"ש
+        if(groupHasAch && r.shift_type!=="coordinated" && isGuardAchmash(w)){
+          const others = rows.filter(a=>a!==r && a.sector===r.sector && a.entry_date===r.entry_date && !a.shadow_of && (a.shift_type===r.shift_type || (r.shift_type==="evening" && a.shift_type==="coordinated")));
+          if(!others.some(a=>isGuardAchmash(wOf(a.worker_id)))) continue;
+        }
+        const keep = rows.filter(a=>a.sector===r.sector && a.entry_date===r.entry_date && a.shift_type===r.shift_type && !a.shadow_of && a.worker_id!==w.id).map(a=>a.worker_id);
+        const mList = rows.filter(a=>a.sector===M.sector && a.entry_date===M.date && a.shift_type===M.shiftType && !a.shadow_of).map(a=>a.worker_id).concat([w.id]);
+        await setAssignmentListPreservingHours(r.sector, r.entry_date, r.shift_type, keep, "auto");
+        await setAssignmentListPreservingHours(M.sector, M.date, M.shiftType, mList, "auto");
+        moved++; done = true;
+        ui.loaded = false; await loadAggregateData(team);
+        break;
+      }
+      if(!done) break;
+    }
+  }
+  return moved;
+}
 async function stretchFill(team){
   const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
   const secs = (group.citySectors||[]).filter(x=>x!=="מוקד"); if(!secs.length) return 0;
