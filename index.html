@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=188"></script>
+<script src="portal.js?v=189"></script>
 <script>
 (function(){
 "use strict";
@@ -4303,6 +4303,10 @@ async function runAutoAssign(){
     if(fixed){ ui.buildMsg = (ui.buildMsg||"") + ` 🔁 סבב תיקון: ${fixed} חוסרים נסגרו בהחלפה בין משמרות באותו יום.`; }
   }catch(e){ console.error(e); }
   try{
+    const st = await stretchFill(team);
+    if(st){ ui.buildMsg = (ui.buildMsg||"") + ` 🔗 ${st===1?"עובד אחד שובץ":st+" עובדים שובצו"} במשמרת מחוברת (עד ${LONG_CHAIN_HOURS} שעות) כדי לכסות חוסר בשתי משמרות סמוכות.`; }
+  }catch(e){ console.error(e); }
+  try{
     const cut = await shortenForRest(team, null, ui.autoPreKeys);
     if(cut){ ui.buildMsg = (ui.buildMsg||"") + ` ✂ ${cut} משמרות קוצרו כדי לשמור על 8 שעות מנוחה לפני המשמרת הבאה (מסומנות בתכלת).`; }
   }catch(e){ console.error(e); }
@@ -4364,6 +4368,73 @@ function scheduleGapsHtml(ui){
    אחרי השיבוץ האוטומטי, במאבטחים: לכל עובד, משמרת שאחריה פחות מ-8 שעות עד המשמרת הבאה - שעת הסיום שלה מוקדמת כך שיישארו
    בדיוק 8 שעות. רק אם הקיצור עד שעתיים, והמשמרת עוד לא בשעות מותאמות; המשמרת המקוצרת מסומנת בתכלת (סיום מוקדם). */
 const REST_CUT_MAX_MIN = 120;
+/* משמרת מחוברת (2026-10-28, סרגיי: "לשבץ את תמיר ביום חמישי למשמרת ערב מהשעה 16:30 ושימשיך עד 04:30 של משמרת הלילה...
+   תבנה לעצמך חוקיות כזו שתשאף למלא כמה שיותר שעות"). אחרי השיבוץ וסבב התיקון, במאבטחים: כשיש באותו יום חוסר בשתי משמרות
+   סמוכות (B, והמשמרת A שלפניה, שנגמרת כש-B מתחילה או חופפת לה), ועובד שזמין לשתיהן ולא משובץ באותו יום - הוא משובץ למשמרת
+   אחת רציפה של עד 12 שעות: את B במלואה, ואת A מהשעה שבה 12 השעות מתחילות. נשמר כשתי שורות (A עד תחילת B, ו-B), כמו פיצול.
+   מתואמת לא נכללת. כל הבדיקות הרגילות חלות: זמינות לשתי המשמרות, 8 שעות מנוחה, 7 ימים ברצף, משימה, חופשה ו-6 בשבוע. */
+async function stretchFill(team){
+  const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
+  const secs = (group.citySectors||[]).filter(x=>x!=="מוקד"); if(!secs.length) return 0;
+  const slots = buildSlots(dates, group, S.quotas).filter(x=>secs.includes(x.sector) && x.shiftType!=="coordinated" && !x.roleCounts);
+  const p2 = n=>String(n).padStart(2,"0"), hm = d=>p2(d.getHours()) + ":" + p2(d.getMinutes());
+  let added = 0;
+  for(const B of slots){
+    for(let guard=0; guard<4; guard++){
+      const rows = ui.assignments || [];
+      const cnt = sl=>rows.filter(a=>a.sector===sl.sector && a.entry_date===sl.date && a.shift_type===sl.shiftType && !a.shadow_of).length;
+      const bShort = cnt(B) < (B.required||0);
+      const ivB = shiftInterval({sector:B.sector, shift_type:B.shiftType, entry_date:B.date}); if(!ivB) break;
+      const As = slots.filter(A=>A!==B && A.sector===B.sector && A.date===B.date && cnt(A) < (A.required||0)).map(A=>({A, iv:shiftInterval({sector:A.sector, shift_type:A.shiftType, entry_date:A.date})}))
+        .filter(x=>x.iv && +x.iv.start < +ivB.start && +x.iv.end >= +ivB.start).sort((x,y)=>y.iv.start - x.iv.start);
+      if(!As.length) break;
+      const {A, iv:ivA} = As[0];
+      const start = new Date(Math.max(+ivA.start, +ivB.end - LONG_CHAIN_HOURS*3600000));
+      if(+start >= +ivB.start) break;
+      const combined = {start, end: ivB.end};
+      const all = ui.allAssignments || rows;
+      const ivAll = buildWorkerIntervals(all);
+      const streakIdx = buildStreakIndex((ui.streakAssignments || all).concat((ui.streakTasks||[]).map(t=>({worker_id:t.worker_id, entry_date:t.date, shift_type:"task"}))));
+      const taskD = taskDaySet(ui);
+      const abd = {}; rows.forEach(a=>{ (abd[a.entry_date]=abd[a.entry_date]||[]).push(a); });
+      const cands = (ui.workers||[]).filter(w=>!w.auto_assign_exempt && !isMokedTeam(S.teams.find(t=>t.id===w.team_id)||{})
+          && !all.some(a=>a.worker_id===w.id && a.entry_date===B.date)
+          && !taskD.has(w.id + "|" + B.date)
+          && availableForSlot(A, [w], ui.entriesByWorker, abd, null, false, true).length
+          && availableForSlot(B, [w], ui.entriesByWorker, abd, null, false, true).length
+          && !wouldViolateRest(w.id, combined, ivAll)
+          && !streakIssues(streakIdx, w.id, B.date, B.shiftType).length
+          && weekLoad(ui, w.id, B.date) < MAX_WEEK_SHIFTS && (w.target_shifts==null || weekLoad(ui, w.id, B.date) < w.target_shifts))
+        .sort((x,y)=>(weekLoad(ui, x.id, B.date) - weekLoad(ui, y.id, B.date)) || x.name.localeCompare(y.name, "he"));
+      const regular = sl=>rows.filter(a=>a.sector===sl.sector && a.entry_date===sl.date && a.shift_type===sl.shiftType && !a.shadow_of).map(a=>a.worker_id);
+      // אם אין עובד פנוי: עובד ששובץ עכשיו (בהרצה הזו) ל-B בשעות הרגילות - מאריכים לו את המשמרת אחורה לתוך A (עד 12 שעות)
+      const ext = rows.filter(a=>a.sector===B.sector && a.entry_date===B.date && a.shift_type===B.shiftType && !a.shadow_of && !a.custom_start && !a.custom_end
+            && !(ui.autoPreKeys && ui.autoPreKeys.has(a.sector+"|"+a.entry_date+"|"+a.shift_type+"|"+a.worker_id)))
+        .map(a=>(ui.workers||[]).find(x=>x.id===a.worker_id)).filter(w=>w && !w.auto_assign_exempt
+          && !all.some(a=>a.worker_id===w.id && a.entry_date===B.date && a.shift_type!==B.shiftType)
+          && availableForSlot(A, [w], ui.entriesByWorker, abd, null, false, true).length
+          && !wouldViolateRest(w.id, combined, buildWorkerIntervals(all.filter(a=>!(a.worker_id===w.id && a.entry_date===B.date && a.shift_type===B.shiftType)))));
+      if(bShort && cands.length){ // עובד פנוי שזמין לשתיהן - סוגר חוסר בשתי המשמרות
+        const w = cands[0];
+        await setAssignmentListPreservingHours(A.sector, A.date, A.shiftType, regular(A).concat([w.id]), "auto", w.id, hm(start), hm(ivB.start));
+        await setAssignmentListPreservingHours(B.sector, B.date, B.shiftType, regular(B).concat([w.id]), "auto", w.id, hm(ivB.start), hm(ivB.end));
+        added++;
+        ui.loaded = false; await loadAggregateData(team);
+        continue;
+      }
+      if(ext.length){
+        const w = ext[0];
+        await setAssignmentListPreservingHours(A.sector, A.date, A.shiftType, regular(A).concat([w.id]), "auto", w.id, hm(start), hm(ivB.start));
+        await asgAtomic(()=>asgCall("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:B.sector, p_entry_date:B.date, p_shift_type:B.shiftType, p_worker_id:w.id, p_custom_start:hm(ivB.start), p_custom_end:hm(ivB.end)}));
+        added++;
+        ui.loaded = false; await loadAggregateData(team);
+        continue;
+      }
+      break;
+    }
+  }
+  return added;
+}
 async function shortenForRest(team, onlyWorker, protectKeys){
   const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
   const secs = new Set((group.citySectors||[]).filter(x=>x!=="מוקד")); if(!secs.size) return 0;
