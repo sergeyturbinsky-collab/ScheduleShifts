@@ -291,7 +291,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=167"></script>
+<script src="portal.js?v=168"></script>
 <script>
 (function(){
 "use strict";
@@ -3788,6 +3788,25 @@ async function runAutoAssign(){
   const underTarget = (w, d)=> w.target_shifts==null || (tgtCount[w.id+"|"+weekOf(d)]||0) < w.target_shifts;
   const fairnessRatio = w => availCount[w.id]>0 ? (assignCount[w.id]/availCount[w.id]) : Infinity;
   const byFairness = (a,b)=> (fairnessRatio(a)-fairnessRatio(b)) || (assignCount[a.id]-assignCount[b.id]) || a.name.localeCompare(b.name,"he");
+  /* חלוקה שוויונית בין בוקר וערב (2026-10-28, סרגיי: "תעשה חלוקה הוגנת ושוויונית בין משמרות ערב ובוקר בין כלל העובדים"):
+     במאבטחים - עובד שכבר קיבל בתקופה יותר משמרות מהסוג הזה מאשר מהסוג השני, נדחה אחרי מי שמאוזן או שקיבל פחות ממנו.
+     חל רק על עובד שזמין לשני הסוגים (סימן בוקר וגם ערב/מתואמת, או לא הגיש בחיפה) - מי שיכול רק סוג אחד לא נפגע. */
+  const MIX_OF = {morning:"m", evening:"e"};
+  const mixCount = {};
+  (ui.assignments||[]).forEach(a=>{ const k = MIX_OF[a.shift_type]; if(!k || a.shadow_of || a.sector==="מוקד") return; const c = mixCount[a.worker_id] = mixCount[a.worker_id] || {m:0, e:0}; c[k]++; });
+  const canBothCache = {};
+  const canBoth = w=>{
+    if(w.id in canBothCache) return canBothCache[w.id];
+    if(notSubmittedOpen(w)) return (canBothCache[w.id] = true);
+    let m = false, e = false;
+    dates.forEach(d=>((ui.entriesByWorker[w.id]||{})[d]||[]).forEach(x=>{ if(x.shift_type==="morning") m = true; if(x.shift_type==="evening" || x.shift_type==="coordinated") e = true; }));
+    return (canBothCache[w.id] = m && e);
+  };
+  const mixPen = (slot, w)=>{
+    const k = slot.sector!=="מוקד" && MIX_OF[slot.shiftType]; if(!k || !canBoth(w)) return 0;
+    const c = mixCount[w.id] || {m:0, e:0};
+    return Math.max(0, k==="m" ? c.m - c.e : c.e - c.m);
+  };
   // מוקד (2026-10-20): עובד שזמין רק לחלק מהמשמרת (שעות מותאמות = "כן יכול") משתתף בהוגנות הרגילה אם את
   // השעות החסרות בתחילת המשמרת יכול להשלים עובד שכבר שובץ במשמרת הקודמת (למשל עובד הבוקר נשאר עד 16:00).
   // אחרת (אין מי שישלים, או שחסרות שעות בסוף המשמרת) - הוא נבחר רק אחרי כל מי שזמין לכל המשמרת.
@@ -3850,7 +3869,7 @@ async function runAutoAssign(){
   const earlyPriority = guardBlockingAt(team, ui.periodStart) || (team.sectors||[]).includes("חיפה");
   const earlyBySlot = new Map(); // slot -> Map(workerId -> מקום בסדר ההגשה)
   const earlyRank = (slot, w)=>{ const e = earlyBySlot.get(slot); if(!e) return 0; return e.has(w.id) ? e.get(w.id) : 1e6; };
-  const tl = (slot, cmp)=>(a,b)=>{ const t = tightBySlot.get(slot); return (earlyRank(slot, a) - earlyRank(slot, b)) || (t ? (t.has(a.id)?1:0)-(t.has(b.id)?1:0) : 0) || cmp(a,b); };
+  const tl = (slot, cmp)=>(a,b)=>{ const t = tightBySlot.get(slot); return (mixPen(slot, a) - mixPen(slot, b)) || (earlyRank(slot, a) - earlyRank(slot, b)) || (t ? (t.has(a.id)?1:0)-(t.has(b.id)?1:0) : 0) || cmp(a,b); };
   function recordChosenInterval(workerId, newInterval){
     if(!newInterval) return;
     (workerIntervals[workerId] = workerIntervals[workerId]||[]).push(newInterval);
@@ -4115,7 +4134,7 @@ async function runAutoAssign(){
         }
       });
       filled++;
-      chosen.forEach(w=>{ assignCount[w.id]++; tgtCount[w.id+"|"+weekOf(slot.date)] = (tgtCount[w.id+"|"+weekOf(slot.date)]||0) + 1; recordChosenInterval(w.id, customFor[w.id] ? shiftInterval({sector:slot.sector, shift_type:slot.shiftType, entry_date:slot.date, custom_start:customFor[w.id][0], custom_end:customFor[w.id][1]}) : newInterval); streakAdd(streakIdx, w.id, slot.date, slot.shiftType); (assignmentsByDate[slot.date]=assignmentsByDate[slot.date]||[]).push({sector:slot.sector, shift_type:slot.shiftType, worker_id:w.id, entry_date:slot.date}); });
+      chosen.forEach(w=>{ assignCount[w.id]++; { const mk = slot.sector!=="מוקד" && MIX_OF[slot.shiftType]; if(mk){ const c = mixCount[w.id] = mixCount[w.id] || {m:0, e:0}; c[mk]++; } } tgtCount[w.id+"|"+weekOf(slot.date)] = (tgtCount[w.id+"|"+weekOf(slot.date)]||0) + 1; recordChosenInterval(w.id, customFor[w.id] ? shiftInterval({sector:slot.sector, shift_type:slot.shiftType, entry_date:slot.date, custom_start:customFor[w.id][0], custom_end:customFor[w.id][1]}) : newInterval); streakAdd(streakIdx, w.id, slot.date, slot.shiftType); (assignmentsByDate[slot.date]=assignmentsByDate[slot.date]||[]).push({sector:slot.sector, shift_type:slot.shiftType, worker_id:w.id, entry_date:slot.date}); });
     }catch(e){ ui.buildMsg = "שגיאה בשמירת שיבוץ: " + e.message; render(); return; }
   }
   }
@@ -4126,6 +4145,10 @@ async function runAutoAssign(){
   try{
     const fixed = await repairShortages(team);
     if(fixed){ ui.buildMsg = (ui.buildMsg||"") + ` 🔁 סבב תיקון: ${fixed} חוסרים נסגרו בהחלפה בין משמרות באותו יום.`; }
+  }catch(e){ console.error(e); }
+  try{
+    const cut = await shortenForRest(team);
+    if(cut){ ui.buildMsg = (ui.buildMsg||"") + ` ✂ ${cut} משמרות קוצרו כדי לשמור על 8 שעות מנוחה לפני המשמרת הבאה (מסומנות בתכלת).`; }
   }catch(e){ console.error(e); }
   if(partialRecs.length){
     const g = await fillPartialGaps(partialRecs, slots, workers);
@@ -4173,6 +4196,43 @@ function scheduleGapsHtml(ui){
    יום למשמרת אחרת. כאן, לכל חוסר: מחפשים עובד X שזמין למשמרת החסרה ושובץ באותו יום למשמרת T, ועובד Y פנוי
    שיכול לקחת את T (אותו תפקיד, זמין, 8 שעות מנוחה, בלי 7 ימים ברצף). אם יש - X עובר למשמרת החסרה ו-Y לוקח את T.
    לא נוגע בשבת/מוצ"ש, בשעות מותאמות, בחפיפות ובמילוי תפקיד. */
+/* קיצור משמרת לפני מנוחה קצרה (2026-10-28, סרגיי: "במידה ואתה משבץ עובד למשמרות שיש ביניהן פחות משמונה שעות הפרש (למשל
+   ערב וחוזר לבוקר) - תקצר את המשמרת הקודמת בשעות שיעמוד בכלל של השמונה שעות מנוחה, ותסמן את המשמרות הללו בצבע תכלת").
+   אחרי השיבוץ האוטומטי, במאבטחים: לכל עובד, משמרת שאחריה פחות מ-8 שעות עד המשמרת הבאה - שעת הסיום שלה מוקדמת כך שיישארו
+   בדיוק 8 שעות. רק אם הקיצור עד שעתיים, והמשמרת עוד לא בשעות מותאמות; המשמרת המקוצרת מסומנת בתכלת (סיום מוקדם). */
+const REST_CUT_MAX_MIN = 120;
+async function shortenForRest(team){
+  const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
+  const secs = new Set((group.citySectors||[]).filter(x=>x!=="מוקד")); if(!secs.size) return 0;
+  const inPeriod = new Set(dates);
+  const all = (ui.allAssignments || ui.assignments || []).filter(a=>!a.shadow_of);
+  const byW = {};
+  all.forEach(a=>{ const iv = shiftInterval(a); if(iv) (byW[a.worker_id] = byW[a.worker_id] || []).push({a, iv}); });
+  const p2 = n=>String(n).padStart(2,"0");
+  let cut = 0;
+  for(const wid of Object.keys(byW)){
+    const list = byW[wid].sort((x,y)=>x.iv.start - y.iv.start);
+    for(let i=0; i+1<list.length; i++){
+      const P = list[i], N = list[i+1];
+      if(!secs.has(P.a.sector) || !inPeriod.has(P.a.entry_date) || P.a.custom_end) continue;
+      if(+N.iv.start <= +P.iv.end) continue; // רצף עבודה / חפיפה - לא מנוחה
+      const gap = hoursBetween(P.iv.end, N.iv.start);
+      if(gap >= REST_HOURS_REQUIRED - 0.01) continue;
+      const needMin = Math.round((REST_HOURS_REQUIRED - gap) * 60);
+      if(needMin > REST_CUT_MAX_MIN) continue;
+      const newEnd = new Date(+P.iv.end - needMin * 60000);
+      if(hoursBetween(P.iv.start, newEnd) < 4) continue;
+      const q = effQuota(S.quotas.find(x=>x.sector===P.a.sector && x.shift_type===P.a.shift_type && (x.weekday==null || x.weekday===parseDate(P.a.entry_date).getDay())), P.a.entry_date);
+      const st = (P.a.custom_start || (q && q.start_time) || "").slice(0,5); if(!st) continue;
+      const en = p2(newEnd.getHours()) + ":" + p2(newEnd.getMinutes());
+      await asgAtomic(()=>asgCall("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:P.a.sector, p_entry_date:P.a.entry_date, p_shift_type:P.a.shift_type, p_worker_id:P.a.worker_id, p_custom_start:st, p_custom_end:en}));
+      P.a.custom_start = st; P.a.custom_end = en; P.iv.end = newEnd;
+      cut++;
+    }
+  }
+  if(cut){ ui.loaded = false; await loadAggregateData(team); }
+  return cut;
+}
 async function repairShortages(team){
   const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
   const slots = buildSlots(dates, group, S.quotas);
