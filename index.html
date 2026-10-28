@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=177"></script>
+<script src="portal.js?v=178"></script>
 <script>
 (function(){
 "use strict";
@@ -719,10 +719,12 @@ function pickerTiles(){
    וגם בלי קליטה אפשר לראות את מה שנשמר */
 const CFG_KEY = "cst_cfg_cache";
 async function init(){
+  const restored = navRestoreSession();
+  const safeRender = ()=>{ try{ render(); }catch(e){ if(!restored) throw e; console.error(e); try{ sessionStorage.removeItem(NAV_SS); }catch(x){} S.view = "home"; S.ui = {}; render(); } };
   let cached = null;
   try{ cached = JSON.parse(localStorage.getItem(CFG_KEY) || "null"); }catch(e){}
   const hasCache = !!(cached && Array.isArray(cached.teams) && Array.isArray(cached.quotas));
-  if(hasCache){ S.teams = cached.teams; S.quotas = cached.quotas; render(); }
+  if(hasCache){ S.teams = cached.teams; S.quotas = cached.quotas; safeRender(); }
   try{
     const [teams, quotas] = await Promise.all([
       apiGet("constraint_teams","select=*&order=sort_order"),
@@ -732,7 +734,7 @@ async function init(){
     S.teams = teams;
     S.quotas = quotas;
     try{ localStorage.setItem(CFG_KEY, JSON.stringify({teams, quotas, at: Date.now()})); }catch(e){}
-    if(changed) render();
+    if(changed) safeRender();
   }catch(e){
     if(hasCache) return; // ממשיכים עם העותק השמור; פס "בעיית תקשורת" כבר מוצג
     document.getElementById("app").innerHTML = `<div class="card"><p class="shortage">שגיאה בטעינת הנתונים: ${escapeHtml(e.message)}</p><button class="btn" onclick="location.reload()">🔄 נסו שוב</button></div>`;
@@ -758,7 +760,32 @@ function navTrack(){
   const k = navKey();
   if(NAV.cur && NAV.cur.key!==k && !NAV.restoring){ NAV.stack.push(NAV.cur); if(NAV.stack.length>40) NAV.stack.shift(); }
   NAV.restoring = false; NAV.cur = navSnap(k);
+  navPersist();
 }
+/* ריענון חוזר לאותו עמוד (2026-10-28, סרגיי: "כשלוחצים ריענון או עושים ריענון בנייד - להחזיר לאותו העמוד שממנו נעשה הריענון").
+   המסך הנוכחי (view + הגדרות פשוטות של המסך + מצב הפורטל) נשמר ב-sessionStorage של הלשונית, ובטעינה מחדש משוחזר. הנתונים עצמם נטענים מחדש. */
+const NAV_SS = "cst_nav_state";
+const NAV_SKIP = ["shareOpen","clearAsk","pubConfirm","loaded","buildMsg","buildGapsFor","busy","previewOpen","_printing","msg","error","saving"];
+function navPersist(){
+  try{
+    const u = {}; Object.keys(S.ui||{}).forEach(k=>{ const v = S.ui[k]; if(!NAV_SKIP.includes(k) && (v==null || ["string","number","boolean"].includes(typeof v))) u[k] = v; });
+    const st = {view:S.view, managerMode:!!S.managerMode, ui:u, portal:null, scroll:window.scrollY||0, at:Date.now()};
+    try{ if(window.Portal && window.Portal.navSave){ const ps = window.Portal.navSave(); if(JSON.stringify(ps).length < 100000) st.portal = ps; } }catch(e){}
+    sessionStorage.setItem(NAV_SS, JSON.stringify(st));
+  }catch(e){}
+}
+function navRestoreSession(){
+  try{
+    const st = JSON.parse(sessionStorage.getItem(NAV_SS) || "null");
+    if(!st || !st.view || Date.now() - (st.at||0) > 12*3600000) return false;
+    S.view = st.view; S.managerMode = !!st.managerMode; S.ui = Object.assign({}, st.ui||{}); S.ui.loaded = false;
+    if(st.portal && window.Portal && window.Portal.navRestore){ try{ window.Portal.navRestore(st.portal); }catch(e){} }
+    if(st.scroll > 0){ const y = st.scroll; [400, 1200, 2500].forEach(t=>setTimeout(()=>{ if((window.scrollY||0) < 10) window.scrollTo(0, y); }, t)); }
+    return true;
+  }catch(e){ return false; }
+}
+window.addEventListener("pagehide", navPersist);
+document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState==="hidden") navPersist(); });
 function navCanBack(){ return NAV.stack.some(x=>x.key!==navKey()) || !!(window.Portal && window.Portal.navHasParent && window.Portal.navHasParent(App)); }
 function navReset(){ NAV.stack = []; NAV.cur = null; }
 function navBack(){
