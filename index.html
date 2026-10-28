@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=202"></script>
+<script src="portal.js?v=203"></script>
 <script>
 (function(){
 "use strict";
@@ -2156,6 +2156,13 @@ function isEarlyEnd(q, a){
   const m = t=>{ const p = String(t).slice(0,5).split(":").map(Number); return ((p[0]*60 + (p[1]||0)) % 1440); };
   if(a.custom_start && m(a.custom_start)!==m(q.start_time)) return true;
   if(a.custom_end && m(a.custom_end)!==m(q.end_time)) return true;
+  // (2026-10-28, סרגיי: "בעת שיבוץ לשעות לא שגרתיות, תסמן את שתי המשבצות שלו בתכלת") - משמרת מחוברת: גם החלק שבשעות הרגילות
+  // מסומן, אם הוא ממשיך/מתחיל ישירות מחלק אחר שלו באותו יום
+  if(a.custom_start && a.custom_end){
+    const rows = (S.ui && S.ui.assignments) || [];
+    if(rows.some(b=>b!==a && b.worker_id===a.worker_id && b.entry_date===a.entry_date && b.sector===a.sector && !b.shadow_of && b.custom_start && b.custom_end
+        && (m(b.custom_end)===m(a.custom_start) || m(b.custom_start)===m(a.custom_end)))) return true;
+  }
   return false;
 }
 function longCls(rv, a){ return (a && rv.long && rv.long.has(restKey(a))) ? " tmpl-longwarn" : ""; }
@@ -2594,6 +2601,12 @@ function pickedForRoleCell(candidates, ridx, roleRowsCount){
    כהמשך ישיר של מספור ה"סייר" הרגיל של הבלוק (למשל: בוקר עם 3 תקנים + 2 מתואמת -> סייר 4, סייר 5
    מתווספות). גנרי (לא תלוי בשם גזרה ספציפי) - מופעל על כל גזרה שיש לה בלוק "coordinated". לבקשת
    סרגיי (2026-10-05): "עותק תצוגה" בלבד, בלי ליצור אפשרות עריכה כפולה. */
+/* (2026-10-28) כשבמשמרת יש יותר עובדים מהתקן (למשל עובד בשעות חלקיות שמשלים שעות) - מציגים שורות נוספות כדי שכולם ייראו */
+function tmplRowsN(bucket, sector, dates, assignmentsByDate){
+  let n = bucket.maxReq || 0;
+  dates.forEach(d=>{ const q = bucket.perDate[d]; if(q) n = Math.max(n, tmplAssignedList(assignmentsByDate, d, sector, q.shift_type).length); });
+  return n;
+}
 function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDate, workers, allWorkersById, restViolations, mode){
   /* (2026-10-20, סרגיי) בשיבוץ ידני גם שורות המתואמת שבתוך בוקר/ערב לחיצות - פותחות את משבצת ה"מתואמת" עצמה */
   const clickAttrs = (d, cpos)=> mode==="manual" ? ` data-action="tmpl-cell" data-sector="${escapeHtml(sector)}" data-date="${d}" data-type="coordinated" data-pos="${cpos}"` : "";
@@ -2657,12 +2670,13 @@ function renderTemplateGrid(group, dates, ui, mode){
     if(!secData.buckets.length) return "";
     const coordBucket = secData.buckets.find(b=>b.key==="coordinated");
     const bucketsHtml = secData.buckets.map(bucket=>{
+      bucket.maxReq = tmplRowsN(bucket, secData.sector, dates, assignmentsByDate);
       const bucketHrs = tmplBucketHoursHtml(bucket);
       const rowsHtml = Array.from({length:bucket.maxReq}, (_,i)=>i+1).map(pos=>{
         const cells = dates.map(d=>{
           const q = bucket.perDate[d];
-          if(!q || pos>q.required_count) return `<td class="tmpl-na"></td>`;
-          const list = tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type);
+          const list = q ? tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type) : [];
+          if(!q || (pos>q.required_count && !list[pos-1])) return `<td class="tmpl-na"></td>`;
           const a = list[pos-1];
           const w = a ? (workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id]) : null;
           const hoursTxt = a ? tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate) : `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
@@ -2725,13 +2739,13 @@ function renderCompactPrintGrid(group, dates, ui){
       // שעות "רגילות" של המשמרת = הצירוף הנפוץ ביותר בתקופה; תא ששעותיו שונות - השעות בסוגריים
       const cnt = {}; Object.values(bucket.perDate).forEach(q=>{ if(q){ const k = hh(q.start_time,q.end_time); cnt[k] = (cnt[k]||0)+1; } });
       const std = Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0];
-      const n = bucket.maxReq; if(!n) return "";
+      const n = bucket.maxReq = tmplRowsN(bucket, secData.sector, dates, assignmentsByDate); if(!n) return "";
       const label = escapeHtml(bucket.label.replace(/^משמרת\s+/,""));
       return Array.from({length:n}, (_,i)=>i+1).map(pos=>{
         const cells = dates.map(d=>{
           const q = bucket.perDate[d];
-          if(!q || pos>q.required_count) return `<td class="cpt-na"></td>`;
-          const a = tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type)[pos-1];
+          const a = q ? tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type)[pos-1] : null;
+          if(!q || (pos>q.required_count && !a)) return `<td class="cpt-na"></td>`;
           const shadows = tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, a?[a.worker_id]:[], pos===1)
             .map(sh=> sh.split ? ` / ${escapeHtml(nameOf(sh.worker_id))} <span class="cpt-hrs" dir="ltr">(${tmplHoursTxt(q, sh)})</span>` : ` + ${escapeHtml(nameOf(sh.worker_id))} (ח)`).join("");
           const cc = (bucket.key==="coordinated" ? " cpt-coord" : "") + (a && isEarlyEnd(q, a) ? " cpt-early" : "");
@@ -4622,6 +4636,11 @@ async function stretchFill(team){
         const ivs = rows.filter(a=>a.sector===sl.sector && a.entry_date===sl.date && a.shift_type===sl.shiftType && !a.shadow_of).map(a=>(ovW && a.worker_id===ovW) ? ovIv : shiftInterval(a)).filter(Boolean);
         let mn = Infinity; for(let t=+from; t<+to; t+=1800000){ mn = Math.min(mn, ivs.filter(x=>+x.start<=t && +x.end>t).length); } return mn;
       };
+      const firstShort = (sl, from, to)=>{ // תחילת החוסר הראשון בטווח (חצאי שעות) - או null
+        const ivs = rows.filter(a=>a.sector===sl.sector && a.entry_date===sl.date && a.shift_type===sl.shiftType && !a.shadow_of).map(a=>shiftInterval(a)).filter(Boolean);
+        for(let t=+from; t<+to; t+=1800000){ if(ivs.filter(x=>+x.start<=t && +x.end>t).length < (sl.required||0)) return new Date(t); }
+        return null;
+      };
       const shortBy = sl=>{ const iv = shiftInterval({sector:sl.sector, shift_type:sl.shiftType, entry_date:sl.date}); return !!iv && shortIn(sl, iv.start, iv.end); };
       const bShort = shortBy(B);
       const ivB = shiftInterval({sector:B.sector, shift_type:B.shiftType, entry_date:B.date}); if(!ivB) break;
@@ -4649,8 +4668,9 @@ async function stretchFill(team){
       };
       // 1) עובד פנוי שזמין לשתיהן, כששתיהן בחוסר: כל B + סוף A (עד 12 שעות)
       if(aShort && bShort){
-        const start = new Date(Math.max(+ivA.start, +ivB.end - H12));
-        if(+start < +ivB.start && shortIn(A, start, ivB.start)){
+        // (2026-10-28, סרגיי: "שיתחיל את המשמרת בשעה 19:00, כשבנימין מסיים") - מתחילים מהחוסר הראשון ב-A, לא לפני
+        const start = firstShort(A, new Date(Math.max(+ivA.start, +ivB.end - H12)), ivB.start) || ivB.start;
+        if(+start < +ivB.start){
           const combined = {start, end: ivB.end};
           const cands = (ui.workers||[]).filter(w=>!w.auto_assign_exempt && !isMokedTeam(S.teams.find(t=>t.id===w.team_id)||{})
               && !all.some(a=>a.worker_id===w.id && a.entry_date===B.date) && !taskD.has(w.id + "|" + B.date)
@@ -4663,8 +4683,8 @@ async function stretchFill(team){
       }
       // 2) A בחוסר: עובד ששובץ עכשיו ל-B בשעות הרגילות - מאריכים אחורה לתוך A (עד 12 שעות)
       if(aShort){
-        const start = new Date(Math.max(+ivA.start, +ivB.end - H12));
-        if(+start < +ivB.start && shortIn(A, start, ivB.start)){
+        const start = firstShort(A, new Date(Math.max(+ivA.start, +ivB.end - H12)), ivB.start) || ivB.start;
+        if(+start < +ivB.start){
           const combined = {start, end: ivB.end};
           const ext = rows.filter(a=>a.sector===B.sector && a.entry_date===B.date && a.shift_type===B.shiftType && !a.shadow_of && !a.custom_start && !a.custom_end && isNew(a))
             .map(a=>(ui.workers||[]).find(x=>x.id===a.worker_id)).filter(w=>w && !w.auto_assign_exempt
@@ -5015,11 +5035,12 @@ function exportAssignments(){
       secData.buckets.forEach(bucket=>{
         lines.push([bucket.label].join("\t"));
         lines.push(["", ...dates.map(fmtDateHeb)].join("\t"));
-        for(let pos=1; pos<=bucket.maxReq; pos++){
+        const nRows = tmplRowsN(bucket, secData.sector, dates, assignmentsByDate);
+        for(let pos=1; pos<=nRows; pos++){
           const cells = dates.map(d=>{
             const q = bucket.perDate[d];
-            if(!q || pos>q.required_count) return "";
-            const list = tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type);
+            const list = q ? tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type) : [];
+            if(!q || (pos>q.required_count && !list[pos-1])) return "";
             const a = list[pos-1];
             const w = a ? ui.workers.find(x=>x.id===a.worker_id) : null;
             const hoursTxt = a ? tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate) : `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
