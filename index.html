@@ -299,7 +299,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=209"></script>
+<script src="portal.js?v=210"></script>
 <script>
 (function(){
 "use strict";
@@ -4650,6 +4650,42 @@ async function balancePass(team){
         .sort((x,y)=>(fc(x.id)-fc(y.id)) || ((c[x.id]||0)-(c[y.id]||0)) || ((notSubmittedOpen(x, sl.date)?1:0) - (notSubmittedOpen(y, sl.date)?1:0)));
       const w = cands.find(w=>achOk(r, w) && canTake(w, sl, r, abd));
       if(w){ r.worker_id = w.id; r.team_id = w.team_id; changes++; done = true; break; }
+    }
+    if(done) continue;
+    // 1ב) (2026-10-28, סרגיי: "שוב, אותו סיפור בין ארטור לאייל ביום רביעי") - העברה בשרשרת באותו יום: כשאף אחד עם פחות
+    // משמרות לא יכול לקחת ישירות את המשבצת (למשל מתואמת שרק מי שכבר עובד באותו יום הגיש) - עובד W שכבר משובץ באותו יום
+    // עובר למשבצת של מי שיש לו יותר מדי, והמשבצת ש-W עזב עוברת לעובד X עם פחות משמרות. W נשאר עם אותה כמות.
+    const achOkC = (row, newW)=>{
+      if(!achOk(row, newW)) return false;
+      if(!groupHasAch || row.shift_type!=="coordinated" || isGuardAchmash(newW) || !isGuardAchmash(wById(row.worker_id))) return true;
+      if(!slots.some(x=>x.sector===row.sector && x.date===row.entry_date && x.shiftType==="evening")) return true;
+      return L.some(a=>a!==row && a.sector===row.sector && a.entry_date===row.entry_date && !a.shadow_of && (a.shift_type==="evening" || a.shift_type==="coordinated") && isGuardAchmash(wById(a.worker_id)));
+    };
+    chain: for(const r of rows){
+      if(c[r.worker_id]==null) continue;
+      const hi = fc(r.worker_id), sl = slotOf(r);
+      const H = wById(r.worker_id), overH = (c[r.worker_id]||0) > weekTarget(H);
+      const gainers = workers.filter(w=>w.id!==r.worker_id && (hi - fc(w.id) >= 2 || (overH && (c[w.id]||0) < weekTarget(w)) || (overH && (c[r.worker_id]||0) - (c[w.id]||0) >= 2)) && (c[w.id]||0) + 1 <= MAX_WEEK_SHIFTS && (w.target_shifts==null || (c[w.id]||0) + 1 <= w.target_shifts))
+        .sort((x,y)=>(fc(x.id)-fc(y.id)) || ((c[x.id]||0)-(c[y.id]||0)));
+      if(!gainers.length) continue;
+      for(const r2 of L.filter(a=>movable(a) && a!==r && a.sector===r.sector && a.entry_date===r.entry_date && a.worker_id!==r.worker_id && a.shift_type!==r.shift_type)){
+        const W = wById(r2.worker_id), sl2 = slotOf(r2); if(!W || !sl2) continue;
+        const wOrig = r2.worker_id;
+        r2.worker_id = "__z"; const okW = canTake(W, sl, r, abd); r2.worker_id = wOrig;
+        if(!okW || !achOkC(r, W)) continue;
+        for(const X of gainers){
+          if(X.id===W.id) continue;
+          const hOrig = r.worker_id;
+          r.worker_id = W.id; r2.worker_id = "__z";
+          const okX = canTake(X, sl2, null, abd);
+          r2.worker_id = wOrig;
+          const okA = okX && achOkC(r2, X);
+          r.worker_id = hOrig;
+          if(!okA) continue;
+          r.worker_id = W.id; r.team_id = W.team_id; r2.worker_id = X.id; r2.team_id = X.team_id;
+          changes++; done = true; break chain;
+        }
+      }
     }
     if(done) continue;
     // 2) החלפת בוקר↔ערב באותו יום לאיזון
