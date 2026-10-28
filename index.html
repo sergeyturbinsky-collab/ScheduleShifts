@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=189"></script>
+<script src="portal.js?v=190"></script>
 <script>
 (function(){
 "use strict";
@@ -1553,7 +1553,7 @@ function renderWorkloadSummary(team, dates, ui){
     const seen = new Set(), cont = splitContinuations(ui.assignments), shiftDays = new Set();
     (ui.assignments||[]).forEach(a=>{
       if(!set.has(a.entry_date) || !counts.hasOwnProperty(a.worker_id)) return;
-      if(cont.has(a)) return; // (2026-10-25) חלק שני של משמרת שחולקה בשעות (16:30-22:30 + 22:30-04:30) - לא נספר שוב
+      // (2026-10-28, סרגיי: "זה 3 משמרות. תחיל את הכלל על כולם") - משמרת מחוברת/מפוצלת (16:30-22:30 + 22:30-04:30) נספרת כשתי משמרות
       const key = (a.custom_start && a.custom_end) ? `${a.worker_id}|${a.entry_date}|${a.custom_start}|${a.custom_end}` : null;
       if(key){ if(seen.has(key)) return; seen.add(key); }
       counts[a.worker_id]++;
@@ -2021,7 +2021,7 @@ function weekLoad(ui, wid, date){
   const dt = parseDate(date), sun = addDays(dt, -dt.getDay()), week = new Set();
   for(let i=0;i<7;i++) week.add(fmtDate(addDays(sun, i)));
   const all = ui.allAssignments || ui.assignments || [], cont = splitContinuations(all), days = new Set(); let n = 0;
-  all.forEach(a=>{ if(a.worker_id!==wid || a.shadow_of || !week.has(a.entry_date) || cont.has(a)) return; n++; days.add(a.entry_date); });
+  all.forEach(a=>{ if(a.worker_id!==wid || a.shadow_of || !week.has(a.entry_date)) return; n++; days.add(a.entry_date); }); // כל חלק של משמרת מחוברת נספר (2026-10-28)
   const td = new Set(); (ui.streakTasks||ui.schedTasks||[]).forEach(t=>{ if(t.worker_id===wid && week.has(t.date) && !days.has(t.date)) td.add(t.date); });
   return n + td.size;
 }
@@ -3917,7 +3917,7 @@ async function runAutoAssign(){
   const weekOf = d => Math.max(0, Math.floor(dates.indexOf(d)/7));
   const tgtCount = {};
   const tgtCont = splitContinuations(ui.assignments);
-  (ui.assignments||[]).forEach(a=>{ if(a.shadow_of || tgtCont.has(a)) return; const k = a.worker_id+"|"+weekOf(a.entry_date); tgtCount[k] = (tgtCount[k]||0) + 1; });
+  /* כל חלק של משמרת מחוברת נספר (2026-10-28) */ (ui.assignments||[]).forEach(a=>{ if(a.shadow_of) return; const k = a.worker_id+"|"+weekOf(a.entry_date); tgtCount[k] = (tgtCount[k]||0) + 1; });
   { // ימים עם משימה מחוץ למשמרת נספרים כיום עבודה (2026-10-28)
     const sd = new Set((ui.assignments||[]).filter(a=>!a.shadow_of).map(a=>a.worker_id+"|"+a.entry_date)), td = new Set();
     (ui.schedTasks||[]).forEach(t=>{ if(t.worker_id && dates.includes(t.date) && !sd.has(t.worker_id+"|"+t.date)) td.add(t.worker_id+"|"+t.date); });
@@ -4372,7 +4372,8 @@ const REST_CUT_MAX_MIN = 120;
    תבנה לעצמך חוקיות כזו שתשאף למלא כמה שיותר שעות"). אחרי השיבוץ וסבב התיקון, במאבטחים: כשיש באותו יום חוסר בשתי משמרות
    סמוכות (B, והמשמרת A שלפניה, שנגמרת כש-B מתחילה או חופפת לה), ועובד שזמין לשתיהן ולא משובץ באותו יום - הוא משובץ למשמרת
    אחת רציפה של עד 12 שעות: את B במלואה, ואת A מהשעה שבה 12 השעות מתחילות. נשמר כשתי שורות (A עד תחילת B, ו-B), כמו פיצול.
-   מתואמת לא נכללת. כל הבדיקות הרגילות חלות: זמינות לשתי המשמרות, 8 שעות מנוחה, 7 ימים ברצף, משימה, חופשה ו-6 בשבוע. */
+   מתואמת לא נכללת. כל הבדיקות הרגילות חלות: זמינות לשתי המשמרות, 8 שעות מנוחה, 7 ימים ברצף, משימה, חופשה ו-6 בשבוע
+   (משמרת מחוברת = 2 משמרות במניין). */
 async function stretchFill(team){
   const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
   const secs = (group.citySectors||[]).filter(x=>x!=="מוקד"); if(!secs.length) return 0;
@@ -4404,7 +4405,7 @@ async function stretchFill(team){
           && availableForSlot(B, [w], ui.entriesByWorker, abd, null, false, true).length
           && !wouldViolateRest(w.id, combined, ivAll)
           && !streakIssues(streakIdx, w.id, B.date, B.shiftType).length
-          && weekLoad(ui, w.id, B.date) < MAX_WEEK_SHIFTS && (w.target_shifts==null || weekLoad(ui, w.id, B.date) < w.target_shifts))
+          && weekLoad(ui, w.id, B.date) + 2 <= MAX_WEEK_SHIFTS && (w.target_shifts==null || weekLoad(ui, w.id, B.date) + 2 <= w.target_shifts))
         .sort((x,y)=>(weekLoad(ui, x.id, B.date) - weekLoad(ui, y.id, B.date)) || x.name.localeCompare(y.name, "he"));
       const regular = sl=>rows.filter(a=>a.sector===sl.sector && a.entry_date===sl.date && a.shift_type===sl.shiftType && !a.shadow_of).map(a=>a.worker_id);
       // אם אין עובד פנוי: עובד ששובץ עכשיו (בהרצה הזו) ל-B בשעות הרגילות - מאריכים לו את המשמרת אחורה לתוך A (עד 12 שעות)
@@ -4413,6 +4414,7 @@ async function stretchFill(team){
         .map(a=>(ui.workers||[]).find(x=>x.id===a.worker_id)).filter(w=>w && !w.auto_assign_exempt
           && !all.some(a=>a.worker_id===w.id && a.entry_date===B.date && a.shift_type!==B.shiftType)
           && availableForSlot(A, [w], ui.entriesByWorker, abd, null, false, true).length
+          && weekLoad(ui, w.id, B.date) + 1 <= MAX_WEEK_SHIFTS && (w.target_shifts==null || weekLoad(ui, w.id, B.date) + 1 <= w.target_shifts)
           && !wouldViolateRest(w.id, combined, buildWorkerIntervals(all.filter(a=>!(a.worker_id===w.id && a.entry_date===B.date && a.shift_type===B.shiftType)))));
       if(bShort && cands.length){ // עובד פנוי שזמין לשתיהן - סוגר חוסר בשתי המשמרות
         const w = cands[0];
