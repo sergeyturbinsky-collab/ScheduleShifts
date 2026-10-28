@@ -299,7 +299,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=215"></script>
+<script src="portal.js?v=216"></script>
 <script>
 (function(){
 "use strict";
@@ -2843,7 +2843,7 @@ function renderCompactPrintGrid(group, dates, ui){
           if(!a) return `<td class="cpt-missing${cc}">חוסר${shadows}</td>`;
           const w = workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id];
           const hrs = tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate);
-          return `<td${cc?` class="${cc.trim()}"`:""}>${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="cpt-ach">${coordEveAch(a)?'אחמ"ש ערב':'אחמ"ש'}</span>`:""}${(hrs!==std || moreC)?` <span class="cpt-hrs" dir="ltr">(${hrs})</span>`:""}${moreC}${shadows}</td>`;
+          return `<td${cc?` class="${cc.trim()}"`:""}>${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="cpt-ach">${coordEveAch(a)?'אחמ"ש ערב':'אחמ"ש'}</span>`:""}${` <span class="cpt-hrs" dir="ltr">(${hrs})</span>`}${moreC}${shadows}</td>`;
         }).join("");
         const lead = pos===1 ? `<td class="cpt-shift${bucket.key==="coordinated"?" cpt-coord":""}" rowspan="${n}">${label}</td><td class="cpt-hcol${bucket.key==="coordinated"?" cpt-coord":""}" rowspan="${n}">${tmplBucketHoursHtml(bucket) || `<span dir="ltr">${std||""}</span>`}</td>` : "";
         return `<tr class="${pos===1?"cpt-first":""}">${lead}${cells}</tr>`;
@@ -3801,7 +3801,7 @@ function renderMobileGrid(group, dates, ui){
           const w = wOf(a.worker_id), hrs = tmplHoursTxt2(group, d, sec.sector, q, a, abd);
           const role = q.role_counts ? assignmentRole(a, workersById) : null;
           const bad = rest.has(restKey(a)), tight = !bad && rest.tight && rest.tight.has(restKey(a));
-          return `<div class="mg-n${bad?" mg-bad":(tight?" mg-tight":"")}${isEarlyEnd(q, a)?" mg-early":""}">${role?`<span class="mg-role">${escapeHtml(role)}</span> `:""}${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="ach-tag">${coordEveAch(a)?'אחמ"ש ערב':'אחמ"ש'}</span>`:""}${hrs!==std?` <span class="mg-h" dir="ltr">${escapeHtml(hrs)}</span>`:""}</div>`;
+          return `<div class="mg-n${bad?" mg-bad":(tight?" mg-tight":"")}${isEarlyEnd(q, a)?" mg-early":""}">${role?`<span class="mg-role">${escapeHtml(role)}</span> `:""}${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="ach-tag">${coordEveAch(a)?'אחמ"ש ערב':'אחמ"ש'}</span>`:""}${` <span class="mg-h" dir="ltr">${escapeHtml(hrs)}</span>`}</div>`; // (2026-10-28, סרגיי: "בכל משבצת יופיעו השעות עבודה") - תמיד
         });
         tmplShadowList(abd, d, sec.sector, q.shift_type).forEach(sh=>lines.push(sh.split ? `<div class="mg-n mg-sh">⇄ ${escapeHtml(nameOf(sh.worker_id))} <span class="mg-h" dir="ltr">${escapeHtml(tmplHoursTxt(q, sh))}</span></div>` : `<div class="mg-n mg-sh">${escapeHtml(nameOf(sh.worker_id))} (ח)</div>`));
         const miss = (q.required_count||0) - list.length;
