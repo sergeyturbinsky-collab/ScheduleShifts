@@ -291,7 +291,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=168"></script>
+<script src="portal.js?v=169"></script>
 <script>
 (function(){
 "use strict";
@@ -1477,14 +1477,19 @@ function renderWorkloadSummary(team, dates, ui){
     const set = new Set(rangeDates);
     const counts = {}; workers.forEach(w=>counts[w.id]=0);
     // משמרת בשעות מותאמות שחוצה 2 בלוקים נשמרת כ-2 שורות עם אותן שעות - נספרת כמשמרת אחת בלבד (2026-10-07)
-    const seen = new Set(), cont = splitContinuations(ui.assignments);
+    const seen = new Set(), cont = splitContinuations(ui.assignments), shiftDays = new Set();
     (ui.assignments||[]).forEach(a=>{
       if(!set.has(a.entry_date) || !counts.hasOwnProperty(a.worker_id)) return;
       if(cont.has(a)) return; // (2026-10-25) חלק שני של משמרת שחולקה בשעות (16:30-22:30 + 22:30-04:30) - לא נספר שוב
       const key = (a.custom_start && a.custom_end) ? `${a.worker_id}|${a.entry_date}|${a.custom_start}|${a.custom_end}` : null;
       if(key){ if(seen.has(key)) return; seen.add(key); }
       counts[a.worker_id]++;
+      shiftDays.add(a.worker_id + "|" + a.entry_date);
     });
+    // (2026-10-28, סרגיי) משימה מחוץ למשמרת = יום עבודה במניין: כל יום עם משימה (בלי משמרת באותו יום) נספר כמשמרת
+    const taskDays = new Set();
+    (ui.schedTasks||[]).forEach(t=>{ if(t.worker_id && set.has(t.date) && counts.hasOwnProperty(t.worker_id) && !shiftDays.has(t.worker_id + "|" + t.date)) taskDays.add(t.worker_id + "|" + t.date); });
+    taskDays.forEach(k=>{ counts[k.split("|")[0]]++; });
     return counts;
   };
   if(team.cadence==="biweekly"){
@@ -1500,6 +1505,7 @@ function renderWorkloadSummary(team, dates, ui){
   const av = availInRange(dates);
   const rows = workers.map(w=>`<tr><td style="text-align:right;">${escapeHtml(w.name)}</td><td>${fmt(c[w.id]||0,av,w.id)}</td></tr>`).join("");
   return `<div style="overflow-x:auto;"><table><thead><tr><th>עובד</th><th>משמרות</th></tr></thead><tbody>${rows || '<tr><td colspan="2" class="muted">אין עובדים</td></tr>'}</tbody></table></div>
+  ${(ui.schedTasks||[]).some(t=>t.worker_id) ? `<p class="muted" style="font-size:.85em;">כולל ימים עם משימה מחוץ למשמרת (כל יום כזה נספר כמשמרת). מקסימום ${MAX_WEEK_SHIFTS} בשבוע בשיבוץ האוטומטי.</p>` : ""}
   ${av?'<p class="muted" style="font-size:.85em;">המספר בסוגריים = כמה משמרות העובד יכול לעבוד בשבוע לפי ההגשה שלו. "יעד" = כמה משמרות המשבץ רוצה לתת לו (נקבע בניהול עובדים).</p>':''}`;
 }
 
@@ -1922,6 +1928,16 @@ function notSubmittedOpen(w){
    בלי למחוק את ההגשה: מי שסימן יותר מ-2 מתואמות בשבוע נחשב זמין רק ל-2 מהן - בחירה אקראית קבועה (לפי העובד והתאריכים),
    כך שהשיבוץ האוטומטי, הבורר הידני ו"מי זמין" רואים אותן 2. ההגשה עצמה נשארת כמו שהיא. */
 /* כמה מתואמות כבר יש לעובד באותו שבוע (ראשון-שבת), לא כולל התאריך עצמו - מהסידור השמור ומהשיבוץ שבתהליך */
+/* (2026-10-28, סרגיי: "תגביל למקסימום 6 משמרות בשבוע (כולל משימות חיצוניות)") - במאבטחים, בשיבוץ האוטומטי */
+const MAX_WEEK_SHIFTS = 6;
+function weekLoad(ui, wid, date){
+  const dt = parseDate(date), sun = addDays(dt, -dt.getDay()), week = new Set();
+  for(let i=0;i<7;i++) week.add(fmtDate(addDays(sun, i)));
+  const all = ui.allAssignments || ui.assignments || [], cont = splitContinuations(all), days = new Set(); let n = 0;
+  all.forEach(a=>{ if(a.worker_id!==wid || a.shadow_of || !week.has(a.entry_date) || cont.has(a)) return; n++; days.add(a.entry_date); });
+  const td = new Set(); (ui.streakTasks||ui.schedTasks||[]).forEach(t=>{ if(t.worker_id===wid && week.has(t.date) && !days.has(t.date)) td.add(t.date); });
+  return n + td.size;
+}
 function coordWeekCount(w, date, assignmentsByDate){
   const dt = parseDate(date), sun = addDays(dt, -dt.getDay()), days = new Set();
   const week = new Set(); for(let i=0;i<7;i++) week.add(fmtDate(addDays(sun, i)));
@@ -3785,7 +3801,13 @@ async function runAutoAssign(){
   const tgtCount = {};
   const tgtCont = splitContinuations(ui.assignments);
   (ui.assignments||[]).forEach(a=>{ if(a.shadow_of || tgtCont.has(a)) return; const k = a.worker_id+"|"+weekOf(a.entry_date); tgtCount[k] = (tgtCount[k]||0) + 1; });
-  const underTarget = (w, d)=> w.target_shifts==null || (tgtCount[w.id+"|"+weekOf(d)]||0) < w.target_shifts;
+  { // ימים עם משימה מחוץ למשמרת נספרים כיום עבודה (2026-10-28)
+    const sd = new Set((ui.assignments||[]).filter(a=>!a.shadow_of).map(a=>a.worker_id+"|"+a.entry_date)), td = new Set();
+    (ui.schedTasks||[]).forEach(t=>{ if(t.worker_id && dates.includes(t.date) && !sd.has(t.worker_id+"|"+t.date)) td.add(t.worker_id+"|"+t.date); });
+    td.forEach(k=>{ const [wid, d] = k.split("|"); const kk = wid+"|"+weekOf(d); tgtCount[kk] = (tgtCount[kk]||0) + 1; });
+  }
+  const capOf = w=>{ const t = S.teams.find(x=>x.id===w.team_id); return (t && isMokedTeam(t)) ? Infinity : MAX_WEEK_SHIFTS; };
+  const underTarget = (w, d)=>{ const c = tgtCount[w.id+"|"+weekOf(d)]||0; return c < capOf(w) && (w.target_shifts==null || c < w.target_shifts); };
   const fairnessRatio = w => availCount[w.id]>0 ? (assignCount[w.id]/availCount[w.id]) : Infinity;
   const byFairness = (a,b)=> (fairnessRatio(a)-fairnessRatio(b)) || (assignCount[a.id]-assignCount[b.id]) || a.name.localeCompare(b.name,"he");
   /* חלוקה שוויונית בין בוקר וערב (2026-10-28, סרגיי: "תעשה חלוקה הוגנת ושוויונית בין משמרות ערב ובוקר בין כלל העובדים"):
@@ -4270,7 +4292,7 @@ async function repairShortages(team){
         const tRows = (abd[T.entry_date]||[]).filter(a=>a.sector===T.sector && a.shift_type===T.shift_type && !a.shadow_of);
         const xIsOnlyAch = !tSlot.roleCounts && isGuardAchmash(X) && !tRows.some(a=>a.worker_id!==X.id && isGuardAchmash(wOf(a.worker_id)));
         const ys = availableForSlot(tSlot, workers, ui.entriesByWorker, abd, null)
-          .filter(Y=>Y.id!==X.id && !Y.auto_assign_exempt && !taskDays2.has(Y.id + "|" + T.entry_date) && noWin(Y) && (!tSlot.roleCounts || Y.role===X.role) && (!xIsOnlyAch || isGuardAchmash(Y))
+          .filter(Y=>Y.id!==X.id && !Y.auto_assign_exempt && !taskDays2.has(Y.id + "|" + T.entry_date) && (isMokedTeam(S.teams.find(x=>x.id===Y.team_id)||{}) || weekLoad(ui, Y.id, T.entry_date) < MAX_WEEK_SHIFTS) && noWin(Y) && (!tSlot.roleCounts || Y.role===X.role) && (!xIsOnlyAch || isGuardAchmash(Y))
             && !wouldViolateRest(Y.id, ivT, ivAll) && !streakIssues(streakIdx, Y.id, T.entry_date, T.shift_type).length)
           .sort((a,b)=>(wouldBeTightRest(a.id, ivT, ivAll)?1:0)-(wouldBeTightRest(b.id, ivT, ivAll)?1:0) || (cnt[a.id]||0)-(cnt[b.id]||0));
         if(ys.length){ move = {X, T, tRows, Y:ys[0]}; break; }
