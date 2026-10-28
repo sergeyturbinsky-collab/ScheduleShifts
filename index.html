@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=194"></script>
+<script src="portal.js?v=195"></script>
 <script>
 (function(){
 "use strict";
@@ -3851,13 +3851,29 @@ async function clearSchedule(){
       // השרת עוד לא עודכן: מנקים מכאן, משבצת-משבצת - בכל משבצת נשארים רק מי ששובצו ידנית (עם השעות/התפקיד/החפיפות שלהם)
       try{
         const rows = (ui.assignments||[]).filter(a=>group.citySectors.includes(a.sector) && dates.includes(a.entry_date));
+        // (2026-10-28) סימון "ידני" בשרת לא תמיד נשמר (השרת עוד לא עודכן) - בודקים גם בהיסטוריית השינויים: מי שהפעולה האחרונה שלו
+        // במשבצת הייתה הוספה ידנית - נשאר
+        const histManual = new Set();
+        if(typeof S.pin==="string" && S.pin.startsWith("mgr:")){
+          const nameToId = {}; (ui.workers||[]).forEach(w=>nameToId[w.name]=w.id);
+          for(const sec of group.citySectors){
+            try{
+              const h = await apiRpc("mgr_change_log", {p_token:S.pin.slice(4), p_sector:sec, p_days:30});
+              const seenK = new Set();
+              ((h&&h.items)||[]).forEach(x=>{ if(!x.date || !dates.includes(x.date) || !["add","remove"].includes(x.kind)) return; const wid = nameToId[x.worker]; if(!wid) return;
+                const k = sec+"|"+x.date+"|"+x.shift+"|"+wid; if(seenK.has(k)) return; seenK.add(k); // הרשימה מהחדש לישן - האירוע הראשון הוא האחרון
+                if(x.kind==="add" && !x.auto) histManual.add(k); });
+            }catch(e){}
+          }
+        }
+        const isManual = a=>a.method==="manual" || histManual.has(a.sector+"|"+a.entry_date+"|"+a.shift_type+"|"+a.worker_id);
         const cells = new Map(); rows.forEach(a=>{ const k = a.sector+"|"+a.entry_date+"|"+a.shift_type; (cells.get(k) || cells.set(k, []).get(k)).push(a); });
         let n = 0;
         for(const [k, list] of cells){
-          const autos = list.filter(a=>a.method!=="manual" && !a.shadow_of);
+          const autos = list.filter(a=>!isManual(a) && !a.shadow_of);
           if(!autos.length) continue;
           const [sec, d, t] = k.split("|");
-          await setAssignmentListPreservingHours(sec, d, t, list.filter(a=>a.method==="manual" && !a.shadow_of).map(a=>a.worker_id), "manual");
+          await setAssignmentListPreservingHours(sec, d, t, list.filter(a=>isManual(a) && !a.shadow_of).map(a=>a.worker_id), "manual");
           n += autos.length;
         }
         ui.buildMsg = `🗑 השיבוץ האוטומטי נוקה — נמחקו ${n} שיבוצים אוטומטיים. שיבוצים ידניים ומשימות נשארו. אפשר להריץ שיבוץ אוטומטי מחדש.`;
@@ -4338,6 +4354,10 @@ async function runAutoAssign(){
     if(fixed){ ui.buildMsg = (ui.buildMsg||"") + ` 🔁 סבב תיקון: ${fixed} חוסרים נסגרו בהחלפה בין משמרות באותו יום.`; }
   }catch(e){ console.error(e); }
   try{
+    const bal = await balancePass(team);
+    if(bal){ ui.buildMsg = (ui.buildMsg||"") + ` ⚖️ סבב איזון: ${bal} שינויים כדי שהחלוקה תהיה שוויונית (כמות משמרות ובוקר/ערב).`; }
+  }catch(e){ console.error(e); }
+  try{
     const st = await stretchFill(team);
     if(st){ ui.buildMsg = (ui.buildMsg||"") + ` 🔗 ${st===1?"עובד אחד שובץ":st+" עובדים שובצו"} במשמרת מחוברת (עד ${LONG_CHAIN_HOURS} שעות) כדי לכסות חוסר בשתי משמרות סמוכות.`; }
   }catch(e){ console.error(e); }
@@ -4403,6 +4423,106 @@ function scheduleGapsHtml(ui){
    אחרי השיבוץ האוטומטי, במאבטחים: לכל עובד, משמרת שאחריה פחות מ-8 שעות עד המשמרת הבאה - שעת הסיום שלה מוקדמת כך שיישארו
    בדיוק 8 שעות. רק אם הקיצור עד שעתיים, והמשמרת עוד לא בשעות מותאמות; המשמרת המקוצרת מסומנת בתכלת (סיום מוקדם). */
 const REST_CUT_MAX_MIN = 120;
+/* סבב איזון (2026-10-28, סרגיי: "הרצה כפולה. קודם תשבץ לפי הלוגיקה שלך עד עכשיו, אחרי זה תעשה review על כל השבוע, ותאזן בהתאם,
+   שיהיה כמה שיותר שוויוני, הן בין בוקר לערב והן בכמות המשמרות"). אחרי השיבוץ וסבב התיקון, במאבטחים, על עותק מקומי של השבוע:
+   1) העברה: משמרת של עובד עם הרבה משמרות עוברת לעובד עם לפחות 2 פחות ממנו, שזמין לה ועומד בכל הכללים.
+   2) החלפה בוקר↔ערב באותו יום בין שני עובדים, כשזה מקרב את שניהם לאיזון.
+   רק שיבוצים שנוצרו בהרצה הזו (לא ידניים/קיימים), בלי שעות מותאמות, חפיפה או תפקיד. בסוף נשמרות רק המשבצות שהשתנו. */
+async function balancePass(team){
+  const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
+  const secs = (group.citySectors||[]).filter(x=>x!=="מוקד"); if(!secs.length) return 0;
+  const inP = a=>secs.includes(a.sector) && dates.includes(a.entry_date);
+  const slots = buildSlots(dates, group, S.quotas).filter(x=>secs.includes(x.sector));
+  const slotOf = a=>slots.find(x=>x.sector===a.sector && x.date===a.entry_date && x.shiftType===a.shift_type);
+  const key = a=>a.sector+"|"+a.entry_date+"|"+a.shift_type+"|"+a.worker_id;
+  const pre = ui.autoPreKeys || new Set();
+  const L = (ui.allAssignments || ui.assignments || []).map(a=>Object.assign({}, a));
+  const origCells = new Map(); L.filter(a=>inP(a) && !a.shadow_of).forEach(a=>{ const k = a.sector+"|"+a.entry_date+"|"+a.shift_type; (origCells.get(k) || origCells.set(k, []).get(k)).push(a.worker_id); });
+  const workers = (ui.workers||[]).filter(w=>!w.auto_assign_exempt && !isMokedTeam(S.teams.find(t=>t.id===w.team_id)||{}));
+  const wById = id=>(ui.workers||[]).find(x=>x.id===id) || (ui.allWorkersById||{})[id];
+  const groupHasAch = (ui.workers||[]).some(isGuardAchmash);
+  const tasks = (ui.schedTasks||[]).filter(t=>t.worker_id && dates.includes(t.date));
+  const taskD = new Set(tasks.map(t=>t.worker_id+"|"+t.date));
+  const outside = (ui.streakAssignments||[]).filter(a=>!(secs.includes(a.sector) && dates.includes(a.entry_date)));
+  const MIXK = {morning:"m", evening:"e"};
+  const stats = ()=>{
+    const c = {}, mx = {};
+    workers.forEach(w=>{ c[w.id] = 0; mx[w.id] = {m:0, e:0}; });
+    const days = new Set();
+    L.forEach(a=>{ if(a.shadow_of || !dates.includes(a.entry_date) || !(a.worker_id in c)) return; c[a.worker_id]++; days.add(a.worker_id+"|"+a.entry_date); const k = secs.includes(a.sector) && MIXK[a.shift_type]; if(k) mx[a.worker_id][k]++; });
+    tasks.forEach(t=>{ if(t.worker_id in c && !days.has(t.worker_id+"|"+t.date)){ c[t.worker_id]++; days.add(t.worker_id+"|"+t.date); } });
+    return {c, mx};
+  };
+  const abdOf = ()=>{ const m = {}; L.filter(a=>secs.includes(a.sector)).forEach(a=>{ (m[a.entry_date]=m[a.entry_date]||[]).push(a); }); return m; };
+  const movable = a=>inP(a) && !a.shadow_of && !a.custom_start && !a.custom_end && !a.filled_role && !pre.has(key(a)) && !!slotOf(a);
+  // האם עובד w יכול לקבל את המשבצת sl, כשהשורה skip (שלו או של מי שמוחלף) לא נחשבת
+  const canTake = (w, sl, skipRow, abd)=>{
+    if(L.some(a=>a!==skipRow && a.worker_id===w.id && a.entry_date===sl.date && !a.shadow_of)) return false;
+    if(taskD.has(w.id+"|"+sl.date)) return false;
+    if(!availableForSlot(sl, [w], ui.entriesByWorker, abd, null, false, true).length) return false;
+    if(sl.shiftType==="coordinated" && workedNightBefore(w.id, sl.date, abd)) return false;
+    const iv = shiftInterval({sector:sl.sector, shift_type:sl.shiftType, entry_date:sl.date}); if(!iv) return false;
+    if(wouldViolateRest(w.id, iv, buildWorkerIntervals(L.filter(a=>a!==skipRow && !a.shadow_of)))) return false;
+    const idx = buildStreakIndex(outside.concat(L.filter(a=>a!==skipRow && secs.includes(a.sector) && dates.includes(a.entry_date))).concat(tasks.map(t=>({worker_id:t.worker_id, entry_date:t.date, shift_type:"task"}))));
+    if(streakIssues(idx, w.id, sl.date, sl.shiftType).length) return false;
+    return true;
+  };
+  const achOk = (row, newW)=>{ // לא משאירים משמרת בלי אחמ"ש
+    if(!groupHasAch || row.shift_type==="coordinated" || isGuardAchmash(newW) || !isGuardAchmash(wById(row.worker_id))) return true;
+    const others = L.filter(a=>a!==row && a.sector===row.sector && a.entry_date===row.entry_date && !a.shadow_of && (a.shift_type===row.shift_type || (row.shift_type==="evening" && a.shift_type==="coordinated")));
+    return others.some(a=>isGuardAchmash(wById(a.worker_id)));
+  };
+  let changes = 0;
+  for(let it=0; it<80; it++){
+    const {c, mx} = stats(); const abd = abdOf();
+    let done = false;
+    // 1) העברה לעובד עם פחות משמרות
+    const rows = L.filter(movable).sort((x,y)=>(c[y.worker_id]||0) - (c[x.worker_id]||0));
+    for(const r of rows){
+      const hi = c[r.worker_id]; if(hi==null) continue;
+      const sl = slotOf(r);
+      const cands = workers.filter(w=>w.id!==r.worker_id && hi - (c[w.id]||0) >= 2 && (c[w.id]||0) + 1 <= MAX_WEEK_SHIFTS && (w.target_shifts==null || (c[w.id]||0) + 1 <= w.target_shifts))
+        .sort((x,y)=>(c[x.id]-c[y.id]) || ((notSubmittedOpen(x, sl.date)?1:0) - (notSubmittedOpen(y, sl.date)?1:0)));
+      const w = cands.find(w=>achOk(r, w) && canTake(w, sl, r, abd));
+      if(w){ r.worker_id = w.id; r.team_id = w.team_id; changes++; done = true; break; }
+    }
+    if(done) continue;
+    // 2) החלפת בוקר↔ערב באותו יום לאיזון
+    const dev = id=>Math.abs((mx[id]||{m:0}).m - (mx[id]||{e:0}).e);
+    outer: for(const rm of L.filter(a=>movable(a) && a.shift_type==="morning")){
+      const A = wById(rm.worker_id); if(!A || !mx[A.id] || mx[A.id].m - mx[A.id].e < 2) continue;
+      for(const re of L.filter(a=>movable(a) && a.shift_type==="evening" && a.sector===rm.sector && a.entry_date===rm.entry_date)){
+        const B = wById(re.worker_id); if(!B || !mx[B.id] || B.id===A.id) continue;
+        const before = dev(A.id) + dev(B.id);
+        const after = Math.abs(mx[A.id].m - 1 - (mx[A.id].e + 1)) + Math.abs(mx[B.id].m + 1 - (mx[B.id].e - 1));
+        if(after >= before) continue;
+        const slE = slotOf(re), slM = slotOf(rm);
+        // בודקים כל אחד בלי שתי השורות של ההחלפה
+        const tmpA = rm.worker_id, tmpB = re.worker_id;
+        rm.worker_id = "__x"; re.worker_id = "__y";
+        const ok = canTake(A, slE, null, abd) && canTake(B, slM, null, abd);
+        rm.worker_id = tmpA; re.worker_id = tmpB;
+        if(!ok) continue;
+        if(!achOk(rm, B) || !achOk(re, A)) continue;
+        rm.worker_id = B.id; rm.team_id = B.team_id; re.worker_id = A.id; re.team_id = A.team_id;
+        changes++; done = true; break outer;
+      }
+    }
+    if(!done) break;
+  }
+  if(!changes) return 0;
+  // שמירה: רק משבצות שהרכב העובדים בהן השתנה
+  const newCells = new Map(); L.filter(inP).forEach(a=>{ const k = a.sector+"|"+a.entry_date+"|"+a.shift_type; (newCells.get(k) || newCells.set(k, []).get(k)).push(a); });
+  for(const [k, list] of newCells){
+    const ids = list.filter(a=>!a.shadow_of).map(a=>a.worker_id);
+    const was = origCells.get(k) || [];
+    if(ids.slice().sort().join(",") === was.slice().sort().join(",")) continue;
+    const [sec, d, t] = k.split("|");
+    await setAssignmentListPreservingHours(sec, d, t, ids, "auto");
+  }
+  ui.loaded = false; await loadAggregateData(team);
+  return changes;
+}
 /* משמרת מחוברת (2026-10-28, סרגיי: "לשבץ את תמיר ביום חמישי למשמרת ערב מהשעה 16:30 ושימשיך עד 04:30 של משמרת הלילה...
    תבנה לעצמך חוקיות כזו שתשאף למלא כמה שיותר שעות"). אחרי השיבוץ וסבב התיקון, במאבטחים: כשיש באותו יום חוסר בשתי משמרות
    סמוכות (B, והמשמרת A שלפניה, שנגמרת כש-B מתחילה או חופפת לה), ועובד שזמין לשתיהן ולא משובץ באותו יום - הוא משובץ למשמרת
