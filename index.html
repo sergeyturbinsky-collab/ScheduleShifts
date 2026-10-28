@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=198"></script>
+<script src="portal.js?v=199"></script>
 <script>
 (function(){
 "use strict";
@@ -2149,11 +2149,14 @@ function computeRestViolations(assignments){
 }
 /* סימון ופירוט של רצף עבודה ארוך מ-12 שעות */
 /* סיום לפני סוף המשמרת (שעות מותאמות שמסתיימות מוקדם) - מודגש בתכלת (2026-10-25, סרגיי) */
+/* (2026-10-28, סרגיי: "תצבע את כל השעות שלא מתחילים או לא מסיימים כמשמרת סטנדרטית בצבע תכלת") - כל שעת התחלה או סיום
+   שונה מהתקן (כולל התחלה מאוחרת/מוקדמת וסיום מאוחר), לא רק סיום מוקדם */
 function isEarlyEnd(q, a){
-  if(!a || !a.custom_end || !q || !q.start_time || !q.end_time) return false;
-  const m = t=>{ const p = String(t).slice(0,5).split(":").map(Number); return p[0]*60 + (p[1]||0); };
-  const qs = m(q.start_time), std = ((m(q.end_time)-qs)+1440)%1440 || 1440, ce = ((m(a.custom_end)-qs)+1440)%1440 || 1440;
-  return ce < std;
+  if(!a || !q || !q.start_time || !q.end_time || (!a.custom_start && !a.custom_end)) return false;
+  const m = t=>{ const p = String(t).slice(0,5).split(":").map(Number); return ((p[0]*60 + (p[1]||0)) % 1440); };
+  if(a.custom_start && m(a.custom_start)!==m(q.start_time)) return true;
+  if(a.custom_end && m(a.custom_end)!==m(q.end_time)) return true;
+  return false;
 }
 function longCls(rv, a){ return (a && rv.long && rv.long.has(restKey(a))) ? " tmpl-longwarn" : ""; }
 function longNote(rv, a){ const h = a && rv.long ? rv.long.get(restKey(a)) : null; return h ? `<span class="tmpl-longwarn-note">⚠ ${Math.round(h*10)/10} שעות ברצף</span>` : ""; }
@@ -2347,7 +2350,8 @@ function buildTemplateData(group, dates, quotas){
 }
 /* שעה לתא: "15" לשעה עגולה, "15:30" כשיש דקות (2026-10-12: סיום שישי בוקר בחצאי שעות לפי כניסת שבת) */
 const TMPL_POS_W = 110, TMPL_DAY_W = 92; // רוחב עמודת התפקיד/סייר ורוחב מינימלי לעמודת יום
-function tmplHourNum(t){ if(!t) return ""; const h = String(parseInt(t.slice(0,2),10)), m = t.slice(3,5); return (m && m!=="00") ? `${h}:${m}` : h; }
+// (2026-10-28, סרגיי: "תרשום את כל השעות בשעון של 4 ספרות") - תמיד HH:MM
+function tmplHourNum(t){ if(!t) return ""; const s = String(t); const h = s.slice(0,2).padStart(2,"0"), m = (s.slice(3,5) || "00"); return `${h}:${m}`; }
 
 /* טקסט השעות לתא: שעות התקן הרגילות, אלא אם לעובד יש שעות מותאמות שונות (למשל שיבוץ שחוצה בין
    משמרות) - ואז מציגים את השעה בפועל במקום שבו היא שונה מהסטנדרט */
@@ -4599,7 +4603,7 @@ async function stretchFill(team){
               && availableForSlot(B, [w], ui.entriesByWorker, abd, null, false, true).length
               && !wouldViolateRest(w.id, combined, ivAll) && !streakIssues(streakIdx, w.id, B.date, B.shiftType).length && capOk(w, 2))
             .sort((x,y)=>(weekLoad(ui, x.id, B.date) - weekLoad(ui, y.id, B.date)) || x.name.localeCompare(y.name, "he"));
-          if(cands.length){ await save(cands[0], hm(start), hm(ivB.start), hm(ivB.start), hm(ivB.end), true, true); continue; }
+          if(cands.length){ await save(cands[0], hm(start), hm(ivB.start), hm(ivB.start), String(B.end||hm(ivB.end)).slice(0,5), true, true); continue; }
         }
       }
       // 2) A בחוסר: עובד ששובץ עכשיו ל-B בשעות הרגילות - מאריכים אחורה לתוך A (עד 12 שעות)
@@ -4612,7 +4616,7 @@ async function stretchFill(team){
               && !all.some(a=>a.worker_id===w.id && a.entry_date===B.date && a.shift_type!==B.shiftType)
               && availableForSlot(A, [w], ui.entriesByWorker, abd, null, false, true).length && capOk(w, 1)
               && !wouldViolateRest(w.id, combined, buildWorkerIntervals(all.filter(a=>!(a.worker_id===w.id && a.entry_date===B.date && a.shift_type===B.shiftType)))));
-          if(ext.length){ await save(ext[0], hm(start), hm(ivB.start), hm(ivB.start), hm(ivB.end), true, false); continue; }
+          if(ext.length){ await save(ext[0], hm(start), hm(ivB.start), hm(ivB.start), String(B.end||hm(ivB.end)).slice(0,5), true, false); continue; }
         }
       }
       // 3) B בחוסר: עובד ששובץ עכשיו ל-A וזמין גם ל-B (2026-10-28, סרגיי: "מי שפתח בוקר וערב, שבמידת הצורך ישובץ חצי בוקר ומשמרת ערב
@@ -4630,11 +4634,11 @@ async function stretchFill(team){
           const others = buildWorkerIntervals(all.filter(a=>!(a.worker_id===w.id && a.entry_date===A.date && a.shift_type===A.shiftType)));
           const lateStart = new Date(Math.max(+ivA.start, +ivB.end - H12)); // B מלאה + סוף A
           if(+lateStart < +ivB.start && !wouldViolateRest(w.id, {start:lateStart, end:ivB.end}, others)){
-            await save(w, hm(lateStart), hm(ivB.start), hm(ivB.start), hm(ivB.end), false, true); didIt = true; break;
+            await save(w, hm(lateStart), hm(ivB.start), hm(ivB.start), String(B.end||hm(ivB.end)).slice(0,5), false, true); didIt = true; break;
           }
           const end = new Date(Math.min(+ivB.end, +ivA.start + H12)); // A מלאה + תחילת B
           if(+end > +ivB.start && shortIn(B, ivB.start, end) && !wouldViolateRest(w.id, {start:ivA.start, end}, others)){
-            await save(w, hm(ivA.start), hm(ivB.start), hm(ivB.start), hm(end), false, true); didIt = true; break;
+            await save(w, String(A.start||hm(ivA.start)).slice(0,5), hm(ivB.start), hm(ivB.start), hm(end), false, true); didIt = true; break;
           }
         }
         if(didIt) continue;
