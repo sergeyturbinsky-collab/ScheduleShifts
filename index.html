@@ -299,7 +299,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=210"></script>
+<script src="portal.js?v=211"></script>
 <script>
 (function(){
 "use strict";
@@ -1967,6 +1967,9 @@ function availableForSlot(slot, workers, entriesByWorker, assignmentsByDate, exc
       if(e.shift_type==="custom") return rangesOverlaps(e.custom_start,e.custom_end, slot.start, slot.end);
       return blocking.includes(e.shift_type) || (coordToEve && e.shift_type==="coordinated");
     });
+    // (2026-10-28, סרגיי: "סיכמנו שעובד שמגיש בוקר וערב, יוכל להיות משובץ גם למתואמת") - מתואמת (11:00-23:00) בתוך בוקר+ערב
+    if(!matches && slot.shiftType==="coordinated" && workerTeam && workerTeam.has_coordinated_shift
+       && dayEntries.some(e=>e.shift_type==="morning") && dayEntries.some(e=>e.shift_type==="evening")) matches = true;
     // (2026-10-28, סרגיי: "עובד שהגיש יותר מ-2 משמרות מתואמות - תבחר מתוך כלל המתואמות שהגיש, אך תשבץ 2 בלבד") - כל המתואמות שסימן
     // נשארות אפשריות, והמגבלה היא על השיבוץ: עד 2 מתואמות בשבוע (במקום בחירה אקראית מראש של 2 תאריכים)
     if(matches && slot.shiftType==="coordinated" && coordWeekCount(w, slot.date, assignmentsByDate) >= COORD_MAX_PER_WEEK) matches = false;
