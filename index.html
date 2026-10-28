@@ -299,7 +299,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=211"></script>
+<script src="portal.js?v=212"></script>
 <script>
 (function(){
 "use strict";
@@ -2709,9 +2709,8 @@ function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDa
       const cs = a.custom_start ? a.custom_start.slice(0,5) : cq.start_time.slice(0,5);
       const ce = a.custom_end ? a.custom_end.slice(0,5) : cq.end_time.slice(0,5);
       const q = bucket.perDate[d];
-      const hoursTxt = bucket.key==="morning"
-        ? `(מ-${tmplHourNum(cs)})`
-        : `${tmplHourNum(q?q.start_time:cq.start_time)}-${tmplHourNum(ce)}`;
+      // (2026-10-28, סרגיי: "בכל המשבצות שרשומות בהן שעות יופיעו גם שעת התחלה וגם סיום") - שעות המתואמת המלאות בשתי השורות
+      const hoursTxt = `<span dir="ltr">${tmplHourNum(cs)}-${tmplHourNum(ce)}</span>`;
       const restBad = restViolations.has(restKey(a));
       const restTight = !restBad && restViolations.tight && restViolations.tight.has(restKey(a));
       const restNote = restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "";
