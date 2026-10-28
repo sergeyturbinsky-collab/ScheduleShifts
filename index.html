@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=197"></script>
+<script src="portal.js?v=198"></script>
 <script>
 (function(){
 "use strict";
@@ -4395,6 +4395,19 @@ function computeScheduleGaps(team){
     } else {
       const miss = (sl.required||0) - inS.length;
       if(miss>0) items.push(`חסר${miss>1?` ${miss}`:""} כח אדם`);
+      else if(sl.shiftType!=="coordinated"){ // (2026-10-28) חוסר בחלק מהשעות - כשיש מספיק עובדים אבל חלקם בשעות חלקיות
+        const iv = shiftInterval({sector:sl.sector, shift_type:sl.shiftType, entry_date:sl.date});
+        if(iv){
+          const ivs = inS.map(a=>shiftInterval(a)).filter(Boolean), p2 = n=>String(n).padStart(2,"0"), hm = d=>p2(d.getHours())+":"+p2(d.getMinutes());
+          let runS = null, runN = 0;
+          const flush = t=>{ if(runS){ items.push(`חסר ${runN>1?runN+" ":""}בשעות ${hm(runS)}-${hm(t)}`); runS = null; } };
+          for(let t=+iv.start; t<+iv.end; t+=1800000){
+            const n = (sl.required||0) - ivs.filter(x=>+x.start<=t && +x.end>t).length;
+            if(n>0){ if(runS && n!==runN) flush(new Date(t)); if(!runS){ runS = new Date(t); runN = n; } } else flush(new Date(t));
+          }
+          flush(iv.end);
+        }
+      }
       if(groupHasAch && sl.shiftType!=="coordinated" && (sl.required||0)>0 && !inS.some(a=>isGuardAchmash(byId[a.worker_id]))
          && !(sl.shiftType==="evening" && coordAchOf(ui.assignments, sl.sector, sl.date))) items.push('אין אחמ"ש'); // אחמ"ש במתואמת = אחמ"ש הערב
     }
@@ -4545,8 +4558,8 @@ async function stretchFill(team){
     for(let guard=0; guard<4; guard++){
       const rows = ui.assignments || [];
       // חוסר לפי שעות (מיצוי שעות): המשמרת "בחוסר" אם בחלק כלשהו מהשעות שלה (בחלונות של חצי שעה) יש פחות עובדים מהתקן
-      const shortIn = (sl, from, to)=>{ // יש חלון של חצי שעה בטווח [from,to) עם פחות עובדים מהתקן
-        const ivs = rows.filter(a=>a.sector===sl.sector && a.entry_date===sl.date && a.shift_type===sl.shiftType && !a.shadow_of).map(a=>shiftInterval(a)).filter(Boolean);
+      const shortIn = (sl, from, to, ovW, ovIv)=>{ // יש חלון של חצי שעה בטווח [from,to) עם פחות עובדים מהתקן (ovW/ovIv: שעות חלופיות לעובד אחד)
+        const ivs = rows.filter(a=>a.sector===sl.sector && a.entry_date===sl.date && a.shift_type===sl.shiftType && !a.shadow_of).map(a=>(ovW && a.worker_id===ovW) ? ovIv : shiftInterval(a)).filter(Boolean);
         for(let t=+from; t<+to; t+=1800000){ if(ivs.filter(x=>+x.start<=t && +x.end>t).length < (sl.required||0)) return true; }
         return false;
       };
@@ -4602,21 +4615,29 @@ async function stretchFill(team){
           if(ext.length){ await save(ext[0], hm(start), hm(ivB.start), hm(ivB.start), hm(ivB.end), true, false); continue; }
         }
       }
-      // 3) B בחוסר (2026-10-28, סרגיי: "בנימין רשם ביום חמישי בוקר וערב, אז למה לא משכת אותו גם לחצי של הערב? תעשה מיצוי מקסימלי
-      //    של שעות"): עובד ששובץ עכשיו ל-A בשעות הרגילות וזמין גם ל-B - ממשיך קדימה לתוך B, עד 12 שעות מתחילת A
+      // 3) B בחוסר: עובד ששובץ עכשיו ל-A וזמין גם ל-B (2026-10-28, סרגיי: "מי שפתח בוקר וערב, שבמידת הצורך ישובץ חצי בוקר ומשמרת ערב
+      //    שלמה, ומי שפתח ערב לילה - כל המשמרת לילה, וימצה את שעות הערב כמה שניתן"): מקבל את B במלואה ואת סוף A (עד 12 שעות),
+      //    גם אם בתחילת A נוצר חוסר שעות (מוצג ברשימת הפערים). אם אי אפשר (מנוחה) - נשאר בכל A וממשיך לתוך B כמה שאפשר.
       if(bShort){
-        const end = new Date(Math.min(+ivB.end, +ivA.start + H12));
-        if(+end > +ivB.start && shortIn(B, ivB.start, end)){
-          const combined = {start: ivA.start, end};
-          const fw = rows.filter(a=>a.sector===A.sector && a.entry_date===A.date && a.shift_type===A.shiftType && !a.shadow_of && !a.custom_start && !a.custom_end && isNew(a))
-            .map(a=>(ui.workers||[]).find(x=>x.id===a.worker_id)).filter(w=>w && !w.auto_assign_exempt
-              && !all.some(a=>a.worker_id===w.id && a.entry_date===B.date && a.shift_type!==A.shiftType)
-              && availableForSlot(B, [w], ui.entriesByWorker, abd, null, false, true).length && capOk(w, 1)
-              && !streakIssues(streakIdx, w.id, B.date, B.shiftType).length
-              && !wouldViolateRest(w.id, combined, buildWorkerIntervals(all.filter(a=>!(a.worker_id===w.id && a.entry_date===A.date && a.shift_type===A.shiftType)))))
-            .sort((x,y)=>(weekLoad(ui, x.id, B.date) - weekLoad(ui, y.id, B.date)) || x.name.localeCompare(y.name, "he"));
-          if(fw.length){ await save(fw[0], hm(ivA.start), hm(ivB.start), hm(ivB.start), hm(end), false, true); continue; }
+        const fw = rows.filter(a=>a.sector===A.sector && a.entry_date===A.date && a.shift_type===A.shiftType && !a.shadow_of && !a.custom_start && !a.custom_end && isNew(a))
+          .map(a=>(ui.workers||[]).find(x=>x.id===a.worker_id)).filter(w=>w && !w.auto_assign_exempt
+            && !all.some(a=>a.worker_id===w.id && a.entry_date===B.date && a.shift_type!==A.shiftType)
+            && availableForSlot(B, [w], ui.entriesByWorker, abd, null, false, true).length && capOk(w, 1)
+            && !streakIssues(streakIdx, w.id, B.date, B.shiftType).length)
+          .sort((x,y)=>(weekLoad(ui, x.id, B.date) - weekLoad(ui, y.id, B.date)) || x.name.localeCompare(y.name, "he"));
+        let didIt = false;
+        for(const w of fw){
+          const others = buildWorkerIntervals(all.filter(a=>!(a.worker_id===w.id && a.entry_date===A.date && a.shift_type===A.shiftType)));
+          const lateStart = new Date(Math.max(+ivA.start, +ivB.end - H12)); // B מלאה + סוף A
+          if(+lateStart < +ivB.start && !wouldViolateRest(w.id, {start:lateStart, end:ivB.end}, others)){
+            await save(w, hm(lateStart), hm(ivB.start), hm(ivB.start), hm(ivB.end), false, true); didIt = true; break;
+          }
+          const end = new Date(Math.min(+ivB.end, +ivA.start + H12)); // A מלאה + תחילת B
+          if(+end > +ivB.start && shortIn(B, ivB.start, end) && !wouldViolateRest(w.id, {start:ivA.start, end}, others)){
+            await save(w, hm(ivA.start), hm(ivB.start), hm(ivB.start), hm(end), false, true); didIt = true; break;
+          }
         }
+        if(didIt) continue;
       }
       break;
     }
