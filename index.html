@@ -291,7 +291,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=166"></script>
+<script src="portal.js?v=167"></script>
 <script>
 (function(){
 "use strict";
@@ -3886,6 +3886,12 @@ async function runAutoAssign(){
       const u = [slot]; unitByKey.set(k, u); units.push(u);
     } else units.push([slot]);
   });
+  // (2026-10-28, סרגיי: "בימים בהם יש גם משמרת לילה, במידה והעובד הגיש זמינות גם ללילה וגם למשמרות האחרות - העדיפות לשבץ אותם
+  //  ללילה קודם כל. רק כשהלילות מלאים, לשבץ בשאר") - במאבטחים, בכל יום משבצים קודם את הלילה ורק אחריו את שאר המשמרות של אותו יום
+  const NIGHT_FIRST = ["night","friday_night"];
+  const nightRank = u=>(u[0].sector!=="מוקד" && NIGHT_FIRST.includes(u[0].shiftType)) ? 0 : 1;
+  units.forEach((u,i)=>{ u._i = i; });
+  units.sort((x,y)=>(x[0].date < y[0].date ? -1 : x[0].date > y[0].date ? 1 : 0) || (nightRank(x) - nightRank(y)) || (x._i - y._i));
   const plannedBySlot = new Map(); // slot -> {chosen, newInterval}
   function planPooledUnit(unit){
     const st = unit.map(slot=>{
