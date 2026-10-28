@@ -299,7 +299,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=207"></script>
+<script src="portal.js?v=208"></script>
 <script>
 (function(){
 "use strict";
@@ -2243,6 +2243,9 @@ function taskInterval(t){
   if(/^\d{1,2}:\d{2}$/.test(en)){ end = parseDate(t.date); const [eh,em] = en.split(":").map(Number); end.setHours(eh, em, 0, 0); if(end <= start) end.setDate(end.getDate()+1); }
   return {start, end};
 }
+/* שעות של יום משימה בטבלת הצדק ובאיזון השעות: לפי שעות המשימה כשהן ידועות (עד 12), אחרת יום עבודה רגיל */
+const TASK_DEFAULT_HOURS = 8.5;
+function taskHours(t){ const iv = taskInterval(t); if(iv){ const h = hoursBetween(iv.start, iv.end); if(h >= 1 && h <= LONG_CHAIN_HOURS) return h; } return TASK_DEFAULT_HOURS; }
 function taskRestIntervals(){
   const ui = S.ui || {}, seen = new Set(), out = [];
   (ui.streakTasks || []).concat(ui.schedTasks || []).forEach(t=>{
@@ -4496,6 +4499,13 @@ async function runAutoAssignImpl(){
     const cut = await shortenForRest(team, null, ui.autoPreKeys);
     if(cut){ ui.buildMsg = (ui.buildMsg||"") + ` ✂ ${cut} משמרות קוצרו כדי לשמור על 8 שעות מנוחה לפני המשמרת הבאה (מסומנות בתכלת).`; }
   }catch(e){ console.error(e); }
+  try{ // איזון סופי לפי שעות עבודה (2026-10-28)
+    const hb = await hoursBalancePass(team);
+    if(hb){
+      const cut2 = await shortenForRest(team, null, ui.autoPreKeys);
+      ui.buildMsg = (ui.buildMsg||"") + ` ⏳ איזון שעות סופי: ${hb} שינויים כדי ששעות העבודה השבועיות יהיו קרובות ככל האפשר בין העובדים${cut2?` (ועוד ${cut2} קיצורים למנוחה)`:""}.`;
+    }
+  }catch(e){ console.error(e); }
   if(partialRecs.length){
     const g = await fillPartialGaps(partialRecs, slots, workers);
     const msg = ` שעות מותאמות במוקד: ${partialRecs.length} עובדים שובצו רק לשעות שהם יכולים${g.extended?`, ו-${g.extended} עובדים במשמרות הסמוכות הוארכו כדי לכסות את השעות החסרות`:""}.${g.uncovered.length?` לא נמצא מי שיכסה: ${g.uncovered.join(" · ")} — אפשר להשלים ידנית.`:""}`;
@@ -4660,6 +4670,135 @@ async function balancePass(team){
         if(!ok) continue;
         if(!achOk(rm, B) || !achOk(re, A)) continue;
         rm.worker_id = B.id; rm.team_id = B.team_id; re.worker_id = A.id; re.team_id = A.team_id;
+        changes++; done = true; break outer;
+      }
+    }
+    if(!done) break;
+  }
+  if(!changes) return 0;
+  // שמירה: רק משבצות שהרכב העובדים בהן השתנה
+  const newCells = new Map(); L.filter(inP).forEach(a=>{ const k = a.sector+"|"+a.entry_date+"|"+a.shift_type; (newCells.get(k) || newCells.set(k, []).get(k)).push(a); });
+  for(const [k, list] of newCells){
+    const ids = list.filter(a=>!a.shadow_of).map(a=>a.worker_id);
+    const was = origCells.get(k) || [];
+    if(ids.slice().sort().join(",") === was.slice().sort().join(",")) continue;
+    const [sec, d, t] = k.split("|");
+    await setAssignmentListPreservingHours(sec, d, t, ids, "auto");
+  }
+  ui.loaded = false; await loadAggregateData(team);
+  return changes;
+}
+/* (2026-10-28, סרגיי: "תעשה גם איזון סופי לשוויון - שיהיה מאוזן במידת האפשר מבחינת כמות שעות העבודה") - סבב אחרון אחרי כל
+   הקיצורים וההארכות: מעביר/מחליף משמרות אוטומטיות בשעות רגילות כדי לצמצם את הפער בשעות העבודה השבועיות בין העובדים.
+   כל הכללים נשמרים (זמינות, מנוחה, 6 בשבוע, יעד, אחמ"ש בכל משמרת, בוקר/ערב, משימות). שיבוצים ידניים/קיימים לא זזים. */
+async function hoursBalancePass(team){
+  const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
+  const secs = (group.citySectors||[]).filter(x=>x!=="מוקד"); if(!secs.length) return 0;
+  const inP = a=>secs.includes(a.sector) && dates.includes(a.entry_date);
+  const slots = buildSlots(dates, group, S.quotas).filter(x=>secs.includes(x.sector));
+  const slotOf = a=>slots.find(x=>x.sector===a.sector && x.date===a.entry_date && x.shiftType===a.shift_type);
+  const key = a=>a.sector+"|"+a.entry_date+"|"+a.shift_type+"|"+a.worker_id;
+  const pre = ui.autoPreKeys || new Set();
+  const L = (ui.allAssignments || ui.assignments || []).map(a=>Object.assign({}, a));
+  const origCells = new Map(); L.filter(a=>inP(a) && !a.shadow_of).forEach(a=>{ const k = a.sector+"|"+a.entry_date+"|"+a.shift_type; (origCells.get(k) || origCells.set(k, []).get(k)).push(a.worker_id); });
+  const workers = (ui.workers||[]).filter(w=>!w.auto_assign_exempt && !isMokedTeam(S.teams.find(t=>t.id===w.team_id)||{}));
+  const wById = id=>(ui.workers||[]).find(x=>x.id===id) || (ui.allWorkersById||{})[id];
+  const groupHasAch = (ui.workers||[]).some(isGuardAchmash);
+  const tasks = (ui.schedTasks||[]).filter(t=>t.worker_id && dates.includes(t.date));
+  const taskD = new Set(tasks.map(t=>t.worker_id+"|"+t.date));
+  const outside = (ui.streakAssignments||[]).filter(a=>!(secs.includes(a.sector) && dates.includes(a.entry_date)));
+  const MIXK = {morning:"m", evening:"e"};
+  const stats = ()=>{
+    const c = {}, mx = {};
+    workers.forEach(w=>{ c[w.id] = 0; mx[w.id] = {m:0, e:0}; });
+    const days = new Set();
+    L.forEach(a=>{ if(a.shadow_of || !dates.includes(a.entry_date) || !(a.worker_id in c)) return; c[a.worker_id]++; days.add(a.worker_id+"|"+a.entry_date); const k = secs.includes(a.sector) && MIXK[a.shift_type]; if(k) mx[a.worker_id][k]++; });
+    tasks.forEach(t=>{ if(t.worker_id in c && !days.has(t.worker_id+"|"+t.date)){ c[t.worker_id]++; days.add(t.worker_id+"|"+t.date); } });
+    return {c, mx};
+  };
+  const abdOf = ()=>{ const m = {}; L.filter(a=>secs.includes(a.sector)).forEach(a=>{ (m[a.entry_date]=m[a.entry_date]||[]).push(a); }); return m; };
+  const movable = a=>inP(a) && !a.shadow_of && !a.custom_start && !a.custom_end && !a.filled_role && !pre.has(key(a)) && !!slotOf(a);
+  // האם עובד w יכול לקבל את המשבצת sl, כשהשורה skip (שלו או של מי שמוחלף) לא נחשבת
+  const canTake = (w, sl, skipRow, abd)=>{
+    if(L.some(a=>a!==skipRow && a.worker_id===w.id && a.entry_date===sl.date && !a.shadow_of)) return false;
+    if(taskD.has(w.id+"|"+sl.date)) return false;
+    if(!availableForSlot(sl, [w], ui.entriesByWorker, abd, null, false, true).length) return false;
+    if(sl.shiftType==="coordinated" && workedNightBefore(w.id, sl.date, abd)) return false;
+    const iv = shiftInterval({sector:sl.sector, shift_type:sl.shiftType, entry_date:sl.date}); if(!iv) return false;
+    { // מנוחה: מותר גם כשקיצור של משמרת אוטומטית (שלא הייתה לפני ההרצה) יפתור את זה - shortenForRest מקצר בסוף (2026-10-28)
+      const rowsW = L.filter(a=>a!==skipRow && !a.shadow_of && a.worker_id===w.id);
+      const ivs = {}; ivs[w.id] = [];
+      rowsW.forEach(a=>{ const x = shiftInterval(a); if(x) ivs[w.id].push({start:x.start, end:x.end, cut: secs.includes(a.sector) && dates.includes(a.entry_date) && !a.custom_start && !a.custom_end && !pre.has(key(a))}); });
+      const strict = wouldViolateRest(w.id, iv, ivs) || !taskRestOk(w.id, iv);
+      if(strict) return false; // באיזון השעות - בלי קיצורים חדשים (הם יוצרים חוסר בשעות)
+    }
+    const idx = buildStreakIndex(outside.concat(L.filter(a=>a!==skipRow && secs.includes(a.sector) && dates.includes(a.entry_date))).concat(tasks.map(t=>({worker_id:t.worker_id, entry_date:t.date, shift_type:"task"}))));
+    if(streakIssues(idx, w.id, sl.date, sl.shiftType).length) return false;
+    return true;
+  };
+  const achOk = (row, newW)=>{ // לא משאירים משמרת בלי אחמ"ש
+    if(!groupHasAch || row.shift_type==="coordinated" || isGuardAchmash(newW) || !isGuardAchmash(wById(row.worker_id))) return true;
+    const others = L.filter(a=>a!==row && a.sector===row.sector && a.entry_date===row.entry_date && !a.shadow_of && (a.shift_type===row.shift_type || (row.shift_type==="evening" && a.shift_type==="coordinated")));
+    return others.some(a=>isGuardAchmash(wById(a.worker_id)));
+  };
+  // שעות לכל עובד בשבוע: משמרות (לפי השעות בפועל, כולל קיצורים ומשמרות מחוברות) + ימי משימה (taskHours)
+  const hoursOf = ()=>{
+    const h = {}, c = {}, mx = {}; workers.forEach(w=>{ h[w.id] = 0; c[w.id] = 0; mx[w.id] = {m:0, e:0}; });
+    const days = new Set(), seenIv = new Set();
+    L.forEach(a=>{ if(a.shadow_of || !dates.includes(a.entry_date) || !(a.worker_id in h)) return; const iv = shiftInterval(a); if(!iv) return;
+      days.add(a.worker_id+"|"+a.entry_date); c[a.worker_id]++;
+      const k = secs.includes(a.sector) && MIXK[a.shift_type]; if(k) mx[a.worker_id][k]++;
+      const ik = a.worker_id+"|"+(+iv.start)+"|"+(+iv.end); if(seenIv.has(ik)) return; seenIv.add(ik); h[a.worker_id] += hoursBetween(iv.start, iv.end); });
+    tasks.forEach(t=>{ const k = t.worker_id+"|"+t.date; if(t.worker_id in h && !days.has(k)){ days.add(k); h[t.worker_id] += taskHours(t); c[t.worker_id]++; } });
+    return {h, c, mx};
+  };
+  const durOf = a=>{ const iv = shiftInterval(a); return iv ? hoursBetween(iv.start, iv.end) : 0; };
+  // אחמ"ש שיוצא ממתואמת - בודקים שגם לערב של אותו יום נשאר אחמ"ש (אחמ"ש במתואמת נחשב אחמ"ש הערב)
+  const achOk2 = (row, newW)=>{
+    if(!achOk(row, newW)) return false;
+    if(!groupHasAch || row.shift_type!=="coordinated" || isGuardAchmash(newW) || !isGuardAchmash(wById(row.worker_id))) return true;
+    if(!slots.some(x=>x.sector===row.sector && x.date===row.entry_date && x.shiftType==="evening")) return true;
+    return L.some(a=>a!==row && a.sector===row.sector && a.entry_date===row.entry_date && !a.shadow_of && (a.shift_type==="evening" || a.shift_type==="coordinated") && isGuardAchmash(wById(a.worker_id)));
+  };
+  const mixDev = (mx, id, dm, de)=>{ const x = mx[id] || {m:0, e:0}; return Math.abs((x.m + dm) - (x.e + de)); };
+  let changes = 0;
+  for(let it=0; it<80; it++){
+    const {h, c, mx} = hoursOf(); const abd = abdOf();
+    const fc = id=>(c[id]||0) - (isGuardAchmash(wById(id)) ? 1 : 0);
+    let done = false;
+    // 1) העברת משמרת ממי שיש לו הכי הרבה שעות למי שיש לו פחות - רק אם זה מצמצם את הפער בשעות ולא פוגע בשוויון בכמות המשמרות
+    const rows = L.filter(movable).sort((x,y)=>(h[y.worker_id]||0) - (h[x.worker_id]||0));
+    for(const r of rows){
+      if(h[r.worker_id]==null) continue;
+      const H = wById(r.worker_id), d = durOf(r), sl = slotOf(r); if(!d) continue;
+      const cands = workers.filter(w=>w.id!==r.worker_id && (h[r.worker_id] - (h[w.id]||0)) > d + 0.25
+          && fc(w.id) < fc(r.worker_id) && ((c[w.id]||0) + 1 <= weekTarget(w) || (c[r.worker_id]||0) > weekTarget(H))
+          && (c[w.id]||0) + 1 <= MAX_WEEK_SHIFTS && (w.target_shifts==null || (c[w.id]||0) + 1 <= w.target_shifts))
+        .sort((x,y)=>(h[x.id]-h[y.id]) || (fc(x.id)-fc(y.id)));
+      const w = cands.find(w=>achOk2(r, w) && canTake(w, sl, r, abd));
+      if(w){ r.worker_id = w.id; r.team_id = w.team_id; changes++; done = true; break; }
+    }
+    if(done) continue;
+    // 2) החלפה באותו יום בין משמרת ארוכה למשמרת קצרה (למשל מתואמת 12 שעות מול בוקר 8.5) - כמות המשמרות לא משתנה
+    outer: for(const rA of L.filter(movable)){
+      const A = wById(rA.worker_id); if(!A || h[A.id]==null) continue;
+      const dA = durOf(rA);
+      for(const rB of L.filter(a=>movable(a) && a!==rA && a.sector===rA.sector && a.entry_date===rA.entry_date && a.shift_type!==rA.shift_type)){
+        const B = wById(rB.worker_id); if(!B || B.id===A.id || h[B.id]==null) continue;
+        const dB = durOf(rB), gap = h[A.id] - h[B.id];
+        if(!(dA - dB > 0.25 && gap > dA - dB + 0.25)) continue;
+        const kA = MIXK[rA.shift_type], kB = MIXK[rB.shift_type];
+        const before = mixDev(mx, A.id, 0, 0) + mixDev(mx, B.id, 0, 0);
+        const after = mixDev(mx, A.id, (kA==="m"?-1:0) + (kB==="m"?1:0), (kA==="e"?-1:0) + (kB==="e"?1:0))
+                    + mixDev(mx, B.id, (kB==="m"?-1:0) + (kA==="m"?1:0), (kB==="e"?-1:0) + (kA==="e"?1:0));
+        if(after > before) continue; // לא מקלקלים את האיזון בוקר/ערב
+        const slA = slotOf(rA), slB = slotOf(rB);
+        const tA = rA.worker_id, tB = rB.worker_id;
+        rA.worker_id = "__x"; rB.worker_id = "__y";
+        const ok = canTake(A, slB, null, abd) && canTake(B, slA, null, abd);
+        rA.worker_id = tA; rB.worker_id = tB;
+        if(!ok || !achOk2(rA, B) || !achOk2(rB, A)) continue;
+        rA.worker_id = B.id; rA.team_id = B.team_id; rB.worker_id = A.id; rB.team_id = A.team_id;
         changes++; done = true; break outer;
       }
     }
@@ -5073,7 +5212,62 @@ function renderWorkloadCard(team, group, dates, ui){
     <h3>כמה משמרות לכל עובד${isMoked?" (לפי שבוע)":""}</h3>
     <p class="muted" style="margin-top:-6px;">מתעדכן אוטומטית אחרי כל שיבוץ.</p>
     ${renderWorkloadSummary(team, dates, ui)}
+    ${renderFairnessTable(team, dates, ui)}
   </div>`;
+}
+/* (2026-10-28, סרגיי: "תעשה טבלת צדק שבועית שאלירן יוכל לראות כמה שעות לכל עובד") - לכל שבוע: משמרות, ימי משימה, שעות
+   (לפי השעות בפועל - כולל קיצורים ומשמרות מחוברות), סה"כ, הפרש מהממוצע, ופילוח בוקר/ערב/מתואמת/לילה/סופ"ש */
+function fairnessWeekData(ui, workers, rangeDates){
+  const set = new Set(rangeDates), out = {};
+  workers.forEach(w=>out[w.id] = {shifts:0, taskDays:0, shiftH:0, taskH:0, m:0, e:0, c:0, n:0, we:0});
+  const days = new Set(), seenIv = new Set();
+  (ui.assignments||[]).forEach(a=>{
+    if(a.shadow_of || !set.has(a.entry_date) || !out[a.worker_id]) return;
+    const o = out[a.worker_id], iv = shiftInterval(a);
+    o.shifts++; days.add(a.worker_id+"|"+a.entry_date);
+    if(a.shift_type==="morning") o.m++; else if(a.shift_type==="evening") o.e++; else if(a.shift_type==="coordinated") o.c++;
+    else if(a.shift_type==="night") o.n++; else o.we++;
+    if(!iv) return;
+    const k = a.worker_id+"|"+(+iv.start)+"|"+(+iv.end); if(seenIv.has(k)) return; seenIv.add(k);
+    o.shiftH += hoursBetween(iv.start, iv.end);
+  });
+  (ui.schedTasks||[]).forEach(t=>{
+    const k = t.worker_id+"|"+t.date; if(!t.worker_id || !set.has(t.date) || !out[t.worker_id] || days.has(k)) return;
+    days.add(k); out[t.worker_id].taskDays++; out[t.worker_id].taskH += taskHours(t);
+  });
+  return out;
+}
+function renderFairnessTable(team, dates, ui){
+  const workers = (ui.workers||[]); if(!workers.length) return "";
+  const r1 = x=>Math.round(x*10)/10;
+  const weeks = []; for(let i=0; i<dates.length; i+=7) weeks.push(dates.slice(i, i+7));
+  const one = (wk)=>{
+    const d = fairnessWeekData(ui, workers, wk);
+    const list = workers.map(w=>({w, o:d[w.id], tot:d[w.id].shiftH + d[w.id].taskH})).filter(x=>x.tot>0 || x.o.shifts>0 || x.o.taskDays>0);
+    if(!list.length) return `<p class="muted">אין שיבוצים בשבוע הזה.</p>`;
+    // עובד שלא נכנס לשיבוץ האוטומטי (auto_assign_exempt) מוצג, אבל לא נכלל בממוצע ובפער
+    const base = list.filter(x=>!x.w.auto_assign_exempt); const B = base.length ? base : list;
+    const avg = B.reduce((s,x)=>s+x.tot,0) / B.length;
+    list.sort((a,b)=>((a.w.auto_assign_exempt?1:0)-(b.w.auto_assign_exempt?1:0)) || b.tot-a.tot || a.w.name.localeCompare(b.w.name,"he"));
+    const rows = list.map(({w,o,tot})=>{
+      const dv = tot - avg, cnt = o.shifts + o.taskDays, tg = weekTarget(w);
+      const ex = !!w.auto_assign_exempt;
+      const dvCol = ex ? "#888" : dv > 4 ? "#c2410c" : dv < -4 ? "#1d4ed8" : "#15803d";
+      const cntCol = cnt > tg ? "#c2410c" : cnt < tg ? "#1d4ed8" : "inherit";
+      return `<tr${ex?' style="opacity:.6;"':""}><td style="text-align:right;">${escapeHtml(w.name)}${isGuardAchmash(w)?' <span class="muted" style="font-size:.85em;">[אחמ"ש]</span>':""}${ex?' <span class="muted" style="font-size:.8em;">(לא בשיבוץ האוטומטי)</span>':""}</td>
+        <td style="color:${cntCol};font-weight:600;">${cnt} <span class="muted" style="font-size:.8em;font-weight:400;">/ ${tg}</span></td>
+        <td>${o.shifts}</td><td>${o.taskDays||""}</td><td>${r1(o.shiftH)}</td><td>${o.taskH?r1(o.taskH):""}</td>
+        <td><b>${r1(tot)}</b></td><td style="color:${dvCol};font-weight:600;">${ex?"—":`<span dir="ltr">${dv>=0?"+":""}${r1(dv)}</span>`}</td>
+        <td>${o.m||""}</td><td>${o.e||""}</td><td>${o.c||""}</td><td>${o.n||""}</td><td>${o.we||""}</td></tr>`;
+    }).join("");
+    const mx = Math.max(...B.map(x=>x.tot)), mn = Math.min(...B.map(x=>x.tot));
+    return `<div style="overflow-x:auto;"><table class="fair-tbl"><thead><tr><th>עובד</th><th title="משמרות + ימי משימה / יעד שבועי">סה"כ ימים</th><th>משמרות</th><th>ימי משימה</th><th>שעות משמרות</th><th>שעות משימות</th><th>סה"כ שעות</th><th title="מול הממוצע של העובדים ששובצו בשבוע">מול הממוצע</th><th>בוקר</th><th>ערב</th><th>מתואמת</th><th>לילה</th><th>שישי/שבת</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <p class="muted" style="font-size:.85em;margin:4px 0 0;">ממוצע: <b>${r1(avg)}</b> שעות · הכי הרבה ${r1(mx)} · הכי מעט ${r1(mn)} · פער ${r1(mx-mn)} שעות.</p>`;
+  };
+  return `<details class="no-print-x" open style="margin-top:12px;"><summary style="cursor:pointer;font-weight:700;">⚖️ טבלת צדק שבועית — שעות עבודה לכל עובד</summary>
+    ${weeks.map((wk,i)=>`${weeks.length>1?`<h4 style="margin:10px 0 4px;">שבוע ${i+1}: ${fmtDateHeb(wk[0])} – ${fmtDateHeb(wk[wk.length-1])}</h4>`:""}${one(wk)}`).join("")}
+    <p class="muted" style="font-size:.85em;">השעות לפי השעות בפועל של כל משמרת (כולל קיצורים למנוחה ומשמרות מחוברות). יום משימה נספר לפי שעות המשימה, ואם אין לה שעות (או מעל 12) — ${TASK_DEFAULT_HOURS} שעות. כתום = מעל היעד / יותר מ-4 שעות מעל הממוצע, כחול = מתחת. השיבוץ האוטומטי מסיים בסבב איזון לפי שעות.</p>
+  </details>`;
 }
 function renderPivotCard(group, dates, ui){
   const isMoked = group.citySectors[0]==="מוקד";
