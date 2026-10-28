@@ -291,7 +291,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=160"></script>
+<script src="portal.js?v=162"></script>
 <script>
 (function(){
 "use strict";
@@ -1269,7 +1269,7 @@ function renderAggregate(){
         <p class="muted" style="margin:6px 0;">הפרסום שלך יחליף את הפרסום הקודם — העובדים יראו את הסידור כפי שהוא עכשיו.</p>
         <div class="row"><button class="btn ok" data-action="agg-publish-force">כן, פרסם</button><button class="btn secondary" data-action="agg-publish-cancel">ביטול</button></div>
       </div>` : ""}
-      ${ui.buildMsg? `<p style="margin-top:8px;">${escapeHtml(ui.buildMsg)}</p>`:""}
+      ${ui.buildMsg? `<p style="margin-top:8px;">${escapeHtml(ui.buildMsg)}</p>${scheduleGapsHtml(ui)}`:""}
       ${renderMonthlyPanel(ui, isMoked)}
   </div>
   ${eliranOrder
@@ -1728,7 +1728,10 @@ function renderPivot(dates, workers, entriesByWorker, submittedIds, exceptionIds
             const mk = workerIsMoked(w, "");
             const gb = guardBlockingAt(teamById(w.team_id), d); // חיפה מ-01/11: הסימונים הם חסימות
             return `<td>${es.map(e=> e.shift_type==="custom" ? (gb ? "" : mk ? `<span style="color:var(--ok);font-weight:700;">✓ יכול רק ${escapeHtml(e.custom_start)}-${escapeHtml(e.custom_end)}</span>` : `${escapeHtml(e.custom_start)}-${escapeHtml(e.custom_end)}`)
-              : (gb && !DAY_STATUS_TYPES.includes(e.shift_type) ? `<span style="color:var(--danger);font-weight:700;">✕ ${SHIFT_LABELS[e.shift_type]}</span>` : SHIFT_LABELS[e.shift_type])).filter(Boolean).join(", ")}${absH?"<br>"+absH:""}</td>`;
+              : (gb && !DAY_STATUS_TYPES.includes(e.shift_type) ? `<span style="color:var(--danger);font-weight:700;">✕ ${SHIFT_LABELS[e.shift_type]}</span>`
+                 : (e.shift_type==="coordinated" && (()=>{ const ok = coordAllowedDates(w, d, entriesByWorker); return ok && !ok.has(d); })())
+                   ? `<s>${SHIFT_LABELS[e.shift_type]}</s> <span class="muted" style="font-size:.85em;" title="סימן יותר מ-${COORD_MAX_PER_WEEK} מתואמות בשבוע - נבחרו ${COORD_MAX_PER_WEEK} באקראי">(מעל ${COORD_MAX_PER_WEEK})</span>`
+                   : SHIFT_LABELS[e.shift_type])).filter(Boolean).join(", ")}${absH?"<br>"+absH:""}</td>`;
           }).join("")}
         </tr>`;
       }).join("")}
@@ -1873,10 +1876,11 @@ function availableForSlot(slot, workers, entriesByWorker, assignmentsByDate, exc
     const dayEntries = (entriesByWorker[w.id]||{})[slot.date] || [];
     const hasDayOff = dayEntries.some(e=>DAY_STATUS_TYPES.includes(e.shift_type)); // חופשה/מילואים/מחלה חוסמים את כל היום, בכל משמרת
     if(hasDayOff) return false;
-    const matches = dayEntries.some(e=>{
+    let matches = dayEntries.some(e=>{
       if(e.shift_type==="custom") return rangesOverlaps(e.custom_start,e.custom_end, slot.start, slot.end);
       return blocking.includes(e.shift_type);
     });
+    if(matches && slot.shiftType==="coordinated"){ const ok = coordAllowedDates(w, slot.date, entriesByWorker); if(ok && !ok.has(slot.date)) matches = false; }
     const workerTeam = S.teams.find(t=>t.id===w.team_id);
     const isMoked = workerTeam ? isMokedTeam(workerTeam) : (slot.sector==="מוקד");
     if(!isMoked && guardBlockingAt(workerTeam, slot.date)){
@@ -1909,6 +1913,18 @@ function notSubmittedOpen(w){
   if(!(subs instanceof Set) || !S.ui.loaded) return false;
   const t = S.teams.find(x=>x.id===w.team_id);
   return openIfNotSubmittedTeam(t) && !subs.has(w.id);
+}
+/* (2026-10-28, סרגיי: "מי שכבר הגיש - תגביל אותו ל-2 משמרות מתואמות ותבחר 2 רנדומלי"; "החל מהאילוצים שהוגשו עד היום כולל")
+   בלי למחוק את ההגשה: מי שסימן יותר מ-2 מתואמות בשבוע נחשב זמין רק ל-2 מהן - בחירה אקראית קבועה (לפי העובד והתאריכים),
+   כך שהשיבוץ האוטומטי, הבורר הידני ו"מי זמין" רואים אותן 2. ההגשה עצמה נשארת כמו שהיא. */
+function coordAllowedDates(w, date, entriesByWorker){
+  const t = S.teams.find(x=>x.id===w.team_id); if(!t || !t.has_coordinated_shift) return null;
+  const dt = parseDate(date), sun = addDays(dt, -dt.getDay());
+  const marked = [];
+  for(let i=0;i<7;i++){ const d = fmtDate(addDays(sun, i)); if(((entriesByWorker[w.id]||{})[d]||[]).some(e=>e.shift_type==="coordinated")) marked.push(d); }
+  if(marked.length <= COORD_MAX_PER_WEEK) return null;
+  const h = str=>{ let x = 2166136261; for(let i=0;i<str.length;i++){ x ^= str.charCodeAt(i); x = Math.imul(x, 16777619); } return x>>>0; };
+  return new Set(marked.slice().sort((a,b)=>h(w.id+a)-h(w.id+b)).slice(0, COORD_MAX_PER_WEEK));
 }
 function noSubTag(w){ return notSubmittedOpen(w) ? ` <span class="pill" title="לא הגיש סידור - זמין בכל משמרת, אחרי מי שהגיש">לא הגיש</span>` : ""; }
 function subFirst(list){ return list.filter(w=>!notSubmittedOpen(w)).concat(list.filter(w=>notSubmittedOpen(w))); }
@@ -4097,10 +4113,42 @@ async function runAutoAssign(){
     const msg = ` שעות מותאמות במוקד: ${partialRecs.length} עובדים שובצו רק לשעות שהם יכולים${g.extended?`, ו-${g.extended} עובדים במשמרות הסמוכות הוארכו כדי לכסות את השעות החסרות`:""}.${g.uncovered.length?` לא נמצא מי שיכסה: ${g.uncovered.join(" · ")} — אפשר להשלים ידנית.`:""}`;
     if(g.extended){ ui.loaded = false; await loadAggregateData(team); }
     ui.buildMsg = (ui.buildMsg||"") + msg;
-    render();
   }
+  try{ ui.buildGaps = computeScheduleGaps(team); ui.buildGapsFor = ui.buildMsg; }catch(e){ ui.buildGaps = null; }
+  render();
 }
 
+/* (2026-10-28, סרגיי: "בהערות איפה שיש פערים באחמ"ש או כח אדם - תעשה רשימה מתחת להערה של הפערים")
+   אחרי שיבוץ אוטומטי - רשימת הפערים בפועל (אחרי סבב התיקון): לכל משבצת - כמה חסרים, ואם אין בה אחמ"ש. */
+function computeScheduleGaps(team){
+  const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
+  const workers = ui.workers || [], byId = Object.assign({}, ui.allWorkersById||{}); workers.forEach(w=>byId[w.id]=w);
+  const groupHasAch = workers.some(isGuardAchmash);
+  const out = [];
+  buildSlots(dates, group, S.quotas).forEach(sl=>{
+    const inS = (ui.assignments||[]).filter(a=>a.sector===sl.sector && a.entry_date===sl.date && a.shift_type===sl.shiftType && !a.shadow_of);
+    const items = [];
+    if(sl.roleCounts){
+      Object.keys(sl.roleCounts).forEach(r=>{
+        const have = inS.filter(a=>(a.filled_role || (byId[a.worker_id]||{}).role)===r).length, miss = (sl.roleCounts[r]||0) - have;
+        if(miss>0) items.push(`חסר ${r}${miss>1?` ×${miss}`:""}`);
+      });
+    } else {
+      const miss = (sl.required||0) - inS.length;
+      if(miss>0) items.push(`חסר${miss>1?` ${miss}`:""} כח אדם`);
+      if(groupHasAch && sl.shiftType!=="coordinated" && (sl.required||0)>0 && !inS.some(a=>isGuardAchmash(byId[a.worker_id]))) items.push('אין אחמ"ש');
+    }
+    if(items.length) out.push({date:sl.date, sector:sl.sector, shift:SHIFT_LABELS[sl.shiftType]||sl.label||sl.shiftType, items});
+  });
+  return out;
+}
+function scheduleGapsHtml(ui){
+  if(!ui.buildGaps || ui.buildGapsFor!==ui.buildMsg) return "";
+  if(!ui.buildGaps.length) return `<p class="muted" style="margin:4px 0 0;">✅ אין פערים — כל המשבצות מאוישות${S.ui.workers&&S.ui.workers.some(isGuardAchmash)?" ובכל משמרת יש אחמ\"ש":""}.</p>`;
+  const multi = new Set(ui.buildGaps.map(g=>g.sector)).size > 1;
+  return `<div class="note-box" style="margin-top:6px;"><b>פערים בסידור (${ui.buildGaps.length}):</b>
+    <ul style="margin:6px 0 0;padding-inline-start:20px;">${ui.buildGaps.map(g=>`<li>${fmtDateHeb(g.date)} · ${escapeHtml(g.shift)}${multi?` · ${escapeHtml(g.sector)}`:""} — <b>${escapeHtml(g.items.join(" · "))}</b></li>`).join("")}</ul></div>`;
+}
 /* סבב תיקון אחרי שיבוץ אוטומטי (2026-10-21, סרגיי: "יכולת לשבץ את קארינה בבוקר" / "יש אנשים זמינים ולא שובצו"):
    השיבוץ עובר משמרת-משמרת לפי הסדר ולא מסתכל קדימה, אז לפעמים נשאר חוסר במשמרת שעובד זמין לה כבר שובץ באותו
    יום למשמרת אחרת. כאן, לכל חוסר: מחפשים עובד X שזמין למשמרת החסרה ושובץ באותו יום למשמרת T, ועובד Y פנוי

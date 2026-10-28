@@ -4158,7 +4158,7 @@ function renderLockCard(App, ms){
 /* ---------- עמודי משנה (view "pview") ---------- */
 const PV_TITLES = { "login-status":"סטטוס מחוברים", "ar-list":"דוחות פעולה", "ar-view":"דוח פעולה", "equip-workers":"ציוד אישי לעובדים", "equip-edit":"ציוד אישי", "areq-list":"בקשות מנהלתיות", "areq-view":"בקשה מנהלתית", "areq-add":"רישום לעובד", "areq-kinds":"סוגי בקשות", "dmg-new":"דיווח נזק/תאונה", "dmg-list":"דיווחי נזק", "dmg-view":"דיווח נזק/תאונה", "k-msg-guards":"הודעה למאבטחים", "k-msg-mgmt":"הודעה להנהלה", "mgmt-inbox":"הודעות מהקב\"טים", "trn-training":"לומדה", "trn-program":"סטטוס הדרכה", "trn-reports":"דו\"חות הדרכה", "trn-onboarding":"קליטת עובד חדש",
   "trn-onb-worker":"קליטת עובד חדש", "trn-controls":"סיכומי תרגילים", "trn-control-new":"סיכום בקרה חדש", "trn-posts":"פרסומים",
-  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "swap-hist":"היסטוריית החלפות", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה", "cal":"יומן משותף" };
+  "trn-post-new":"פרסום חדש", "trn-programs":"סטטוס הדרכות", "trn-material":"חומר מקצועי", "swap-mgr":"בקשת חילוף", "swap-hist":"היסטוריית החלפות", "chg-log":"היסטוריית שינויים", "trn-quiz-new":"בוחן חדש", "trn-quiz-edit":"עריכת בוחן", "trn-quiz-view":"בוחן", "trn-quiz-history":"היסטוריית בחנים", "trn-results":"תוצאות בחנים", "trn-lomdas":"לומדה ובחנים", "trn-contents":"תוכן עיוני וסרטונים", "trn-content-views":"תוכן עיוני וסרטונים", "k-controls":"סיכומי תרגילים", "k-feed":"תכנים והודעות", "control":"סיכום בקרת תרגיל", "post":"פרסום", "inc-list":"דו\"ח אירוע חריג", "inc-form":"דו\"ח אירוע חריג", "inc-view":"דו\"ח אירוע חריג", "inc-opts":"עריכת רשימות", "unit-dash":"לוח מנהל יחידה", "cal":"יומן משותף" };
 function pvTitle(){ return PV_TITLES[PV.page] || ""; }
 function pvGo(App, page, args, push){
   if(push !== false && App.S.view==="pview" && PV.page) PV.stack.push({page:PV.page, args:PV.args});
@@ -4168,6 +4168,7 @@ function pvGo(App, page, args, push){
   if(page==="trn-quiz-new" || page==="trn-quiz-edit") PV.quiz = null;
   PV.delAsk = false;
   if(page==="swap-mgr") PV.swap = null;
+  if(page==="chg-log") PV.chg = null;
   if(page==="equip-edit"){ EQM.edit = null; EQM.statusSel = null; EQM.statusFor = null; }
   if(page==="swap-hist") PV.swapHist = null;
   if(page==="login-status"){ LS.data = null; LS.filter = "all"; }
@@ -4248,6 +4249,41 @@ function openSwapsCard(App, ms){
   return `<div class="card" style="border:2px solid #e8590c;background:#fff4e6;">
     <h3 style="margin:0 0 6px;">🔁 חילופים פתוחים — מחפשים מחליף (${list.length})</h3>
     ${openSwapsHtml(App, list, true)}</div>`;
+}
+/* סיכום בוקר (2026-10-25 סעיף 7, הועלה 2026-10-28): גם כהתראה בבוקר (07:30-10:30), וגם ככרטיס בדף הבית */
+const DSUM = { tok:null, data:null, at:0, busy:false };
+function dailySummaryCard(App, ms){
+  if(DSUM.tok!==ms.token){ DSUM.tok = ms.token; DSUM.data = null; DSUM.at = 0; }
+  if(!DSUM.busy && (!DSUM.data || Date.now()-DSUM.at > 120000)){ DSUM.busy = true;
+    App.apiRpc("mgr_daily_summary_get", {p_token:ms.token}).then(d=>{ DSUM.data = d||{}; DSUM.at = Date.now(); DSUM.busy = false; App.render(); }).catch(()=>{ DSUM.busy = false; DSUM.at = Date.now(); }); }
+  const d = DSUM.data; if(!d) return "";
+  const it = [["today_shifts","👥","משובצים היום"],["swaps","🔁","חילופים פתוחים"],["not_submitted","📝","לא הגישו לשבוע הבא"],["equip_requests","🎒","בקשות ציוד"],
+    ["equip_waiting","⏳","פריטים ממתינים"],["admin_requests","📄","בקשות מנהלתיות"],["locked","🔒","נעולים"],["todos_today","📌","משימות להיום"]].filter(x=>(d[x[0]]||0)>0);
+  if(!it.length) return "";
+  return `<div class="card"><h3 style="margin-top:0;">☀️ סיכום היום</h3><div style="display:flex;flex-wrap:wrap;gap:6px;">${it.map(x=>`<span class="pill" style="font-size:.95em;">${x[1]} <b>${d[x[0]]}</b> ${x[2]}</span>`).join("")}</div></div>`;
+}
+/* תזכורות הגשת סידור (2026-10-26, אושר 2026-10-28): לכל מאבטח - הגיש? והאם כל תזכורת נשלחה / הגיעה לטלפון */
+const SUBR = { tok:null, data:null, at:0, busy:false };
+function subRemCard(App, ms){
+  if(SUBR.tok!==ms.token){ SUBR.tok = ms.token; SUBR.data = null; SUBR.at = 0; }
+  if(!SUBR.busy && (!SUBR.data || Date.now()-SUBR.at > 120000)){ SUBR.busy = true;
+    App.apiRpc("mgr_sub_reminder_status", {p_token:ms.token}).then(d=>{ SUBR.data = d||[]; SUBR.at = Date.now(); SUBR.busy = false; App.render(); }).catch(()=>{ SUBR.data = SUBR.data||[]; SUBR.busy = false; SUBR.at = Date.now(); }); }
+  const esc = App.escapeHtml, T = SUBR.data; if(!T || !T.length) return "";
+  const hm = iso=>{ try{ const x = new Date(iso); return `${String(x.getDate()).padStart(2,"0")}/${String(x.getMonth()+1).padStart(2,"0")} ${String(x.getHours()).padStart(2,"0")}:${String(x.getMinutes()).padStart(2,"0")}`; }catch(e){ return ""; } };
+  return T.map(t=>{
+    const ws = t.workers||[], notSub = ws.filter(w=>!w.submitted_at), slots = t.slots||[];
+    const st = (w, sl)=>{ const r = (w.reminders||{})[sl.slot];
+      if(!r) return sl.past ? (w.submitted_at ? `<span class="muted">—</span>` : `<span class="muted" title="לא נשלחה">—</span>`) : `<span class="muted">טרם</span>`;
+      if(r.no_push) return `<span title="אין התראות פעילות בטלפון" style="color:#b42318;">🔕 אין התראות</span>`;
+      if(r.delivered_at) return `<span title="הגיעה לטלפון ${esc(hm(r.delivered_at))}" style="color:#1b7f3b;">✅ הגיעה</span>`;
+      if(r.sent_at) return `<span title="נשלחה ${esc(hm(r.sent_at))} - עוד לא אושרה קבלה בטלפון" style="color:#b45309;">📤 נשלחה</span>`;
+      return `<span class="muted" title="ממתינה לשליחה (בשבת - יוצאת במוצאי שבת)">⏳ בתור</span>`; };
+    return `<div class="card"><h3 style="margin-top:0;">📝 הגשת סידור לשבוע ${esc(App.fmtDateHeb(t.period_start))} — ${esc(t.team)}</h3>
+      <p class="muted" style="margin:-4px 0 8px;">${ws.length-notSub.length}/${ws.length} הגישו · ההגשה ${t.locked?"ננעלה":"פתוחה עד"} ${esc(hm(t.lock_at))}. תזכורות: ${slots.map(x=>esc(x.label)).join(" · ")}</p>
+      ${notSub.length ? `<div style="overflow-x:auto;"><table><thead><tr><th style="text-align:right;">לא הגישו</th>${slots.map(x=>`<th>${esc(x.label)}</th>`).join("")}</tr></thead><tbody>
+        ${notSub.map(w=>`<tr><td style="text-align:right;">${esc(w.name)}${w.push?"":` <span class="muted" style="font-size:.8em;">(אין התראות)</span>`}</td>${slots.map(x=>`<td>${st(w, x)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`
+        : `<p style="color:#1b7f3b;font-weight:600;margin:0;">✅ כולם הגישו.</p>`}</div>`;
+  }).join("");
 }
 function renderMsgCard(App, ms){
   mmLoad(App, ms);
@@ -4457,6 +4493,21 @@ function renderPView(App){
       </div>
       <div class="field"><label>סיכום</label><textarea id="ctlSummary" rows="10" style="width:100%;">${esc(f.summary||"")}</textarea></div>
       <button class="btn ok" data-action="portal-ctl-send" ${PV.busy?"disabled":""}>שלח למאבטח ולקב"ט שלו</button>`);
+  }
+  if(pg==="chg-log"){
+    /* היסטוריית שינויים לפי גזרה (2026-10-25 סעיף 5, הועלה 2026-10-28): כל שינוי בסידור - מי, מתי ומה - והחלפות */
+    const H = PV.chg || (PV.chg = {sectors:null, sector:null, items:null, busy:false});
+    if(H.sectors===null && !H.busy){ H.busy = true; App.apiRpc("mgr_scope_sector_list", {p_token:tok}).then(r=>{ H.sectors = r||[]; if(!H.sector && H.sectors.length) H.sector = H.sectors[0]; H.busy = false; App.render(); }).catch(e=>{ H.sectors = []; H.busy = false; PV.error = e.message; App.render(); }); }
+    if(H.sectors===null) return loading();
+    if(H.sector && H.items===null && !H.busy){ H.busy = true; App.apiRpc("mgr_change_log", {p_token:tok, p_sector:H.sector, p_days:60}).then(r=>{ H.items = (r&&r.items)||[]; H.busy = false; App.render(); }).catch(e=>{ H.items = []; H.busy = false; PV.error = e.message; App.render(); }); }
+    const KIND = {add:"➕", remove:"➖", change:"✏️", publish:"📢", swap:"🔁", swap_cancel:"🚫", clear:"🗑"};
+    const list = H.items===null ? `<p class="muted">טוען...</p>` : !H.items.length ? `<p class="muted">אין שינויים ב-60 הימים האחרונים בגזרה הזו. (הרישום התחיל ב-28/10.)</p>`
+      : `<div class="portal-tasks">${H.items.map(x=>`<div class="portal-task"><span class="portal-task-icon">${KIND[x.kind]||"•"}</span>
+          <span><b>${x.date?esc(App.fmtDateHeb(x.date)):""}${x.shift?` · ${esc(App.SHIFT_LABELS[x.shift]||x.shift)}`:""}</b>${x.worker?` · ${esc(x.worker)}`:""} — ${esc(x.detail||"")}
+          <span class="muted" style="display:block;font-size:.82em;">${esc(dmgFmtDate(x.at))}${x.actor?` · ${esc(x.actor)}`:""}${x.auto?" · שיבוץ אוטומטי":""}</span></span></div>`).join("")}</div>`;
+    return wrap(`<h2>📜 היסטוריית שינויים</h2>${msgs}
+      ${H.sectors.length>1 ? `<div class="chip-opts" style="margin-bottom:10px;">${H.sectors.map(c=>`<div class="chip ${H.sector===c?"on":""}" data-action="portal-chg-sector" data-s="${esc(c)}">${esc(c)}</div>`).join("")}</div>` : ""}
+      ${H.sector ? list : `<p class="muted">אין גזרות בהרשאה שלך.</p>`}`);
   }
   if(pg==="swap-hist"){
     const H = PV.swapHist || (PV.swapHist = {list:null});
@@ -5265,6 +5316,8 @@ function renderManagerHome(App, ms){
         <div class="team-tile" data-action="portal-pv" data-page="dmg-list"${n?' style="border-color:#b42318;"':""}><div style="font-size:1.1em;font-weight:700;${n?"color:#b42318;":""}">📋 ${n?`${n} דיווחי נזק חדשים`:"דיווחי נזק / תאונה"}</div><div class="muted" style="font-size:.85em;margin-top:4px;">מהמאבטחים ומהקב"טים</div></div>`; })()}
     </div>
   </div>` : ""}
+  ${dailySummaryCard(App, ms)}
+  ${subRemCard(App, ms)}
   ${ms.is_admin ? `<div class="card">
     <h3>🔑 ניהול מערכת</h3>
     <div class="grid-teams">${tile("portal-mh-codes", "🔑 עריכת קודים של מנהלים", "קביעה ושינוי קוד אישי לכל מנהל")}
@@ -5278,6 +5331,7 @@ function renderManagerHome(App, ms){
       <div class="team-tile" data-action="portal-mh-agg"${ms.is_admin?' data-scope="units"':""}><div style="font-size:1.1em;font-weight:700;">טבלה מרוכזת ובניית סידור</div><div class="muted" style="font-size:.85em;margin-top:4px;">שיבוץ, פרסום, פלט ופתיחת הגשה</div></div>
       <div class="team-tile" data-action="portal-mh-admin"${ms.is_admin?' data-scope="units"':""}><div style="font-size:1.1em;font-weight:700;">ניהול עובדים</div><div class="muted" style="font-size:.85em;margin-top:4px;">הוספה, קודים וסימונים</div></div>
       <div class="team-tile" data-action="portal-pv" data-page="swap-mgr"><div style="font-size:1.1em;font-weight:700;">🔁 מבקש חילוף</div><div class="muted" style="font-size:.85em;margin-top:4px;">בקשות חילוף ופתיחת בקשה</div></div>
+      <div class="team-tile" data-action="portal-pv" data-page="chg-log"><div style="font-size:1.1em;font-weight:700;">📜 היסטוריית שינויים</div><div class="muted" style="font-size:.85em;margin-top:4px;">לפי גזרה: שיבוצים, שעות, החלפות ופרסום</div></div>
     </div>
   </div>`:""}
   ${logi.length? `<div class="card">
@@ -5798,6 +5852,7 @@ function onClick(App, a, el){
   if(a==="portal-go-training"){ S.view = "training"; S.ui = {}; T.data = null; F.data = null; T.controlOpen = null; T.postOpen = null; T.quiz = null; return App.render(); }
   if(a==="portal-go-areq"){ S.view = "adminreq"; S.ui = {}; AREQ.open = false; AREQ.view = null; AREQ.mine = null; AREQ.okMsg = null; AREQ.error = null; return App.render(); }
   if(a.indexOf("portal-rpl-")===0) return rplAction(App, a, el);
+  if(a==="portal-chg-sector"){ const H = PV.chg; if(H){ H.sector = el.dataset.s; H.items = null; } return App.render(); }
   if(a.indexOf("portal-areqm-")===0) return areqMgrAction(App, a, el);
   if(a.indexOf("portal-areq-")===0 && a!=="portal-areq-resolve") return areqAction(App, a, el);
   if(a==="portal-areq-resolve") return areqResolve(App, el);
