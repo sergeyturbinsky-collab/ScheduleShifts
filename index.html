@@ -299,7 +299,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=206"></script>
+<script src="portal.js?v=207"></script>
 <script>
 (function(){
 "use strict";
@@ -2213,6 +2213,27 @@ function taskRestOk(workerId, iv){
     return false; // חפיפה עם המשימה
   });
 }
+/* (2026-10-28, סרגיי: "גרלאנו שכבר היו לו 5 שובץ לשישית, וירדן שיש לו 4 - לא התקצרה לו המשמרת ביום חמישי על מנת לשבץ ביום שישי")
+   האם אפשר לשבץ את העובד במשמרת iv למרות פחות מ-8 שעות מנוחה, כי קיצור של עד REST_CUT_MAX_MIN יפתור את זה:
+   - משמרת קודמת שלו (שנקבעה בהרצה הזו, בשעות רגילות - iv.cut) מתקצרת בסופה;
+   - או המשמרת החדשה עצמה מתקצרת בסופה, כשיש אחריה משמרת/משימה.
+   בכל מקרה נשארות לפחות 4 שעות במשמרת המקוצרת. מחזיר null אם אי אפשר; את הקיצור עצמו עושה shortenForRest בסוף השיבוץ. */
+function restFixable(workerId, iv, intervalsMap){
+  if(!iv) return null;
+  const R = REST_HOURS_REQUIRED - 0.001;
+  for(const e of (intervalsMap[workerId]||[])){
+    if(+e.end <= +iv.start){
+      const gap = hoursBetween(e.end, iv.start); if(gap >= R) continue;
+      const need = Math.round((REST_HOURS_REQUIRED - gap) * 60);
+      if(!e.cut || need > REST_CUT_MAX_MIN || hoursBetween(e.start, new Date(+e.end - need*60000)) < 4) return null;
+    } else if(+iv.end <= +e.start){
+      const gap = hoursBetween(iv.end, e.start); if(gap >= R) continue;
+      const need = Math.round((REST_HOURS_REQUIRED - gap) * 60);
+      if(need > REST_CUT_MAX_MIN || hoursBetween(iv.start, new Date(+iv.end - need*60000)) < 4) return null;
+    } else return null; // חפיפה
+  }
+  return taskRestOk(workerId, iv) ? {cut:true} : null;
+}
 /* טווח הזמן של משימה (לא משמרת) לצורך המנוחה: מהתאריך + שעת ההתחלה, עד שעת הסיום (סיום <= התחלה, כמו 06:00-00:00 = עד חצות).
    משימה בלי שעת התחלה - לא נבדקת. בלי שעת סיום - נבדקת רק המנוחה לפני ההתחלה. */
 function taskInterval(t){
@@ -4121,14 +4142,18 @@ async function runAutoAssignImpl(){
   // מפצלת רשימת מועמדים ל"נקיים" (≥8 שעות מנוחה) ו"פוגעים במנוחה" (<8 שעות) - האחרונים משמשים
   // רק כעדיפות אחרונה, כשאין ברירה אחרת למלא את המשבצת.
   const tightBySlot = new Map(); // slot -> Set(workerId) של מי שיגיע לבדיוק 8 שעות מנוחה
+  const cutBySlot = new Map(); // slot -> Set(workerId) של מי שישובץ רק בזכות קיצור משמרת (8 שעות מנוחה) - אחרי מי שלא צריך קיצור, בשוויון
   function splitByRest(candidates, slot){
     const newInterval = shiftInterval({sector:slot.sector, shift_type:slot.shiftType, entry_date:slot.date, custom_start:null, custom_end:null});
-    const ok = [], bad = [], tight = new Set();
+    const ok = [], bad = [], tight = new Set(), cut = new Set();
     candidates.forEach(w=>{
-      if(newInterval && (wouldViolateRest(w.id, newInterval, workerIntervals) || !taskRestOk(w.id, newInterval))) bad.push(w);
+      if(newInterval && (wouldViolateRest(w.id, newInterval, workerIntervals) || !taskRestOk(w.id, newInterval))){
+        if(slot.sector!=="מוקד" && restFixable(w.id, newInterval, workerIntervals)){ ok.push(w); cut.add(w.id); }
+        else bad.push(w);
+      }
       else { ok.push(w); if(wouldBeTightRest(w.id, newInterval, workerIntervals)) tight.add(w.id); }
     });
-    tightBySlot.set(slot, tight);
+    tightBySlot.set(slot, tight); cutBySlot.set(slot, cut);
     if(earlyPriority && !earlyBySlot.has(slot)){
       const subAt = ui.submittedAt || {};
       // (2026-10-24, סרגיי: "שלושה ראשונים, ואז את כל הראשונים") - כל המועמדים לפי סדר ההגשה: 3 הראשונים קודמים,
@@ -4152,10 +4177,12 @@ async function runAutoAssignImpl(){
   const openRank = (slot, w)=>notSubmittedOpen(w, slot.date) ? 1 : 0;
   // (2026-10-28, סרגיי: "עדיפות לאחמ"שים... אחמ"שים יקבלו 5, השאר 4") - באיזון, לאחמ"ש (מאבטחים) נספרת משמרת אחת פחות
   const fairCnt = w=>(assignCount[w.id]||0) - (isGuardAchmash(w) ? 1 : 0);
-  const tl = (slot, cmp)=>(a,b)=>{ const t = tightBySlot.get(slot); return (openRank(slot, a) - openRank(slot, b)) || (fairCnt(a) - fairCnt(b)) || (mixPen(slot, a) - mixPen(slot, b)) || (earlyRank(slot, a) - earlyRank(slot, b)) || (t ? (t.has(a.id)?1:0)-(t.has(b.id)?1:0) : 0) || cmp(a,b); };
-  function recordChosenInterval(workerId, newInterval){
+  // בשוויון בספירה ההוגנת - קודם מי שיש לו פחות משמרות בפועל, ואז מי שלא צריך קיצור משמרת בשביל המנוחה (2026-10-28)
+  const cutPen = (slot, w)=>{ const c = cutBySlot.get(slot); return c && c.has(w.id) ? 1 : 0; };
+  const tl = (slot, cmp)=>(a,b)=>{ const t = tightBySlot.get(slot); return (openRank(slot, a) - openRank(slot, b)) || (fairCnt(a) - fairCnt(b)) || ((assignCount[a.id]||0) - (assignCount[b.id]||0)) || (cutPen(slot, a) - cutPen(slot, b)) || (mixPen(slot, a) - mixPen(slot, b)) || (earlyRank(slot, a) - earlyRank(slot, b)) || (t ? (t.has(a.id)?1:0)-(t.has(b.id)?1:0) : 0) || cmp(a,b); };
+  function recordChosenInterval(workerId, newInterval, cuttable){
     if(!newInterval) return;
-    (workerIntervals[workerId] = workerIntervals[workerId]||[]).push(newInterval);
+    (workerIntervals[workerId] = workerIntervals[workerId]||[]).push({start:newInterval.start, end:newInterval.end, cut:!!cuttable});
   }
   // 7 ימים ברצף / שבת רביעית ברצף (2026-10-11): מודרים לגמרי מהשיבוץ האוטומטי - ראו streakIssues למעלה
   const streakIdx = buildStreakIndex((ui.streakAssignments || ui.allAssignments || ui.assignments || []).concat((ui.streakTasks||[]).map(t=>({worker_id:t.worker_id, entry_date:t.date, shift_type:"task"}))));
@@ -4433,7 +4460,7 @@ async function runAutoAssignImpl(){
         }
       });
       filled++;
-      chosen.forEach(w=>{ assignCount[w.id]++; { const mk = slot.sector!=="מוקד" && MIX_OF[slot.shiftType]; if(mk){ const c = mixCount[w.id] = mixCount[w.id] || {m:0, e:0}; c[mk]++; } } tgtCount[w.id+"|"+weekOf(slot.date)] = (tgtCount[w.id+"|"+weekOf(slot.date)]||0) + 1; recordChosenInterval(w.id, customFor[w.id] ? shiftInterval({sector:slot.sector, shift_type:slot.shiftType, entry_date:slot.date, custom_start:customFor[w.id][0], custom_end:customFor[w.id][1]}) : newInterval); streakAdd(streakIdx, w.id, slot.date, slot.shiftType); (assignmentsByDate[slot.date]=assignmentsByDate[slot.date]||[]).push({sector:slot.sector, shift_type:slot.shiftType, worker_id:w.id, entry_date:slot.date}); });
+      chosen.forEach(w=>{ assignCount[w.id]++; { const mk = slot.sector!=="מוקד" && MIX_OF[slot.shiftType]; if(mk){ const c = mixCount[w.id] = mixCount[w.id] || {m:0, e:0}; c[mk]++; } } tgtCount[w.id+"|"+weekOf(slot.date)] = (tgtCount[w.id+"|"+weekOf(slot.date)]||0) + 1; recordChosenInterval(w.id, customFor[w.id] ? shiftInterval({sector:slot.sector, shift_type:slot.shiftType, entry_date:slot.date, custom_start:customFor[w.id][0], custom_end:customFor[w.id][1]}) : newInterval, !customFor[w.id] && slot.sector!=="מוקד"); streakAdd(streakIdx, w.id, slot.date, slot.shiftType); (assignmentsByDate[slot.date]=assignmentsByDate[slot.date]||[]).push({sector:slot.sector, shift_type:slot.shiftType, worker_id:w.id, entry_date:slot.date}); });
     }catch(e){ ui.buildMsg = "שגיאה בשמירת שיבוץ: " + e.message; render(); return; }
   }
   }
@@ -4580,7 +4607,13 @@ async function balancePass(team){
     if(!availableForSlot(sl, [w], ui.entriesByWorker, abd, null, false, true).length) return false;
     if(sl.shiftType==="coordinated" && workedNightBefore(w.id, sl.date, abd)) return false;
     const iv = shiftInterval({sector:sl.sector, shift_type:sl.shiftType, entry_date:sl.date}); if(!iv) return false;
-    if(wouldViolateRest(w.id, iv, buildWorkerIntervals(L.filter(a=>a!==skipRow && !a.shadow_of)))) return false;
+    { // מנוחה: מותר גם כשקיצור של משמרת אוטומטית (שלא הייתה לפני ההרצה) יפתור את זה - shortenForRest מקצר בסוף (2026-10-28)
+      const rowsW = L.filter(a=>a!==skipRow && !a.shadow_of && a.worker_id===w.id);
+      const ivs = {}; ivs[w.id] = [];
+      rowsW.forEach(a=>{ const x = shiftInterval(a); if(x) ivs[w.id].push({start:x.start, end:x.end, cut: secs.includes(a.sector) && dates.includes(a.entry_date) && !a.custom_start && !a.custom_end && !pre.has(key(a))}); });
+      const strict = wouldViolateRest(w.id, iv, ivs) || !taskRestOk(w.id, iv);
+      if(strict && !restFixable(w.id, iv, ivs)) return false;
+    }
     const idx = buildStreakIndex(outside.concat(L.filter(a=>a!==skipRow && secs.includes(a.sector) && dates.includes(a.entry_date))).concat(tasks.map(t=>({worker_id:t.worker_id, entry_date:t.date, shift_type:"task"}))));
     if(streakIssues(idx, w.id, sl.date, sl.shiftType).length) return false;
     return true;
@@ -4603,8 +4636,8 @@ async function balancePass(team){
       const hi = fc(r.worker_id);
       const sl = slotOf(r);
       const H = wById(r.worker_id), overH = (c[r.worker_id]||0) > weekTarget(H);
-      const cands = workers.filter(w=>w.id!==r.worker_id && (hi - fc(w.id) >= 2 || (overH && (c[w.id]||0) < weekTarget(w))) && (c[w.id]||0) + 1 <= MAX_WEEK_SHIFTS && (w.target_shifts==null || (c[w.id]||0) + 1 <= w.target_shifts))
-        .sort((x,y)=>(fc(x.id)-fc(y.id)) || ((notSubmittedOpen(x, sl.date)?1:0) - (notSubmittedOpen(y, sl.date)?1:0)));
+      const cands = workers.filter(w=>w.id!==r.worker_id && (hi - fc(w.id) >= 2 || (overH && (c[w.id]||0) < weekTarget(w)) || (overH && (c[r.worker_id]||0) - (c[w.id]||0) >= 2)) && (c[w.id]||0) + 1 <= MAX_WEEK_SHIFTS && (w.target_shifts==null || (c[w.id]||0) + 1 <= w.target_shifts))
+        .sort((x,y)=>(fc(x.id)-fc(y.id)) || ((c[x.id]||0)-(c[y.id]||0)) || ((notSubmittedOpen(x, sl.date)?1:0) - (notSubmittedOpen(y, sl.date)?1:0)));
       const w = cands.find(w=>achOk(r, w) && canTake(w, sl, r, abd));
       if(w){ r.worker_id = w.id; r.team_id = w.team_id; changes++; done = true; break; }
     }
