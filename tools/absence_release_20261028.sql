@@ -26,6 +26,7 @@ begin
   for a in select sa.* from public.shift_assignments sa
             where sa.worker_id = r.worker_id and sa.entry_date between greatest(r.date_from, v_today) and r.date_to
               and exists(select 1 from public.schedule_publications p where p.sector = sa.sector and sa.entry_date between p.period_start and p.period_end)
+              and coalesce(lower(public.assignment_interval(sa.sector, sa.entry_date, sa.shift_type, sa.custom_start, sa.custom_end)) > now(), true) -- רק משמרות שעוד לא התחילו
             order by sa.entry_date loop
     perform public.snapshot_ensure(a.sector, a.entry_date);
     if a.shadow_of is null then
@@ -34,7 +35,7 @@ begin
       n := n + 1;
     end if;
     delete from public.shift_assignments where id = a.id;
-    update public.shift_assignments set shadow_of = null where sector = a.sector and entry_date = a.entry_date and shift_type = a.shift_type and shadow_of = r.worker_id;
+    -- חניך בחפיפה אצלו נשאר במשמרת; כשמישהו לוקח את המשמרת - החפיפה עוברת אליו
     insert into public.schedule_change_log (sector, entry_date, shift_type, actor, kind, worker_id, worker_name, detail, auto)
     values (a.sector, a.entry_date, a.shift_type, r.worker_name, 'remove', r.worker_id, r.worker_name, 'ירד מהמשמרת — ' || v_lbl || ' (בקשה מנהלתית). המשמרת פנויה', true);
   end loop;
@@ -43,13 +44,13 @@ begin
                 from public.shift_vacancies v where v.req_id = r.id and v.status = 'open');
     -- לכל עובדי הגזרה (חוץ מהעובד עצמו)
     insert into public.push_outbox (worker_id, title, body, url, tag)
-    select distinct s.worker_id, '🆘 משמרות פנויות להשתבצות', r.worker_name || ' ב' || v_lbl || ' — פנוי: ' || left(v_txt, 160) || '. נכנסים לאפליקציה כדי לקחת משמרת.', './', 'vac-' || r.id
+    select distinct s.worker_id, '🆘 משמרות פנויות להשתבצות', coalesce(r.worker_name,'עובד') || ' ב' || v_lbl || ' — פנוי: ' || left(v_txt, 160) || '. נכנסים לאפליקציה כדי לקחת משמרת.', './', 'vac-' || r.id
       from public.push_subscriptions s
      where s.gone_at is null and s.worker_id <> r.worker_id
        and s.worker_id in (select f from public.shift_vacancies v, public.frame_workers(v.sector) f where v.req_id = r.id and v.status = 'open');
     -- להנהלה (הקב"טים של העובד וסרגיי)
     insert into public.push_outbox (manager_id, title, body, url, tag)
-    select distinct s.manager_id, '🆘 משמרות התפנו', r.worker_name || ' ב' || v_lbl || ' — ירד מ: ' || left(v_txt, 170), './', 'vac-' || r.id
+    select distinct s.manager_id, '🆘 משמרות התפנו', coalesce(r.worker_name,'עובד') || ' ב' || v_lbl || ' — ירד מ: ' || left(v_txt, 170), './', 'vac-' || r.id
       from public.push_subscriptions s
      where s.gone_at is null and s.manager_id is not null
        and (s.manager_id in (select public.frame_managers(r.worker_id)) or s.manager_id in (select id from public.managers where is_admin));
@@ -111,6 +112,7 @@ begin
       'custom_start', v.custom_start, 'custom_end', v.custom_end, 'reason', v.reason, 'released_name', v.released_name,
       'already', exists(select 1 from public.shift_assignments a where a.worker_id = v_w and a.entry_date = v.entry_date)) order by v.entry_date, v.shift_type)
     from public.shift_vacancies v where v.status = 'open' and v.entry_date >= v_today and v.released_worker <> v_w
+      and coalesce(lower(public.assignment_interval(v.sector, v.entry_date, v.shift_type, v.custom_start, v.custom_end)) > now(), true)
       and exists(select 1 from public.frame_workers(v.sector) f where f = v_w)), '[]'::jsonb);
 end; $function$;
 revoke all on function public.worker_vacancies(text) from public;
@@ -123,12 +125,14 @@ declare v public.shift_vacancies; w record; v_txt text;
 begin
   select * into v from public.shift_vacancies where id = p_id for update;
   if v.id is null or v.status <> 'open' then raise exception 'המשמרת כבר לא פנויה'; end if;
+  if not coalesce(lower(public.assignment_interval(v.sector, v.entry_date, v.shift_type, v.custom_start, v.custom_end)) > now(), true) then raise exception 'המשמרת כבר התחילה'; end if;
   select id, name, team_id into w from public.roster_workers where id = p_worker;
   if w.id is null then raise exception 'העובד לא נמצא'; end if;
   if exists(select 1 from public.shift_assignments where worker_id = w.id and entry_date = v.entry_date) then raise exception 'העובד כבר משובץ ביום הזה'; end if;
   perform public.snapshot_ensure(v.sector, v.entry_date);
   insert into public.shift_assignments (sector, entry_date, shift_type, worker_id, team_id, method, custom_start, custom_end, filled_role)
   values (v.sector, v.entry_date, v.shift_type, w.id, w.team_id, 'manual', v.custom_start, v.custom_end, v.filled_role);
+  update public.shift_assignments set shadow_of = w.id where sector = v.sector and entry_date = v.entry_date and shift_type = v.shift_type and shadow_of = v.released_worker;
   update public.shift_vacancies set status = 'taken', taken_by = w.id, taken_by_name = w.name, closed_at = now(), closed_by = p_by where id = v.id;
   insert into public.schedule_change_log (sector, entry_date, shift_type, actor, kind, worker_id, worker_name, detail, auto)
   values (v.sector, v.entry_date, v.shift_type, p_by, 'add', w.id, w.name, 'לקח משמרת פנויה (במקום ' || coalesce(v.released_name,'') || ')', false);

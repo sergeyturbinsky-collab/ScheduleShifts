@@ -291,7 +291,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=163"></script>
+<script src="portal.js?v=164"></script>
 <script>
 (function(){
 "use strict";
@@ -1876,12 +1876,14 @@ function availableForSlot(slot, workers, entriesByWorker, assignmentsByDate, exc
     const dayEntries = (entriesByWorker[w.id]||{})[slot.date] || [];
     const hasDayOff = dayEntries.some(e=>DAY_STATUS_TYPES.includes(e.shift_type)); // חופשה/מילואים/מחלה חוסמים את כל היום, בכל משמרת
     if(hasDayOff) return false;
+    const workerTeam = S.teams.find(t=>t.id===w.team_id);
+    // (2026-10-28, סרגיי: "עובד שהגיש 11-23, ניתן לשבץ אותו או במתואמת או במשמרת ערב, בהתאם לצורך")
+    const coordToEve = slot.shiftType==="evening" && !!(workerTeam && workerTeam.has_coordinated_shift);
     let matches = dayEntries.some(e=>{
       if(e.shift_type==="custom") return rangesOverlaps(e.custom_start,e.custom_end, slot.start, slot.end);
-      return blocking.includes(e.shift_type);
+      return blocking.includes(e.shift_type) || (coordToEve && e.shift_type==="coordinated");
     });
     if(matches && slot.shiftType==="coordinated"){ const ok = coordAllowedDates(w, slot.date, entriesByWorker); if(ok && !ok.has(slot.date)) matches = false; }
-    const workerTeam = S.teams.find(t=>t.id===w.team_id);
     const isMoked = workerTeam ? isMokedTeam(workerTeam) : (slot.sector==="מוקד");
     if(!isMoked && guardBlockingAt(workerTeam, slot.date)){
       // חיפה מ-01/11: סימון = חסימה, בלי שעות מותאמות (אם נשארו מהגשה ישנה - מתעלמים)
