@@ -291,7 +291,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=162"></script>
+<script src="portal.js?v=163"></script>
 <script>
 (function(){
 "use strict";
@@ -3931,7 +3931,7 @@ async function runAutoAssign(){
     const motAch = existing("motzash").filter(a=>roleOf(a)==='אחמ"ש');
     const motAchNeed = ((mot.roleCounts||{})['אחמ"ש']||0) - motAch.length;
     const avMot = streakFilter(availableForSlot(mot, workers, ui.entriesByWorker, assignmentsByDate, slotKey(mot.sector, mot.shiftType)).filter(w=>w.role==='אחמ"ש' && !w.auto_assign_exempt && underTarget(w, mot.date)), mot);
-    const avEve = eve ? availableForSlot(eve, workers, ui.entriesByWorker, assignmentsByDate, slotKey(eve.sector, eve.shiftType)) : [];
+    const avEve = eve ? availableForSlot(eve, workers, ui.entriesByWorker, assignmentsByDate, slotKey(eve.sector, eve.shiftType)).filter(w=>!taskDays.has(w.id + "|" + eve.date)) : [];
     const eveFallback = ()=>{
       if(sergeyW && avEve.some(x=>x.id===sergeyW.id)){ satSergey++; return sergeyW; }
       return restSorted(avEve.filter(w=>!w.auto_assign_exempt && w.id!==(plan.achmash&&plan.achmash.id)), eve)[0] || null;
@@ -4191,7 +4191,7 @@ async function repairShortages(team){
         const tRows = (abd[T.entry_date]||[]).filter(a=>a.sector===T.sector && a.shift_type===T.shift_type && !a.shadow_of);
         const xIsOnlyAch = !tSlot.roleCounts && isGuardAchmash(X) && !tRows.some(a=>a.worker_id!==X.id && isGuardAchmash(wOf(a.worker_id)));
         const ys = availableForSlot(tSlot, workers, ui.entriesByWorker, abd, null)
-          .filter(Y=>Y.id!==X.id && !Y.auto_assign_exempt && noWin(Y) && (!tSlot.roleCounts || Y.role===X.role) && (!xIsOnlyAch || isGuardAchmash(Y))
+          .filter(Y=>Y.id!==X.id && !Y.auto_assign_exempt && !taskDays2.has(Y.id + "|" + T.entry_date) && noWin(Y) && (!tSlot.roleCounts || Y.role===X.role) && (!xIsOnlyAch || isGuardAchmash(Y))
             && !wouldViolateRest(Y.id, ivT, ivAll) && !streakIssues(streakIdx, Y.id, T.entry_date, T.shift_type).length)
           .sort((a,b)=>(wouldBeTightRest(a.id, ivT, ivAll)?1:0)-(wouldBeTightRest(b.id, ivT, ivAll)?1:0) || (cnt[a.id]||0)-(cnt[b.id]||0));
         if(ys.length){ move = {X, T, tRows, Y:ys[0]}; break; }
