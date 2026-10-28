@@ -5494,6 +5494,24 @@ function navRestore(s){
   SW.open = false;
   PV.swap = null; PV.swapHist = null; // חזרה לעמוד חילופים - טוענים מחדש, לא רשימה ישנה
 }
+/* (2026-10-28) ריענון בתוך מסך סידור: מחזירים את הסשן האישי של המנהל/העורך במקום קוד העריכה - בלי לבקש סיסמה שוב */
+function restoreEditSession(App, kind){
+  const S = App.S;
+  if(kind==="mgr"){
+    const ms = loadMgr(App); if(!ms || !ms.token) return false;
+    S.pin = "mgr:" + ms.token; S.actorName = ms.name;
+    const acc = {}; mgrTeams(App, ms.schedule_team_ids).forEach(t=>acc[t.id] = true);
+    S.teamAccess = Object.assign({}, S.teamAccess, acc);
+    return true;
+  }
+  if(kind==="wrk"){
+    const ss = loadSession(App); if(!ss || !ss.schedule_editor || !ss.token) return false;
+    S.pin = "wrk:" + ss.token; S.actorName = ss.name;
+    S.teamAccess = Object.assign({}, S.teamAccess, {[ss.team_id]: true});
+    return true;
+  }
+  return false;
+}
 function navHasParent(App){ return App.S.view==="home" && !!MHS.section && !!loadMgr(App); }
 function navRoot(){ if(!MHS.section) return false; MHS.section = ""; try{ sessionStorage.setItem("cst_mh_section", ""); }catch(e){} return true; }
 
@@ -6176,5 +6194,5 @@ if("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("messa
   const App = window.__portalApp;
   if(ev.data && ev.data.type==="refresh" && App && App.S.view==="home" && loadSession(App)){ T.data = null; F.data = null; P.shifts = null; App.render(); }
 });
-window.Portal = { navKey, navSave, navRestore, navHasParent, navRoot, onDrag, renderHome, renderSection, renderManagerRequests, renderManagerPasswords, renderPView, pvTitle, onChange: onChangeTraining, resetPasswordsScreen(){ W.pin=null; W.list=null; W.error=null; W.msg=null; W.tried=false; W.loading=false; }, onClick, onInput, onKey, resetState(){ P.shifts=null; P.checkedSession=false; } };
+window.Portal = { navKey, navSave, navRestore, navHasParent, restoreEditSession, navRoot, onDrag, renderHome, renderSection, renderManagerRequests, renderManagerPasswords, renderPView, pvTitle, onChange: onChangeTraining, resetPasswordsScreen(){ W.pin=null; W.list=null; W.error=null; W.msg=null; W.tried=false; W.loading=false; }, onClick, onInput, onKey, resetState(){ P.shifts=null; P.checkedSession=false; } };
 })();
