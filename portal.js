@@ -1938,6 +1938,75 @@ function eqoNeedGroups(list){
   return Object.keys(by).map(k=>{ const g = by[k]; g.sizes = Object.keys(g.sz).sort((a,b)=>String(a).localeCompare(String(b), "he", {numeric:true})).map(sz=>({size:sz, n:g.sz[sz]})); return g; })
     .sort((a,b)=>a.name.localeCompare(b.name, "he"));
 }
+/* סיכום דרישות ציוד (2026-10-28, סרגיי: "לכל מי שרלוונטי לחצן שמאפשר הורדת pdf עם סיכום דרישות הציוד ולחצן שמאפשר לבחור
+   לשלוח את זה בוואטסאפ או מייל"). PDF אחד: בקשות ציוד שממתינות לטיפול, מה שחסר לעובדים (להזמנה) ומה שהוזמן וממתין להגעה. */
+const EQS = { busy:false, msg:null, pick:false };
+function eqSummaryBar(App){
+  const esc = App.escapeHtml;
+  return `<div class="flexbar no-print" style="gap:6px;flex-wrap:wrap;margin:8px 0;">
+    <button class="btn small secondary" data-action="portal-eqs-pdf" data-via="dl" ${EQS.busy?"disabled":""}>⬇️ הורדת PDF — סיכום דרישות ציוד</button>
+    ${EQS.pick ? `<button class="btn small ok" data-action="portal-eqs-pdf" data-via="wa" ${EQS.busy?"disabled":""}>💬 וואטסאפ</button>
+      <button class="btn small ok" data-action="portal-eqs-pdf" data-via="mail" ${EQS.busy?"disabled":""}>✉️ מייל</button>
+      <button class="btn small secondary" data-action="portal-eqs-pick">ביטול</button>`
+      : `<button class="btn small ok" data-action="portal-eqs-pick" ${EQS.busy?"disabled":""}>📤 שליחה בוואטסאפ / מייל</button>`}
+    ${EQS.busy?`<span class="muted">מכין PDF...</span>`:""}${EQS.msg?`<span class="muted">${esc(EQS.msg)}</span>`:""}</div>`;
+}
+async function eqSummaryPdf(App, ms, via){
+  const esc = App.escapeHtml;
+  const [reqs, ws] = await Promise.all([
+    App.apiRpc("mgr_equipment_requests", {p_token: ms.token}).catch(()=>[]),
+    App.apiRpc("mgr_equipment_workers", {p_token: ms.token}).catch(()=>[])
+  ]);
+  const pend = (reqs||[]).filter(r=>r.status==="pending");
+  const waitWs = (ws||[]).filter(w=>w.waiting && w.waiting.length);
+  const today = App.fmtDateHeb(App.fmtDate(new Date()));
+  // בקשות ממתינות - לפי פריט ומידה
+  const byItem = {};
+  pend.forEach(r=>{ const g = byItem[r.item_name] = byItem[r.item_name] || {n:0, sz:{}, people:[]}; const q = r.quantity||1; g.n += q;
+    const sz = r.size || "—"; g.sz[sz] = (g.sz[sz]||0) + q; g.people.push(`${r.worker_name}${r.size?` (${r.size})`:""}${q>1?` ×${q}`:""} — ${REQ_REASON[r.reason]||""}`); });
+  const reqRows = Object.keys(byItem).sort((a,b)=>a.localeCompare(b,"he")).map(k=>{ const g = byItem[k];
+    return `<tr><td><b>${esc(k)}</b></td><td>${Object.keys(g.sz).map(z=>`${esc(z)} ×${g.sz[z]}`).join(", ")}</td><td>${g.n}</td><td style="font-size:11px;">${g.people.map(esc).join("<br>")}</td></tr>`; }).join("");
+  const reqSec = pend.length ? `<h3>📥 בקשות ציוד שממתינות לטיפול (${pend.length})</h3>
+    <table class="t"><thead><tr><th>פריט</th><th>מידות</th><th>כמות</th><th>מי ביקש</th></tr></thead><tbody>${reqRows}
+    <tr><td colspan="2"><b>סה"כ</b></td><td><b>${pend.reduce((s,r)=>s+(r.quantity||1),0)}</b></td><td></td></tr></tbody></table>` : `<h3>📥 בקשות ציוד שממתינות לטיפול</h3><p>אין בקשות ממתינות.</p>`;
+  const need = eqoNeedGroups(waitWs);
+  const needSec = need.length ? `<h3>🛒 חסר לעובדים — להזמנה (${need.reduce((s,g)=>s+g.n,0)})</h3>
+    <table class="t"><thead><tr><th>פריט</th><th>מידות</th><th>כמות</th><th>עובדים</th></tr></thead><tbody>
+    ${need.map(g=>`<tr><td><b>${esc(g.name)}</b></td><td>${g.sizes.map(x=>`${esc(x.size)} ×${x.n}`).join(", ")||"—"}</td><td>${g.n}</td><td style="font-size:11px;">${g.people.map(x=>esc(x.w.name)+(x.size?` (${esc(x.size)})`:"")).join(", ")}</td></tr>`).join("")}</tbody></table>`
+    : `<h3>🛒 חסר לעובדים — להזמנה</h3><p>אין פריטים להזמין.</p>`;
+  const ord = {};
+  waitWs.forEach(w=>w.waiting.filter(x=>x.status==="ordered").forEach(x=>{ const g = ord[x.name] = ord[x.name] || {n:0, people:[]}; g.n++; g.people.push(w.name + (x.size?` (${x.size})`:"")); }));
+  const ordKeys = Object.keys(ord).sort((a,b)=>a.localeCompare(b,"he"));
+  const ordSec = ordKeys.length ? `<h3>📦 הוזמן וממתין להגעה (${ordKeys.reduce((s,k)=>s+ord[k].n,0)})</h3>
+    <table class="t"><thead><tr><th>פריט</th><th>כמות</th><th>עובדים</th></tr></thead><tbody>
+    ${ordKeys.map(k=>`<tr><td><b>${esc(k)}</b></td><td>${ord[k].n}</td><td style="font-size:11px;">${ord[k].people.map(esc).join(", ")}</td></tr>`).join("")}</tbody></table>` : "";
+  await loadHtml2Pdf();
+  const box = document.createElement("div");
+  box.dir = "rtl"; box.style.cssText = "position:fixed;left:-10000px;top:0;width:760px;background:#fff;color:#111;font-family:Arial,sans-serif;padding:18px;";
+  box.innerHTML = `<style>.t{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:6px;}.t th,.t td{border:1px solid #999;padding:6px 8px;text-align:right;vertical-align:top;}.t th{background:#f1f1f1;} h2{font-size:20px;margin:0 0 4px;} h3{font-size:16px;margin:16px 0 6px;} tr{page-break-inside:avoid;}</style>
+    ${App.logoStripHtml ? App.logoStripHtml(50) : ""}<h2>סיכום דרישות ציוד</h2><div style="font-size:12px;color:#666;">הופק ${esc(today)} ע"י ${esc(ms.name||"")}</div>${reqSec}${needSec}${ordSec}`;
+  document.body.appendChild(box);
+  const name = `סיכום-דרישות-ציוד-${App.fmtDate(new Date())}.pdf`;
+  let blob;
+  try{
+    blob = await window.html2pdf().set({margin:[10,8,10,8], filename:name, image:{type:"jpeg", quality:0.92}, html2canvas:{scale:2, useCORS:true},
+      jsPDF:{unit:"mm", format:"a4", orientation:"portrait"}, pagebreak:{mode:["css","legacy"]}}).from(box).outputPdf("blob");
+  } finally { box.remove(); }
+  const file = new File([blob], name, {type:"application/pdf"});
+  const title = "סיכום דרישות ציוד — " + today;
+  const download = ()=>{ const u = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u), 4000); };
+  if(via==="dl"){ download(); return "ה-PDF נשמר בהורדות."; }
+  // בטלפון: חלון השיתוף של המכשיר עם הקובץ מצורף (בוחרים בו וואטסאפ או מייל)
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file], title, text:title}); return ""; }
+    catch(err){ if(err && err.name==="AbortError") return ""; }
+  }
+  // במחשב: הקובץ נשמר בהורדות ונפתחת הודעה מוכנה - מצרפים אליה את הקובץ
+  download();
+  if(via==="wa"){ window.open("https://wa.me/?text=" + encodeURIComponent(title + " (הקובץ מצורף)"), "_blank"); return "ה-PDF נשמר בהורדות — צרפו אותו להודעה בוואטסאפ שנפתחה."; }
+  window.location.href = "mailto:?subject=" + encodeURIComponent(title) + "&body=" + encodeURIComponent(title + "\n\n(ה-PDF מצורף)");
+  return "ה-PDF נשמר בהורדות — צרפו אותו למייל שנפתח.";
+}
 async function eqoMakePdf(App, ms, via){
   const esc = App.escapeHtml, ws = (EQM.workers||[]).filter(w=>w.waiting && w.waiting.length);
   const teamIds = [...new Set(ws.map(w=>w.team_id))];
@@ -1999,6 +2068,7 @@ function renderEquipMgrPages(App, ms, pg, a, wrap, loading, msgs){
     const teamName = id=>{ const t = App.teamById(id); return t ? ((t.sectors&&t.sectors.length) ? t.sectors.join(" / ") : t.name) : ""; };
     return wrap(`<h2 style="margin-top:4px;">🎒 ציוד אישי לעובדים</h2>
       <p class="muted">לחצו על עובד כדי להזין או לעדכן את הציוד שברשותו. המאבטח רואה את הרשימה באיזור האישי (לוגיסטי) ולא יכול לערוך אותה.</p>${msgs}
+      ${eqSummaryBar(App)}
       ${eqmWaitingHtml(App, ms)}
       ${Object.keys(byTeam).map(tid=>`${Object.keys(byTeam).length>1?`<h3 style="margin:12px 0 4px;">${esc(teamName(tid))}</h3>`:""}
         ${byTeam[tid].map(w=>`<div class="portal-task" data-action="portal-pv" data-page="equip-edit" data-id="${w.id}" data-name="${esc(w.name)}">
@@ -2215,6 +2285,7 @@ function renderManagerRequestsList(App, backHtml, label){
   return `<div class="card">
     ${backHtml}
     <h2>בקשות ציוד — ${esc(label)}</h2>
+    ${M.session ? eqSummaryBar(App) : ""}
     ${M.error? `<p class="shortage">${esc(M.error)}</p>`:""}
     ${M.msg? `<p style="color:#1b7f3b;font-weight:600;">${esc(M.msg)}</p>`:""}
     <h3>ממתינות לטיפול (${pending.length})</h3>
@@ -5380,6 +5451,7 @@ function renderManagerHome(App, ms){
     <h3>לוגיסטי</h3>
     <p class="muted" style="margin-top:-6px;">${names(logi)}</p>
     <div class="grid-teams">${tile("portal-mh-equip", "בקשות ציוד", "החלפה / ציוד נוסף")}<div class="team-tile" data-action="portal-pv" data-page="equip-workers"><div style="font-size:1.1em;font-weight:700;">🎒 ציוד אישי לעובדים</div><div class="muted" style="font-size:.85em;margin-top:4px;">הזנה ועדכון הרשימה של כל עובד</div></div>${areqMgrTile(App, ms)}</div>
+    ${eqSummaryBar(App)}
     ${eqmWaitingHtml(App, ms)}
   </div>
   <div class="card">
@@ -6043,6 +6115,14 @@ function onClick(App, a, el){
   if(a==="portal-eqw-toggle"){ EQM.waitOpen = !(el.parentElement && el.parentElement.open); return; }
   if(a==="portal-eqo-toggle"){ EQM.ordOpen = !(el.parentElement && el.parentElement.open); return; }
   if(a==="portal-eqn-toggle"){ EQM.needOpen = !(el.parentElement && el.parentElement.open); return; }
+  if(a==="portal-eqs-pick"){ EQS.pick = !EQS.pick; EQS.msg = null; return App.render(); }
+  if(a==="portal-eqs-pdf"){
+    const ms = M.session || loadMgr(App); if(!ms || EQS.busy) return;
+    EQS.busy = true; EQS.msg = null; App.render();
+    eqSummaryPdf(App, ms, el.dataset.via).then(m=>{ EQS.busy = false; EQS.pick = false; EQS.msg = m || null; App.render(); })
+      .catch(e=>{ EQS.busy = false; EQS.msg = "יצירת ה-PDF נכשלה: " + e.message; App.render(); });
+    return;
+  }
   if(a==="portal-eqo-pdf"){
     const ms = loadMgr(App); if(!ms || EQM.pdfBusy) return;
     EQM.pdfBusy = true; EQM.pdfMsg = null; EQM.needOpen = true; App.render();
