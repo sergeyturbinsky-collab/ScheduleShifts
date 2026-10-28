@@ -299,7 +299,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=217"></script>
+<script src="portal.js?v=218"></script>
 <script>
 (function(){
 "use strict";
@@ -3551,8 +3551,12 @@ async function assignAtPosition(sector, date, shiftType, pos, workerId, customSt
   const assignmentsByDate = {};
   (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
   let list = tmplAssignedList(assignmentsByDate, date, sector, shiftType).map(a=>a.worker_id);
-  if(workerId) list = list.filter(id=>id!==workerId); // בלי כפילויות אם כבר משובץ במיקום אחר
-  if(!workerId){
+  // (2026-10-28, סרגיי: "למה מאור הוסר?") - עובד שכבר נמצא במשבצת (למשל שינוי שעות שלו) רק זז למקום שנבחר; לא מחליף אף אחד.
+  // עד עכשיו הוא הוסר מהרשימה ואז "הוחלף" במקום שנבחר - וכך נמחק בטעות העובד שהיה אחריו ברשימה
+  const already = workerId ? list.indexOf(workerId) : -1;
+  if(already >= 0){
+    list.splice(already, 1); list.splice(Math.min(pos-1, list.length), 0, workerId);
+  } else if(!workerId){
     list.splice(pos-1, 1); // "חוסר" - מסיר את המיקום הזה
   } else if(pos-1 < list.length){
     list.splice(pos-1, 1, workerId); // החלפה במקום
@@ -3596,9 +3600,12 @@ async function assignRoleAtPosition(sector, date, shiftType, role, ridx, workerI
   const qDay = bucket ? bucket.perDate[date] : null;
   let roleIds = tmplRoleAssignedListWithOverride(assignmentsByDate, date, sector, shiftType, role, workersById, qDay ? qDay.role_counts : null).map(a=>a.worker_id);
   const otherRoleIds = fullList.filter(id=>!roleIds.includes(id) && id!==workerId);
+  const wasIn = !!workerId && roleIds.includes(workerId); // (2026-10-28) עובד שכבר בשורות התפקיד - רק זז, לא מחליף אחר
   if(workerId) roleIds = roleIds.filter(id=>id!==workerId);
 
-  if(ridx>=roleRowsCount){
+  if(wasIn && ridx<roleRowsCount){
+    roleIds.splice(Math.min(ridx-1, roleIds.length), 0, workerId);
+  } else if(ridx>=roleRowsCount){
     // השורה האחרונה של התפקיד - עריכה ידנית מאפסת אותה לעובד יחיד (או ריקה), גם אם הייתה בה חפיפה
     roleIds = roleIds.slice(0, ridx-1);
     if(workerId) roleIds.push(workerId);
@@ -3649,9 +3656,12 @@ async function confirmTmplCustomHours(){
       const shiftType = hit.quota.shift_type;
       const assignmentsByDate = {};
       (ui.assignments||[]).forEach(a=>{ (assignmentsByDate[a.entry_date] = assignmentsByDate[a.entry_date]||[]).push(a); });
-      const list = tmplAssignedList(assignmentsByDate, c.date, c.sector, shiftType).map(a=>a.worker_id).filter(id=>id!==workerId);
+      const full = tmplAssignedList(assignmentsByDate, c.date, c.sector, shiftType).map(a=>a.worker_id);
+      const list = full.filter(id=>id!==workerId);
       const pos = (shiftType===c.type) ? c.pos : (list.length+1);
-      if(pos-1 < list.length) list.splice(pos-1,1,workerId); else list.push(workerId);
+      // (2026-10-28) עובד שכבר במשבצת - רק זז/מקבל שעות, בלי להחליף את מי שאחריו (כך מאור נמחק בטעות)
+      if(full.includes(workerId)) list.splice(Math.min(pos-1, list.length), 0, workerId);
+      else if(pos-1 < list.length) list.splice(pos-1,1,workerId); else list.push(workerId);
       // (2026-10-21, סרגיי - אופציה 2) טווח שחוצה שתי משמרות נשמר מפוצל: כל משמרת מקבלת רק את החלק שלה,
       // עם נקודת החלוקה בתחילת המשמרת המאוחרת (למשל ערב 16:30-22:30 + לילה 22:30-4:30). חלק ששווה לשעות התקן נשמר בלי שעות מותאמות.
       let hcs = cs, hce = ce;
@@ -3702,11 +3712,12 @@ async function confirmMokedCustomHours(){
       const slotRowsHere = tmplAssignedList(assignmentsByDate, c.date, c.sector, shiftType);
       const effRoleOf = id=>{ const a = slotRowsHere.find(x=>x.worker_id===id); return a ? assignmentRole(a, workersById) : (workersById[id]||{}).role; };
       const otherRoleIds = fullList.filter(id=> id!==workerId && effRoleOf(id)!==role);
+      const wasIn = fullList.includes(workerId) && effRoleOf(workerId)===role; // (2026-10-28) כבר בשורות התפקיד - רק זז
       let roleIds = fullList.filter(id=> id!==workerId && effRoleOf(id)===role);
       if(shiftType===c.type){
         const roleRowsCount = hit.bucket.roleMax[role]||1;
         if(c.ridx>=roleRowsCount) roleIds = roleIds.slice(0, c.ridx-1);
-        else if(c.ridx-1 < roleIds.length) roleIds.splice(c.ridx-1, 1);
+        else if(c.ridx-1 < roleIds.length && !wasIn) roleIds.splice(c.ridx-1, 1);
         roleIds.splice(Math.min(c.ridx-1, roleIds.length), 0, workerId);
       } else {
         roleIds.push(workerId); // בבלוק הסמוך - מצטרף כחפיפה לסוף רשימת התפקיד
