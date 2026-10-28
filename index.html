@@ -291,7 +291,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=159"></script>
+<script src="portal.js?v=160"></script>
 <script>
 (function(){
 "use strict";
@@ -1665,7 +1665,12 @@ async function loadAggregateData(team){
         ui.streakAssignments = rows;
       } else ui.streakAssignments = [];
     }catch(e){ ui.streakAssignments = ui.allAssignments || []; }
-    ui.streakIdx = buildStreakIndex(ui.streakAssignments);
+    // משימות (לא משמרת) באותו טווח - נספרות כימי עבודה ברצף (2026-10-28)
+    try{
+      ui.streakTasks = (dates.length && group.citySectors.length) ? (await apiRpc("sched_tasks_list_v2", {p_sectors: group.citySectors,
+        p_from: fmtDate(addDays(parseDate(dates[0]),-27)), p_to: fmtDate(addDays(parseDate(dates[dates.length-1]),27)), p_auth: schedTasksAuth()}) || []) : [];
+    }catch(e){ ui.streakTasks = []; }
+    rebuildStreakIdx(ui);
 
     // משימות שאינן משמרת (3 שורות לכל יום בתחתית טבלת השיבוץ) - 2026-10-20
     try{
@@ -2074,6 +2079,16 @@ function buildStreakIndex(assignments){
     if(isShabbatShift(a.entry_date, a.shift_type)) w.shabbats.add(shabbatKeyOf(a.entry_date));
   });
   return idx;
+}
+/* (2026-10-28, סרגיי: "להתייחס למשימה חיצונית כיום עבודה לכל דבר במניין השבעה ימים") */
+function rebuildStreakIdx(ui){
+  ui.streakIdx = buildStreakIndex((ui.streakAssignments||[]).concat((ui.streakTasks||[]).map(t=>({worker_id:t.worker_id, entry_date:t.date, shift_type:"task"}))));
+}
+/* עובד עם משימה (לא משמרת) ביום - לא משובץ אוטומטית לשום משמרת באותו יום (2026-10-28, סרגיי) */
+function taskDaySet(ui){ const s = new Set(); (ui.schedTasks||[]).forEach(t=>{ if(t.worker_id) s.add(t.worker_id + "|" + t.date); }); return s; }
+function taskTag(workerId, date){
+  const t = (S.ui.schedTasks||[]).filter(x=>x.worker_id===workerId && x.date===date);
+  return t.length ? ` <span class="streak-warn">📌 משימה ביום הזה: ${escapeHtml(t.map(x=>x.title).join(", "))}</span>` : "";
 }
 function streakAdd(idx, workerId, date, shiftType){
   const w = idx[workerId] || (idx[workerId] = {days:new Set(), shabbats:new Set()});
@@ -2705,6 +2720,8 @@ async function staskReload(){
   const args = {p_sectors: group.citySectors, p_from: dts[0], p_to: dts[dts.length-1]};
   ui.schedTasks = await apiRpc("sched_tasks_list_v2", Object.assign({p_auth: schedTasksAuth()}, args));
   try{ ui.schedTaskRows = await apiRpc("sched_task_rows_list", args); }catch(e){}
+  ui.streakTasks = (ui.streakTasks||[]).filter(t=>t.date < dts[0] || t.date > dts[dts.length-1]).concat(ui.schedTasks||[]);
+  rebuildStreakIdx(ui);
 }
 async function schedTaskAction(a){
     const ui = S.ui;
@@ -2980,7 +2997,7 @@ function renderTmplCellOverlay(){
   const availOptions = subFirst(options.filter(w=>avail.some(a=>a.id===w.id)));
   const busyOptions = options.filter(w=> !avail.some(a=>a.id===w.id) && availIncludingBusy.some(a=>a.id===w.id));
   const unavailOptions = options.filter(w=>!availIncludingBusy.some(a=>a.id===w.id));
-  const pickBtn = w => `<button class="btn small ${w.id===(currentWorker&&currentWorker.id)?"":"secondary"}" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}${partialTag(w, slot)}${noSubTag(w)}</button>`;
+  const pickBtn = w => `<button class="btn small ${w.id===(currentWorker&&currentWorker.id)?"":"secondary"}" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}${partialTag(w, slot)}${noSubTag(w)}${taskTag(w.id, c.date)}</button>`;
   const busyNote = w => {
     const already = (assignmentsByDate[c.date]||[]).filter(a=>a.worker_id===w.id);
     const labels = Array.from(new Set(already.map(a=>SHIFT_LABELS[a.shift_type]||a.shift_type)));
@@ -3810,9 +3827,11 @@ async function runAutoAssign(){
     (workerIntervals[workerId] = workerIntervals[workerId]||[]).push(newInterval);
   }
   // 7 ימים ברצף / שבת רביעית ברצף (2026-10-11): מודרים לגמרי מהשיבוץ האוטומטי - ראו streakIssues למעלה
-  const streakIdx = buildStreakIndex(ui.streakAssignments || ui.allAssignments || ui.assignments || []);
+  const streakIdx = buildStreakIndex((ui.streakAssignments || ui.allAssignments || ui.assignments || []).concat((ui.streakTasks||[]).map(t=>({worker_id:t.worker_id, entry_date:t.date, shift_type:"task"}))));
   const streakCut = new Set(); let streakShort = 0;
+  const taskDays = taskDaySet(ui); // עובד עם משימה (לא משמרת) ביום - לא משובץ אוטומטית באותו יום (2026-10-28, סרגיי)
   function streakFilter(list, slot){
+    list = list.filter(w=>!taskDays.has(w.id + "|" + slot.date));
     const out = list.filter(w=>!streakIssues(streakIdx, w.id, slot.date, slot.shiftType).length);
     if(out.length < list.length) streakCut.add(slot);
     return out;
@@ -4104,12 +4123,13 @@ async function repairShortages(team){
       if(sl.roleCounts){ needRole = Object.keys(sl.roleCounts).find(r=>inS.filter(a=>roleOf(a)===r).length < (sl.roleCounts[r]||0)); if(!needRole) break; }
       else { if(inS.length >= sl.required) break; needRole = null; }
       const cnt = {}; (ui.assignments||[]).forEach(a=>{ if(!a.shadow_of) cnt[a.worker_id]=(cnt[a.worker_id]||0)+1; });
-      const streakIdx = buildStreakIndex(ui.streakAssignments || ui.allAssignments || ui.assignments || []);
+      const streakIdx = buildStreakIndex((ui.streakAssignments || ui.allAssignments || ui.assignments || []).concat((ui.streakTasks||[]).map(t=>({worker_id:t.worker_id, entry_date:t.date, shift_type:"task"}))));
+      const taskDays2 = taskDaySet(ui);
       const allA = ui.allAssignments || ui.assignments || [];
       const ivS = shiftInterval({sector:sl.sector, shift_type:sl.shiftType, entry_date:sl.date});
       const noWin = w=>!(workerIsMoked(w, sl.sector) && mokedWindows(w, sl.date, ui.entriesByWorker));
       let move = null;
-      const xs = workers.filter(w=>!w.auto_assign_exempt && (!needRole || w.role===needRole) && noWin(w)
+      const xs = workers.filter(w=>!w.auto_assign_exempt && !taskDays2.has(w.id + "|" + sl.date) && (!needRole || w.role===needRole) && noWin(w)
         && availableForSlot(sl, [w], ui.entriesByWorker, abd, null, false, true).length);
       for(const X of xs){
         const mine = (abd[sl.date]||[]).filter(a=>a.worker_id===X.id);
