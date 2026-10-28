@@ -299,7 +299,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=213"></script>
+<script src="portal.js?v=214"></script>
 <script>
 (function(){
 "use strict";
@@ -4818,6 +4818,38 @@ async function avoidCutPass(team){
         if(after > before + 1) continue;
         rA.worker_id = B.id; rA.team_id = B.team_id; rB.worker_id = A.id; rB.team_id = A.team_id;
         changes++; done = true; break outer;
+      }
+    }
+    if(done) continue;
+    // (2026-10-28, סרגיי: "כנ"ל ביום רביעי... אותם עובדים ששובצו ערב, להעביר לבוקר במקום לקצר") - כשאין החלפה ישירה:
+    // סבב של שלושה באותו יום - A (שצריך קיצור) עובר למשבצת של B, B למשבצת של C, ו-C למשבצת של A
+    outer3: for(const rA of L.filter(a=>movable(a) && needsCut(a))){
+      const A = wById(rA.worker_id); if(!A) continue;
+      const same = L.filter(a=>movable(a) && a!==rA && a.sector===rA.sector && a.entry_date===rA.entry_date && a.worker_id!==rA.worker_id);
+      for(const rB of same){
+        if(rB.shift_type===rA.shift_type) continue;
+        const B = wById(rB.worker_id); if(!B) continue;
+        for(const rC of same){
+          if(rC===rB || rC.worker_id===rB.worker_id || rC.shift_type===rB.shift_type) continue;
+          const C = wById(rC.worker_id); if(!C) continue;
+          const sA = slotOf(rA), sB = slotOf(rB), sC = slotOf(rC);
+          const tA = rA.worker_id, tB = rB.worker_id, tC = rC.worker_id;
+          rA.worker_id = "__x"; rB.worker_id = "__y"; rC.worker_id = "__w";
+          const ok = canTake(A, sB, null, abd) && canTake(B, sC, null, abd) && canTake(C, sA, null, abd);
+          rA.worker_id = tA; rB.worker_id = tB; rC.worker_id = tC;
+          if(!ok || !achOk(rB, A) || !achOk(rC, B) || !achOk(rA, C)) continue;
+          rB.worker_id = A.id; rC.worker_id = B.id; rA.worker_id = C.id;
+          const still = needsCut(rA) || needsCut(rB) || needsCut(rC);
+          const achStill = achOk(rB, A) && achOk(rC, B) && achOk(rA, C);
+          rA.worker_id = tA; rB.worker_id = tB; rC.worker_id = tC;
+          if(still || !achStill) continue;
+          const d = {}; [[A.id, rA, rB], [B.id, rB, rC], [C.id, rC, rA]].forEach(([id, from, to])=>{ const x = d[id] = d[id] || {m:0, e:0}; const kf = MIXK2[from.shift_type], kt = MIXK2[to.shift_type]; if(kf==="m") x.m--; if(kf==="e") x.e--; if(kt==="m") x.m++; if(kt==="e") x.e++; });
+          const before = dev(A.id,0,0) + dev(B.id,0,0) + dev(C.id,0,0);
+          const after = [A.id, B.id, C.id].reduce((sum,id)=>sum + dev(id, d[id].m, d[id].e), 0);
+          if(after > before + 1) continue;
+          rB.worker_id = A.id; rB.team_id = A.team_id; rC.worker_id = B.id; rC.team_id = B.team_id; rA.worker_id = C.id; rA.team_id = C.team_id;
+          changes++; done = true; break outer3;
+        }
       }
     }
     if(!done) break;
