@@ -299,7 +299,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=216"></script>
+<script src="portal.js?v=217"></script>
 <script>
 (function(){
 "use strict";
@@ -2159,8 +2159,15 @@ function computeRestViolations(assignments){
 /* (2026-10-28, סרגיי: "תצבע את כל השעות שלא מתחילים או לא מסיימים כמשמרת סטנדרטית בצבע תכלת") - כל שעת התחלה או סיום
    שונה מהתקן (כולל התחלה מאוחרת/מוקדמת וסיום מאוחר), לא רק סיום מוקדם */
 function isEarlyEnd(q, a){
-  if(!a || !q || !q.start_time || !q.end_time || (!a.custom_start && !a.custom_end)) return false;
+  if(!a || !q || !q.start_time || !q.end_time) return false;
   const m = t=>{ const p = String(t).slice(0,5).split(":").map(Number); return ((p[0]*60 + (p[1]||0)) % 1440); };
+  if(!a.custom_start && !a.custom_end){
+    // (2026-10-28, סרגיי: "המשבצת של ויליאם בערב לא נצבעה בכחול, למרות שהוא עובד חוצה משמרות") - משמרת בשעות הרגילות
+    // שממשיכה ישירות חלק בשעות מותאמות של אותו עובד באותו יום (למשל בוקר 12:00-15:30 ואז ערב רגיל 15:30-24:00) - גם היא מסומנת
+    const rows = (S.ui && S.ui.assignments) || [];
+    return rows.some(b=>b!==a && b.worker_id===a.worker_id && b.entry_date===a.entry_date && b.sector===a.sector && !b.shadow_of && (b.custom_start || b.custom_end)
+      && ((b.custom_end && m(b.custom_end)===m(q.start_time)) || (b.custom_start && m(b.custom_start)===m(q.end_time))));
+  }
   if(a.custom_start && m(a.custom_start)!==m(q.start_time)) return true;
   if(a.custom_end && m(a.custom_end)!==m(q.end_time)) return true;
   // (2026-10-28, סרגיי: "בעת שיבוץ לשעות לא שגרתיות, תסמן את שתי המשבצות שלו בתכלת") - משמרת מחוברת: גם החלק שבשעות הרגילות
