@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=176"></script>
+<script src="portal.js?v=177"></script>
 <script>
 (function(){
 "use strict";
@@ -3976,7 +3976,8 @@ async function runAutoAssign(){
   // (2026-10-28, סרגיי: "בימים בהם יש גם משמרת לילה, במידה והעובד הגיש זמינות גם ללילה וגם למשמרות האחרות - העדיפות לשבץ אותם
   //  ללילה קודם כל. רק כשהלילות מלאים, לשבץ בשאר") - במאבטחים, בכל יום משבצים קודם את הלילה ורק אחריו את שאר המשמרות של אותו יום
   const NIGHT_FIRST = ["night","friday_night"];
-  const nightRank = u=>(u[0].sector!=="מוקד" && NIGHT_FIRST.includes(u[0].shiftType)) ? 0 : 1;
+  // (2026-10-28, סרגיי: "במידה ויש פער הן במשמרת ערב והן במתואמת - עדיפות לשבץ את העובד למתואמת (גם אם הוא אחמ"ש)") - המתואמת לפני הערב
+  const nightRank = u=>u[0].sector==="מוקד" ? 1 : NIGHT_FIRST.includes(u[0].shiftType) ? 0 : u[0].shiftType==="evening" ? 2 : 1;
   units.forEach((u,i)=>{ u._i = i; });
   units.sort((x,y)=>(x[0].date < y[0].date ? -1 : x[0].date > y[0].date ? 1 : 0) || (nightRank(x) - nightRank(y)) || (x._i - y._i));
   const plannedBySlot = new Map(); // slot -> {chosen, newInterval}
@@ -4157,7 +4158,7 @@ async function runAutoAssign(){
         if(okA.length) achFirst = [okA[0]]; else if(badA.length){ achFirst = [badA[0]]; restForced++; } else noAch++;
       }
       // שאר הסיירים: אחמ"שים נוספים רק בסוף (כדי שיישארו פנויים למשמרות אחרות באותו יום שצריכות אחמ"ש)
-      const achLast = (a,b)=>(groupHasAch ? (isGuardAchmash(a)?1:0)-(isGuardAchmash(b)?1:0) : 0) || byFairness(a,b);
+      const achLast = (a,b)=>((groupHasAch && slot.shiftType!=="coordinated") ? (isGuardAchmash(a)?1:0)-(isGuardAchmash(b)?1:0) : 0) || byFairness(a,b);
       chosen = achFirst.concat(restOk.filter(w=>!achFirst.includes(w)).sort(tl(slot, achLast))).slice(0, need);
       if(chosen.length < need){
         const more = restBad.filter(w=>!achFirst.includes(w)).sort(achLast).slice(0, need - chosen.length);
@@ -4313,7 +4314,10 @@ async function repairShortages(team){
   const slots = buildSlots(dates, group, S.quotas);
   let fixed = 0;
   const slotOf = (sector, date, type)=>slots.find(x=>x.sector===sector && x.date===date && x.shiftType===type);
-  for(const sl of slots){
+  // סדר הטיפול בחוסרים: לילה, ואז בוקר/מתואמת, ורק אחר כך ערב (2026-10-28) - כמו בשיבוץ הראשי
+  const rk = sl=>sl.sector==="מוקד" ? 1 : ["night","friday_night"].includes(sl.shiftType) ? 0 : sl.shiftType==="evening" ? 2 : 1;
+  const ordered = slots.map((x,i)=>({x,i})).sort((p,q)=>(p.x.date<q.x.date?-1:p.x.date>q.x.date?1:0) || (rk(p.x)-rk(q.x)) || (p.i-q.i)).map(o=>o.x);
+  for(const sl of ordered){
     if(dayTypeForDate(sl.date)==="saturday") continue;
     for(let guard=0; guard<6; guard++){
       const workers = ui.workers || [];
