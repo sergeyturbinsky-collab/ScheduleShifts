@@ -291,7 +291,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=169"></script>
+<script src="portal.js?v=170"></script>
 <script>
 (function(){
 "use strict";
@@ -1269,7 +1269,8 @@ function renderAggregate(){
         <p class="muted" style="margin:6px 0;">הפרסום שלך יחליף את הפרסום הקודם — העובדים יראו את הסידור כפי שהוא עכשיו.</p>
         <div class="row"><button class="btn ok" data-action="agg-publish-force">כן, פרסם</button><button class="btn secondary" data-action="agg-publish-cancel">ביטול</button></div>
       </div>` : ""}
-      ${ui.buildMsg? `<p style="margin-top:8px;">${escapeHtml(ui.buildMsg)}</p>${scheduleGapsHtml(ui)}`:""}
+      ${ui.buildMsg? `<p style="margin-top:8px;">${escapeHtml(ui.buildMsg)}</p>`:""}
+      ${group.citySectors.length && ui.loaded ? scheduleGapsLive(team, ui) : ""}
       ${renderMonthlyPanel(ui, isMoked)}
   </div>
   ${eliranOrder
@@ -4205,6 +4206,12 @@ function computeScheduleGaps(team){
     if(items.length) out.push({date:sl.date, sector:sl.sector, shift:SHIFT_LABELS[sl.shiftType]||sl.label||sl.shiftType, items});
   });
   return out;
+}
+/* (2026-10-28, סרגיי: "את הרשימת חוסרים תשאיר נראית לעין גם בזמן שיבוץ ידני") - מחושב מחדש בכל תצוגה, לפי הסידור כפי שהוא עכשיו */
+function scheduleGapsLive(team, ui){
+  if(!(ui.assignments||[]).length && !ui.buildMsg) return "";
+  try{ ui.buildGaps = computeScheduleGaps(team); ui.buildGapsFor = ui.buildMsg; }catch(e){ return ""; }
+  return scheduleGapsHtml(ui);
 }
 function scheduleGapsHtml(ui){
   if(!ui.buildGaps || ui.buildGapsFor!==ui.buildMsg) return "";
