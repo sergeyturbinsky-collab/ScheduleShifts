@@ -299,7 +299,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=212"></script>
+<script src="portal.js?v=213"></script>
 <script>
 (function(){
 "use strict";
@@ -4497,6 +4497,10 @@ async function runAutoAssignImpl(){
     const fx = await dailySpanGuard(team);
     if(fx){ ui.buildMsg = (ui.buildMsg||"") + ` ⏱ ${fx} משמרות קוצרו כדי שאף עובד לא יעבוד יותר מ-${LONG_CHAIN_HOURS} שעות ברצף.`; }
   }catch(e){ console.error(e); }
+  try{ // החלפה באותו יום במקום קיצור (2026-10-28)
+    const sw = await avoidCutPass(team);
+    if(sw){ ui.buildMsg = (ui.buildMsg||"") + ` 🔄 ${sw} החלפות באותו יום כדי לשמור על 8 שעות מנוחה בלי לקצר משמרות.`; }
+  }catch(e){ console.error(e); }
   try{
     const cut = await shortenForRest(team, null, ui.autoPreKeys);
     if(cut){ ui.buildMsg = (ui.buildMsg||"") + ` ✂ ${cut} משמרות קוצרו כדי לשמור על 8 שעות מנוחה לפני המשמרת הבאה (מסומנות בתכלת).`; }
@@ -4708,6 +4712,111 @@ async function balancePass(team){
         if(!ok) continue;
         if(!achOk(rm, B) || !achOk(re, A)) continue;
         rm.worker_id = B.id; rm.team_id = B.team_id; re.worker_id = A.id; re.team_id = A.team_id;
+        changes++; done = true; break outer;
+      }
+    }
+    if(!done) break;
+  }
+  if(!changes) return 0;
+  // שמירה: רק משבצות שהרכב העובדים בהן השתנה
+  const newCells = new Map(); L.filter(inP).forEach(a=>{ const k = a.sector+"|"+a.entry_date+"|"+a.shift_type; (newCells.get(k) || newCells.set(k, []).get(k)).push(a); });
+  for(const [k, list] of newCells){
+    const ids = list.filter(a=>!a.shadow_of).map(a=>a.worker_id);
+    const was = origCells.get(k) || [];
+    if(ids.slice().sort().join(",") === was.slice().sort().join(",")) continue;
+    const [sec, d, t] = k.split("|");
+    await setAssignmentListPreservingHours(sec, d, t, ids, "auto");
+  }
+  ui.loaded = false; await loadAggregateData(team);
+  return changes;
+}
+/* (2026-10-28, סרגיי: "אופק בוקר, ירדן ערב, שניהם יכולים לעבוד את כל המשמרות - למה העדפת לקצר את הערב של ירדן במקום לשבץ
+   את ירדן בוקר ואופק ערב?") - לפני הקיצורים למנוחה: משמרת שתצטרך קיצור (כי למחרת יש לעובד משמרת/משימה מוקדמת) - מחפשים
+   עובד אחר באותו יום, במשמרת אחרת, שאפשר להחליף איתו כך ששניהם יעמדו ב-8 שעות מנוחה בלי קיצור. כל הכללים נבדקים. */
+async function avoidCutPass(team){
+  const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
+  const secs = (group.citySectors||[]).filter(x=>x!=="מוקד"); if(!secs.length) return 0;
+  const inP = a=>secs.includes(a.sector) && dates.includes(a.entry_date);
+  const slots = buildSlots(dates, group, S.quotas).filter(x=>secs.includes(x.sector));
+  const slotOf = a=>slots.find(x=>x.sector===a.sector && x.date===a.entry_date && x.shiftType===a.shift_type);
+  const key = a=>a.sector+"|"+a.entry_date+"|"+a.shift_type+"|"+a.worker_id;
+  const pre = ui.autoPreKeys || new Set();
+  const L = (ui.allAssignments || ui.assignments || []).map(a=>Object.assign({}, a));
+  const origCells = new Map(); L.filter(a=>inP(a) && !a.shadow_of).forEach(a=>{ const k = a.sector+"|"+a.entry_date+"|"+a.shift_type; (origCells.get(k) || origCells.set(k, []).get(k)).push(a.worker_id); });
+  const workers = (ui.workers||[]).filter(w=>!w.auto_assign_exempt && !isMokedTeam(S.teams.find(t=>t.id===w.team_id)||{}));
+  const wById = id=>(ui.workers||[]).find(x=>x.id===id) || (ui.allWorkersById||{})[id];
+  const groupHasAch = (ui.workers||[]).some(isGuardAchmash);
+  const tasks = (ui.schedTasks||[]).filter(t=>t.worker_id && dates.includes(t.date));
+  const taskD = new Set(tasks.map(t=>t.worker_id+"|"+t.date));
+  const outside = (ui.streakAssignments||[]).filter(a=>!(secs.includes(a.sector) && dates.includes(a.entry_date)));
+  const MIXK = {morning:"m", evening:"e"};
+  const stats = ()=>{
+    const c = {}, mx = {};
+    workers.forEach(w=>{ c[w.id] = 0; mx[w.id] = {m:0, e:0}; });
+    const days = new Set();
+    L.forEach(a=>{ if(a.shadow_of || !dates.includes(a.entry_date) || !(a.worker_id in c)) return; c[a.worker_id]++; days.add(a.worker_id+"|"+a.entry_date); const k = secs.includes(a.sector) && MIXK[a.shift_type]; if(k) mx[a.worker_id][k]++; });
+    tasks.forEach(t=>{ if(t.worker_id in c && !days.has(t.worker_id+"|"+t.date)){ c[t.worker_id]++; days.add(t.worker_id+"|"+t.date); } });
+    return {c, mx};
+  };
+  const abdOf = ()=>{ const m = {}; L.filter(a=>secs.includes(a.sector)).forEach(a=>{ (m[a.entry_date]=m[a.entry_date]||[]).push(a); }); return m; };
+  const movable = a=>inP(a) && !a.shadow_of && !a.custom_start && !a.custom_end && !a.filled_role && !pre.has(key(a)) && !!slotOf(a);
+  // האם עובד w יכול לקבל את המשבצת sl, כשהשורה skip (שלו או של מי שמוחלף) לא נחשבת
+  const canTake = (w, sl, skipRow, abd)=>{
+    if(L.some(a=>a!==skipRow && a.worker_id===w.id && a.entry_date===sl.date && !a.shadow_of)) return false;
+    if(taskD.has(w.id+"|"+sl.date)) return false;
+    if(!availableForSlot(sl, [w], ui.entriesByWorker, abd, null, false, true).length) return false;
+    if(sl.shiftType==="coordinated" && workedNightBefore(w.id, sl.date, abd)) return false;
+    const iv = shiftInterval({sector:sl.sector, shift_type:sl.shiftType, entry_date:sl.date}); if(!iv) return false;
+    { // מנוחה: מותר גם כשקיצור של משמרת אוטומטית (שלא הייתה לפני ההרצה) יפתור את זה - shortenForRest מקצר בסוף (2026-10-28)
+      const rowsW = L.filter(a=>a!==skipRow && !a.shadow_of && a.worker_id===w.id);
+      const ivs = {}; ivs[w.id] = [];
+      rowsW.forEach(a=>{ const x = shiftInterval(a); if(x) ivs[w.id].push({start:x.start, end:x.end, cut: secs.includes(a.sector) && dates.includes(a.entry_date) && !a.custom_start && !a.custom_end && !pre.has(key(a))}); });
+      const strict = wouldViolateRest(w.id, iv, ivs) || !taskRestOk(w.id, iv);
+      if(strict) return false; // כאן מחפשים החלפה שלא צריכה קיצור בכלל
+    }
+    const idx = buildStreakIndex(outside.concat(L.filter(a=>a!==skipRow && secs.includes(a.sector) && dates.includes(a.entry_date))).concat(tasks.map(t=>({worker_id:t.worker_id, entry_date:t.date, shift_type:"task"}))));
+    if(streakIssues(idx, w.id, sl.date, sl.shiftType).length) return false;
+    return true;
+  };
+  const achOk = (row, newW)=>{ // לא משאירים משמרת בלי אחמ"ש
+    if(!groupHasAch || row.shift_type==="coordinated" || isGuardAchmash(newW) || !isGuardAchmash(wById(row.worker_id))) return true;
+    const others = L.filter(a=>a!==row && a.sector===row.sector && a.entry_date===row.entry_date && !a.shadow_of && (a.shift_type===row.shift_type || (row.shift_type==="evening" && a.shift_type==="coordinated")));
+    return others.some(a=>isGuardAchmash(wById(a.worker_id)));
+  };
+  // שורה שתצטרך קיצור בגלל מנוחה: יש אחריה (משמרת או משימה של אותו עובד) פחות מ-8 שעות
+  const needsCut = r=>{
+    const iv = shiftInterval(r); if(!iv) return false;
+    const ivs = {}; ivs[r.worker_id] = [];
+    L.forEach(a=>{ if(a!==r && !a.shadow_of && a.worker_id===r.worker_id){ const x = shiftInterval(a); if(x && +x.start >= +iv.end) ivs[r.worker_id].push(x); } });
+    taskRestIntervals().forEach(x=>{ if(x.worker_id===r.worker_id && +x.iv.start >= +iv.end) ivs[r.worker_id].push(x.iv); });
+    return wouldViolateRest(r.worker_id, iv, ivs);
+  };
+  const MIXK2 = {morning:"m", evening:"e"};
+  let changes = 0;
+  for(let it=0; it<40; it++){
+    const {mx} = stats(); const abd = abdOf();
+    const dev = (id, dm, de)=>{ const x = mx[id] || {m:0, e:0}; return Math.abs((x.m + dm) - (x.e + de)); };
+    let done = false;
+    outer: for(const rA of L.filter(a=>movable(a) && needsCut(a))){
+      const A = wById(rA.worker_id); if(!A) continue;
+      for(const rB of L.filter(a=>movable(a) && a!==rA && a.sector===rA.sector && a.entry_date===rA.entry_date && a.shift_type!==rA.shift_type && a.worker_id!==rA.worker_id)){
+        const B = wById(rB.worker_id); if(!B) continue;
+        const slA = slotOf(rA), slB = slotOf(rB);
+        const tA = rA.worker_id, tB = rB.worker_id;
+        rA.worker_id = "__x"; rB.worker_id = "__y";
+        const ok = canTake(A, slB, null, abd) && canTake(B, slA, null, abd);
+        rA.worker_id = tA; rB.worker_id = tB;
+        if(!ok || !achOk(rA, B) || !achOk(rB, A)) continue;
+        // אחרי ההחלפה אף אחד מהשניים לא צריך קיצור
+        rA.worker_id = B.id; rB.worker_id = A.id;
+        const still = needsCut(rA) || needsCut(rB);
+        rA.worker_id = tA; rB.worker_id = tB;
+        if(still) continue;
+        const kA = MIXK2[rA.shift_type], kB = MIXK2[rB.shift_type];
+        const before = dev(A.id,0,0) + dev(B.id,0,0);
+        const after = dev(A.id, (kA==="m"?-1:0)+(kB==="m"?1:0), (kA==="e"?-1:0)+(kB==="e"?1:0)) + dev(B.id, (kB==="m"?-1:0)+(kA==="m"?1:0), (kB==="e"?-1:0)+(kA==="e"?1:0));
+        if(after > before + 1) continue;
+        rA.worker_id = B.id; rA.team_id = B.team_id; rB.worker_id = A.id; rB.team_id = A.team_id;
         changes++; done = true; break outer;
       }
     }
