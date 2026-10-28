@@ -291,7 +291,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=170"></script>
+<script src="portal.js?v=171"></script>
 <script>
 (function(){
 "use strict";
@@ -1938,6 +1938,13 @@ function weekLoad(ui, wid, date){
   all.forEach(a=>{ if(a.worker_id!==wid || a.shadow_of || !week.has(a.entry_date) || cont.has(a)) return; n++; days.add(a.entry_date); });
   const td = new Set(); (ui.streakTasks||ui.schedTasks||[]).forEach(t=>{ if(t.worker_id===wid && week.has(t.date) && !days.has(t.date)) td.add(t.date); });
   return n + td.size;
+}
+/* (2026-10-28, סרגיי: "לא לשבץ עובד למשמרת מתואמת במידה ועבד לילה יום קודם") - לילה / לילה שישי / מוצ"ש ביום הקודם */
+const NIGHT_BEFORE_TYPES = ["night","friday_night","motzash"];
+function workedNightBefore(wid, date, assignmentsByDate){
+  const prev = fmtDate(addDays(parseDate(date), -1));
+  const hit = a=>a && a.worker_id===wid && a.entry_date===prev && !a.shadow_of && NIGHT_BEFORE_TYPES.includes(a.shift_type);
+  return ((S.ui && (S.ui.allAssignments || S.ui.assignments)) || []).some(hit) || ((assignmentsByDate||{})[prev]||[]).some(hit);
 }
 function coordWeekCount(w, date, assignmentsByDate){
   const dt = parseDate(date), sun = addDays(dt, -dt.getDay()), days = new Set();
@@ -3902,7 +3909,7 @@ async function runAutoAssign(){
   const streakCut = new Set(); let streakShort = 0;
   const taskDays = taskDaySet(ui); // עובד עם משימה (לא משמרת) ביום - לא משובץ אוטומטית באותו יום (2026-10-28, סרגיי)
   function streakFilter(list, slot){
-    list = list.filter(w=>!taskDays.has(w.id + "|" + slot.date));
+    list = list.filter(w=>!taskDays.has(w.id + "|" + slot.date) && !(slot.shiftType==="coordinated" && workedNightBefore(w.id, slot.date, assignmentsByDate)));
     const out = list.filter(w=>!streakIssues(streakIdx, w.id, slot.date, slot.shiftType).length);
     if(out.length < list.length) streakCut.add(slot);
     return out;
@@ -4285,7 +4292,7 @@ async function repairShortages(team){
       const ivS = shiftInterval({sector:sl.sector, shift_type:sl.shiftType, entry_date:sl.date});
       const noWin = w=>!(workerIsMoked(w, sl.sector) && mokedWindows(w, sl.date, ui.entriesByWorker));
       let move = null;
-      const xs = workers.filter(w=>!w.auto_assign_exempt && !taskDays2.has(w.id + "|" + sl.date) && (!needRole || w.role===needRole) && noWin(w)
+      const xs = workers.filter(w=>!w.auto_assign_exempt && !taskDays2.has(w.id + "|" + sl.date) && !(sl.shiftType==="coordinated" && workedNightBefore(w.id, sl.date, abd)) && (!needRole || w.role===needRole) && noWin(w)
         && availableForSlot(sl, [w], ui.entriesByWorker, abd, null, false, true).length);
       for(const X of xs){
         const mine = (abd[sl.date]||[]).filter(a=>a.worker_id===X.id);
@@ -4299,7 +4306,7 @@ async function repairShortages(team){
         const tRows = (abd[T.entry_date]||[]).filter(a=>a.sector===T.sector && a.shift_type===T.shift_type && !a.shadow_of);
         const xIsOnlyAch = !tSlot.roleCounts && isGuardAchmash(X) && !tRows.some(a=>a.worker_id!==X.id && isGuardAchmash(wOf(a.worker_id)));
         const ys = availableForSlot(tSlot, workers, ui.entriesByWorker, abd, null)
-          .filter(Y=>Y.id!==X.id && !Y.auto_assign_exempt && !taskDays2.has(Y.id + "|" + T.entry_date) && (isMokedTeam(S.teams.find(x=>x.id===Y.team_id)||{}) || weekLoad(ui, Y.id, T.entry_date) < MAX_WEEK_SHIFTS) && noWin(Y) && (!tSlot.roleCounts || Y.role===X.role) && (!xIsOnlyAch || isGuardAchmash(Y))
+          .filter(Y=>Y.id!==X.id && !Y.auto_assign_exempt && !taskDays2.has(Y.id + "|" + T.entry_date) && !(T.shift_type==="coordinated" && workedNightBefore(Y.id, T.entry_date, abd)) && (isMokedTeam(S.teams.find(x=>x.id===Y.team_id)||{}) || weekLoad(ui, Y.id, T.entry_date) < MAX_WEEK_SHIFTS) && noWin(Y) && (!tSlot.roleCounts || Y.role===X.role) && (!xIsOnlyAch || isGuardAchmash(Y))
             && !wouldViolateRest(Y.id, ivT, ivAll) && !streakIssues(streakIdx, Y.id, T.entry_date, T.shift_type).length)
           .sort((a,b)=>(wouldBeTightRest(a.id, ivT, ivAll)?1:0)-(wouldBeTightRest(b.id, ivT, ivAll)?1:0) || (cnt[a.id]||0)-(cnt[b.id]||0));
         if(ys.length){ move = {X, T, tRows, Y:ys[0]}; break; }
