@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=199"></script>
+<script src="portal.js?v=200"></script>
 <script>
 (function(){
 "use strict";
@@ -4404,7 +4404,8 @@ function computeScheduleGaps(team){
         if(iv){
           const ivs = inS.map(a=>shiftInterval(a)).filter(Boolean), p2 = n=>String(n).padStart(2,"0"), hm = d=>p2(d.getHours())+":"+p2(d.getMinutes());
           let runS = null, runN = 0;
-          const flush = t=>{ if(runS){ items.push(`חסר ${runN>1?runN+" ":""}בשעות ${hm(runS)}-${hm(t)}`); runS = null; } };
+          const hmE = d=>(d.getHours()===0 && d.getMinutes()===0) ? "24:00" : hm(d);
+          const flush = t=>{ if(runS){ items.push(`חסר ${runN>1?runN+" ":""}בשעות ${hm(runS)}-${hmE(t)}`); runS = null; } };
           for(let t=+iv.start; t<+iv.end; t+=1800000){
             const n = (sl.required||0) - ivs.filter(x=>+x.start<=t && +x.end>t).length;
             if(n>0){ if(runS && n!==runN) flush(new Date(t)); if(!runS){ runS = new Date(t); runN = n; } } else flush(new Date(t));
@@ -4567,6 +4568,10 @@ async function stretchFill(team){
         for(let t=+from; t<+to; t+=1800000){ if(ivs.filter(x=>+x.start<=t && +x.end>t).length < (sl.required||0)) return true; }
         return false;
       };
+      const minCov = (sl, from, to, ovW, ovIv)=>{ // המספר הקטן ביותר של עובדים בחלון חצי שעה בטווח
+        const ivs = rows.filter(a=>a.sector===sl.sector && a.entry_date===sl.date && a.shift_type===sl.shiftType && !a.shadow_of).map(a=>(ovW && a.worker_id===ovW) ? ovIv : shiftInterval(a)).filter(Boolean);
+        let mn = Infinity; for(let t=+from; t<+to; t+=1800000){ mn = Math.min(mn, ivs.filter(x=>+x.start<=t && +x.end>t).length); } return mn;
+      };
       const shortBy = sl=>{ const iv = shiftInterval({sector:sl.sector, shift_type:sl.shiftType, entry_date:sl.date}); return !!iv && shortIn(sl, iv.start, iv.end); };
       const bShort = shortBy(B);
       const ivB = shiftInterval({sector:B.sector, shift_type:B.shiftType, entry_date:B.date}); if(!ivB) break;
@@ -4633,7 +4638,11 @@ async function stretchFill(team){
         for(const w of fw){
           const others = buildWorkerIntervals(all.filter(a=>!(a.worker_id===w.id && a.entry_date===A.date && a.shift_type===A.shiftType)));
           const lateStart = new Date(Math.max(+ivA.start, +ivB.end - H12)); // B מלאה + סוף A
-          if(+lateStart < +ivB.start && !wouldViolateRest(w.id, {start:lateStart, end:ivB.end}, others)){
+          // (2026-10-28, סרגיי: "בבוקר תמיד יהיו לפחות 2 מאבטחים... שהמיצוי יהיה אחד 07-19, השני 12-24") - עובד עובר לחצי בוקר
+          // רק אם בתחילת הבוקר נשארים לפחות 2; אחרת הוא נשאר בבוקר המלא וממשיך לתוך הערב (07:00-19:00)
+          const minA = A.shiftType==="morning" ? Math.min(2, A.required||0) : 0;
+          const keepsA = minA===0 || +lateStart <= +ivA.start || minCov(A, ivA.start, lateStart, w.id, {start:lateStart, end:ivA.end}) >= minA;
+          if(+lateStart < +ivB.start && keepsA && !wouldViolateRest(w.id, {start:lateStart, end:ivB.end}, others)){
             await save(w, hm(lateStart), hm(ivB.start), hm(ivB.start), String(B.end||hm(ivB.end)).slice(0,5), false, true); didIt = true; break;
           }
           const end = new Date(Math.min(+ivB.end, +ivA.start + H12)); // A מלאה + תחילת B
