@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=173"></script>
+<script src="portal.js?v=174"></script>
 <script>
 (function(){
 "use strict";
@@ -4492,6 +4492,7 @@ function renderManualBuild(team){
       <div class="flexbar"><b>תקופה: ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(dates[dates.length-1])}</b></div>
       <p class="muted">לחצו על משבצת כדי לבחור מי ישובץ אליה, או לסמן "חוסר". משבצות שחורות = לא נדרש באותו יום.</p>
       ${renderTemplateGrid(group, dates, ui, "manual")}
+      ${ui.loaded ? scheduleGapsLive(team, ui) : ""}
       <button class="btn ok" data-action="manual-done" style="margin-top:8px;">✔ סיימתי</button>
       <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
       <button class="btn ok small" data-action="share-open" style="margin-top:8px;">📤 שליחה בוואטסאפ / מייל</button>
@@ -4509,6 +4510,7 @@ function renderManualBuild(team){
     <div class="flexbar"><b>תקופה: ${fmtDateHeb(ui.periodStart)} — ${fmtDateHeb(dates[dates.length-1])}</b></div>
     <p class="muted">לחצו על משבצת כדי לבחור מי ישובץ אליה לפי תפקיד (אחמ"ש/מוקדן), או לסמן "חוסר". משבצות שחורות = לא נדרש באותו יום.</p>
     ${renderMokedTemplateGrid(group, dates, ui, "manual")}
+      ${ui.loaded ? scheduleGapsLive(team, ui) : ""}
     <button class="btn ok" data-action="manual-done" style="margin-top:8px;">✔ סיימתי</button>
     <button class="btn secondary small" data-action="agg-export-assign" style="margin-top:8px;">העתק סידור (להדבקה באקסל)</button>
     <button class="btn ok small" data-action="share-open" style="margin-top:8px;">📤 שליחה בוואטסאפ / מייל</button>
