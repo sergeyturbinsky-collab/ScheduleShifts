@@ -139,6 +139,12 @@ function loadSwaps(App, session){
   if(HB.pending) return;
   SW.list = [];
   App.apiRpc("worker_swap_board", {p_token: session.token}).then(r=>{ SW.board = r || {}; SW.list = (r && r.mine) || []; App.render(); }).catch(()=>{});
+  // משמרות שהתפנו בגלל חופשה/מילואים/מחלה בסידור שפורסם (2026-10-28)
+  App.apiRpc("worker_vacancies", {p_token: session.token}).then(r=>{ SW.vac = r || []; App.render(); }).catch(()=>{ SW.vac = []; });
+}
+function vacHoursTxt(App, r){
+  const hh = t=>String(t||"").slice(0,5);
+  return (r.custom_start || r.custom_end) ? ` · ${hh(r.custom_start)}–${hh(r.custom_end)}` : "";
 }
 function swShiftTxt(App, r){ return `${App.fmtDateHeb(r.entry_date)} · ${App.escapeHtml(App.SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${App.escapeHtml(r.sector)}`; }
 /* משמרות שמחפשות מחליף במסגרת של העובד + תיעוד החלפות (2026-10-11) */
@@ -146,6 +152,14 @@ function renderSwapBoard(App){
   const esc = App.escapeHtml, B = SW.board || {};
   const open = B.open || [];
   let h = "";
+  const vac = SW.vac || [];
+  if(vac.length) h += `<h4 style="margin:14px 0 6px;">🆘 משמרות פנויות להשתבצות</h4><div class="portal-tasks">${vac.map(r=>`<div class="portal-task portal-unread">
+      <span class="portal-task-icon">🆘</span>
+      <span style="flex:1;">${swShiftTxt(App, r)}${vacHoursTxt(App, r)} <span class="muted" style="font-size:.85em;">· התפנה (${esc(r.reason||"")} של ${esc(r.released_name||"")})</span></span>
+      ${r.already ? `<span class="muted" style="font-size:.85em;">כבר משובץ ביום הזה</span>`
+        : SW.confirm==="v:"+r.id ? `<button class="btn small ok" data-action="portal-vac-take" data-id="${r.id}" ${SW.busy?"disabled":""}>כן, אני לוקח</button> <button class="btn small secondary" data-action="portal-swap-take-no">לא</button>`
+        : `<button class="btn small ok" data-action="portal-vac-take-ask" data-id="${r.id}">לוקח את המשמרת</button>`}
+    </div>`).join("")}</div>`;
   if(open.length) h += `<h4 style="margin:14px 0 6px;">🔁 מחפשים מחליף</h4><div class="portal-tasks">${open.map(r=>`<div class="portal-task portal-unread">
       <span class="portal-task-icon">🔁</span>
       <span style="flex:1;"><b>${esc(r.worker_name)}</b> — ${swShiftTxt(App, r)}${r.note?` <span class="muted" style="font-size:.85em;">· ${esc(r.note)}</span>`:""}</span>
@@ -4233,6 +4247,16 @@ function swoLoad(App, ms, force){
   SWO.busy = true;
   App.apiRpc("mgr_swap_list", {p_token: ms.token}).then(r=>{ const was = JSON.stringify(SWO.list); SWO.list = r||[]; SWO.at = Date.now(); SWO.busy = false; if(was !== JSON.stringify(SWO.list)) App.render(); })
     .catch(()=>{ SWO.at = Date.now(); SWO.busy = false; if(SWO.list===null){ SWO.list = []; } });
+  App.apiRpc("mgr_vacancies", {p_token: ms.token}).then(r=>{ const was = JSON.stringify(SWO.vac); SWO.vac = r||[]; if(was !== JSON.stringify(SWO.vac)) App.render(); }).catch(()=>{ if(!SWO.vac) SWO.vac = []; });
+}
+/* משמרות שהתפנו בגלל חופשה/מילואים/מחלה בסידור שפורסם (2026-10-28): העובדים רואים ויכולים לקחת; הקב"ט רואה ויכול לסמן כמאוישת */
+function vacanciesMgrHtml(App, list){
+  const esc = App.escapeHtml, hh = t=>String(t||"").slice(0,5);
+  return `<div class="portal-tasks">${list.map(r=>`<div class="portal-task">
+      <span class="portal-task-icon">🆘</span>
+      <span style="flex:1;">${App.fmtDateHeb(r.entry_date)} · ${esc(App.SHIFT_LABELS[r.shift_type]||r.shift_type)}${(r.custom_start||r.custom_end)?` · ${hh(r.custom_start)}–${hh(r.custom_end)}`:""} · ${esc(r.sector)}
+        <span class="muted" style="font-size:.85em;display:block;">התפנה: ${esc(r.released_name||"")} (${esc(r.reason||"")}) · העובדים קיבלו התראה ויכולים לקחת</span></span>
+      <button class="btn small secondary" data-action="portal-vac-close" data-id="${r.id}" title="שיבצתי מישהו בעצמי בסידור">✔ אוישה</button></div>`).join("")}</div>`;
 }
 function openSwapsHtml(App, list, withBtn){
   const esc = App.escapeHtml;
@@ -4244,11 +4268,13 @@ function openSwapsHtml(App, list, withBtn){
 }
 function openSwapsCard(App, ms){
   swoLoad(App, ms);
-  const list = SWO.list || [];
-  if(!list.length) return "";
-  return `<div class="card" style="border:2px solid #e8590c;background:#fff4e6;">
+  const list = SWO.list || [], vac = SWO.vac || [];
+  if(!list.length && !vac.length) return "";
+  return `${vac.length ? `<div class="card" style="border:2px solid #b42318;background:#fff1f0;">
+    <h3 style="margin:0 0 6px;">🆘 משמרות שהתפנו — ממתינות למחליף (${vac.length})</h3>${vacanciesMgrHtml(App, vac)}</div>` : ""}
+  ${list.length ? `<div class="card" style="border:2px solid #e8590c;background:#fff4e6;">
     <h3 style="margin:0 0 6px;">🔁 חילופים פתוחים — מחפשים מחליף (${list.length})</h3>
-    ${openSwapsHtml(App, list, true)}</div>`;
+    ${openSwapsHtml(App, list, true)}</div>` : ""}`;
 }
 /* סיכום בוקר (2026-10-25 סעיף 7, הועלה 2026-10-28): גם כהתראה בבוקר (07:30-10:30), וגם ככרטיס בדף הבית */
 const DSUM = { tok:null, data:null, at:0, busy:false };
@@ -4507,7 +4533,18 @@ function renderPView(App){
           <span class="muted" style="display:block;font-size:.82em;">${esc(dmgFmtDate(x.at))}${x.actor?` · ${esc(x.actor)}`:""}${x.auto?" · שיבוץ אוטומטי":""}</span></span></div>`).join("")}</div>`;
     return wrap(`<h2>📜 היסטוריית שינויים</h2>${msgs}
       ${H.sectors.length>1 ? `<div class="chip-opts" style="margin-bottom:10px;">${H.sectors.map(c=>`<div class="chip ${H.sector===c?"on":""}" data-action="portal-chg-sector" data-s="${esc(c)}">${esc(c)}</div>`).join("")}</div>` : ""}
-      ${H.sector ? list : `<p class="muted">אין גזרות בהרשאה שלך.</p>`}`);
+      ${H.sector ? `<details style="margin:0 0 12px;" ${H.confirm?"open":""}><summary style="cursor:pointer;font-weight:600;">🗑 מחיקת היסטוריה</summary>
+        <div class="portal-qbox" style="margin-top:8px;">
+          <p class="muted" style="margin:0 0 8px;">מוחק את רשומות ההיסטוריה של <b>${esc(H.sector)}</b> לפי תאריך השינוי. הסידור עצמו לא משתנה.</p>
+          <div class="flexbar" style="gap:8px;flex-wrap:wrap;">
+            <div class="field" style="margin:0;"><label>מתאריך</label><input type="date" id="chgFrom" value="${esc(H.from||"")}"></div>
+            <div class="field" style="margin:0;"><label>עד תאריך</label><input type="date" id="chgTo" value="${esc(H.to||App.fmtDate(new Date()))}"></div>
+          </div>
+          <div class="flexbar" style="margin-top:8px;">${H.confirm
+            ? `<span style="color:#b42318;font-weight:600;">למחוק את ההיסטוריה של ${esc(H.sector)} מ-${esc((H.from||"").split("-").reverse().join("/"))} עד ${esc((H.to||"").split("-").reverse().join("/"))}? אי אפשר לשחזר.</span>
+               <button class="btn small danger" data-action="portal-chg-purge" ${H.busy?"disabled":""}>כן, למחוק</button> <button class="btn small secondary" data-action="portal-chg-purge-no">ביטול</button>`
+            : `<button class="btn small secondary" data-action="portal-chg-purge-ask">מחק היסטוריה בטווח</button>`}</div>
+        </div></details>${list}` : `<p class="muted">אין גזרות בהרשאה שלך.</p>`}`);
   }
   if(pg==="swap-hist"){
     const H = PV.swapHist || (PV.swapHist = {list:null});
@@ -4518,7 +4555,8 @@ function renderPView(App){
     if(H.list==="loading") return loading();
     swoLoad(App, ms);
     const openNow = SWO.list || [];
-    return wrap(`${openNow.length ? `<h2>🔁 חילופים פתוחים — מחפשים מחליף (${openNow.length})</h2>${openSwapsHtml(App, openNow, true)}<hr style="border:none;border-top:1px solid #e3e9f0;margin:14px 0;">` : `<p class="muted">אין כרגע חילופים פתוחים.</p>`}
+    const vacNow = SWO.vac || [];
+    return wrap(`${vacNow.length ? `<h2>🆘 משמרות שהתפנו (${vacNow.length})</h2>${vacanciesMgrHtml(App, vacNow)}<hr style="border:none;border-top:1px solid #e3e9f0;margin:14px 0;">` : ""}${openNow.length ? `<h2>🔁 חילופים פתוחים — מחפשים מחליף (${openNow.length})</h2>${openSwapsHtml(App, openNow, true)}<hr style="border:none;border-top:1px solid #e3e9f0;margin:14px 0;">` : `<p class="muted">אין כרגע חילופים פתוחים.</p>`}
       <h2>📜 היסטוריית החלפות</h2><p class="muted" style="margin-top:-6px;">החלפות שבוצעו בחודשיים האחרונים ובסידורים הבאים, מהחדש לישן.</p>
       ${H.list.length ? `<div class="portal-tasks">${H.list.map(r=>`<div class="portal-task"><span class="portal-task-icon">✔</span>
         <span style="flex:1;">${App.fmtDateHeb(r.entry_date)} · ${esc(App.SHIFT_LABELS[r.shift_type]||r.shift_type)} · ${esc(r.sector)}: ${esc(r.from_name)} ← <b>${esc(r.to_name||"")}</b>
@@ -5906,6 +5944,29 @@ function onClick(App, a, el){
       .catch(e=>{ SW.busy = false; SW.error = e.message; App.render(); });
   }
   if(a==="portal-swap-take-ask"){ SW.confirm = el.dataset.id; return App.render(); }
+  if(a==="portal-vac-take-ask"){ SW.confirm = "v:" + el.dataset.id; return App.render(); }
+  if(a==="portal-vac-take"){
+    const s = loadSession(App); if(!s) return App.render();
+    SW.busy = true; App.render();
+    return App.apiRpc("worker_vacancy_take", {p_token:s.token, p_id:el.dataset.id})
+      .then(()=>{ SW.busy = false; SW.confirm = null; SW.error = null; SW.msg = "✔ שובצת למשמרת ועודכן בסידור."; SW.list = null; P.shifts = null; App.render(); })
+      .catch(e=>{ SW.busy = false; SW.confirm = null; SW.msg = null; SW.error = e.message; SW.list = null; App.render(); });
+  }
+  if(a==="portal-vac-close"){
+    const m = loadMgr(App); if(!m) return App.render();
+    return App.apiRpc("mgr_vacancy_close", {p_token:m.token, p_id:el.dataset.id})
+      .then(()=>{ SWO.vac = (SWO.vac||[]).filter(x=>x.id!==el.dataset.id); PV.msg = "המשמרת סומנה כמאוישת."; App.render(); }).catch(e=>{ PV.error = e.message; App.render(); });
+  }
+  if(a==="portal-chg-purge-ask"){ const H = PV.chg; if(H){ H.from = (document.getElementById("chgFrom")||{}).value || ""; H.to = (document.getElementById("chgTo")||{}).value || "";
+      if(!H.from || !H.to || H.from > H.to){ PV.error = "יש לבחור טווח תאריכים תקין (מתאריך עד תאריך)."; return App.render(); } H.confirm = true; PV.error = null; } return App.render(); }
+  if(a==="portal-chg-purge-no"){ if(PV.chg) PV.chg.confirm = false; return App.render(); }
+  if(a==="portal-chg-purge"){
+    const m = loadMgr(App), H = PV.chg; if(!m || !H) return App.render();
+    H.busy = true; App.render();
+    return App.apiRpc("mgr_change_log_purge", {p_token:m.token, p_sector:H.sector, p_from:H.from, p_to:H.to})
+      .then(n=>{ H.busy = false; H.confirm = false; H.items = null; PV.msg = `נמחקו ${n||0} רשומות מההיסטוריה של ${H.sector} (${H.from.split("-").reverse().join("/")}–${H.to.split("-").reverse().join("/")}).`; App.render(); })
+      .catch(e=>{ H.busy = false; H.confirm = false; PV.error = e.message; App.render(); });
+  }
   if(a==="portal-swap-take-no"){ SW.confirm = null; return App.render(); }
   if(a==="portal-swap-take"){
     const s = loadSession(App); if(!s) return App.render();
