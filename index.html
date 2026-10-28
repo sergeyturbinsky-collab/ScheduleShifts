@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=186"></script>
+<script src="portal.js?v=187"></script>
 <script>
 (function(){
 "use strict";
@@ -856,7 +856,19 @@ function logoStripHtml(h){ const imgs = [...document.querySelectorAll(".header-b
 /* אחמ"ש בגזרות המאבטחים (2026-10-21, סרגיי): מסומן בניהול עובדים (roster_workers.role = 'אחמ"ש', כמו במוקד).
    בשיבוץ האוטומטי האחמ"ש תמיד "סייר 1" במשמרת שלו; בטבלאות מוצגת לידו תגית אחמ"ש. */
 function isGuardAchmash(w){ return !!(w && w.role==='אחמ"ש' && !isMokedTeam(teamById(w.team_id)||{})); }
-function achTagHtml(w){ return isGuardAchmash(w) ? ` <span class="ach-tag">אחמ"ש</span>` : ""; }
+function achTagHtml(w, a){ return isGuardAchmash(w) ? ` <span class="ach-tag">${coordEveAch(a) ? 'אחמ"ש ערב' : 'אחמ"ש'}</span>` : ""; }
+/* (2026-10-28, סרגיי: "במידה ומשובץ אחמ"ש במתואמת - שישאר במשבצת המתואמת, אבל יסומן כאחמ"ש של משמרת ערב") -
+   אחמ"ש (הראשון) במתואמת נחשב האחמ"ש של הערב באותו יום, כשבערב עצמו אין אחמ"ש */
+function guardWorkerById(id){ const u = S.ui||{}; return (u.allWorkersById||{})[id] || (u.workers||[]).find(x=>x.id===id) || null; }
+function eveHasOwnAch(rows, sector, date){ return (rows||[]).some(r=>r.sector===sector && r.entry_date===date && r.shift_type==="evening" && !r.shadow_of && isGuardAchmash(guardWorkerById(r.worker_id))); }
+function coordAchOf(rows, sector, date){ return (rows||[]).find(r=>r.sector===sector && r.entry_date===date && r.shift_type==="coordinated" && !r.shadow_of && isGuardAchmash(guardWorkerById(r.worker_id))) || null; }
+function coordEveAch(a){
+  if(!a || a.shift_type!=="coordinated" || a.shadow_of) return false;
+  const rows = (S.ui && S.ui.assignments) || [];
+  if(eveHasOwnAch(rows, a.sector, a.entry_date)) return false;
+  const first = coordAchOf(rows, a.sector, a.entry_date);
+  return !!first && first.worker_id===a.worker_id;
+}
 /* מודל ההגשה של הצוות (2026-10-21, סרגיי): במוקד תמיד מסמנים מה *לא* יכולים. בצוות עם constraint_teams.blocking_from
    (חיפה, מ-01/11/2026) - גם המאבטחים מסמנים רק מה לא יכולים (כל השאר זמין), בלי שעות מותאמות, ועם מגבלה של
    max_blocked_per_week משמרות חסומות בשבוע. תקופות לפני התאריך הזה נשארות במודל הקודם ("מה כן יכול"). */
@@ -2656,10 +2668,10 @@ function renderTemplateGrid(group, dates, ui, mode){
           const earlyCls = early ? " tmpl-early" : "";
           if(mode==="manual"){
             const cls = "tmpl-cell" + coordCls + earlyCls + (w? (restBad?" tmpl-restwarn":(restTight?" tmpl-resttight":"")) + longCls(restViolations, a) : " tmpl-missing");
-            const label = (w? `${nm}${achTagHtml(w)}<br>${hrsSpan}${restNote}` : "חוסר") + shadowHtml;
+            const label = (w? `${nm}${achTagHtml(w, a)}<br>${hrsSpan}${restNote}` : "חוסר") + shadowHtml;
             return `<td class="${cls}" data-action="tmpl-cell" data-sector="${escapeHtml(secData.sector)}" data-date="${d}" data-type="${q.shift_type}" data-pos="${pos}">${label}</td>`;
           }
-          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${coordCls}${earlyCls}">${nm}${achTagHtml(w)}<br>${hrsSpan}${restNote}${shadowHtml}</td>`;
+          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${coordCls}${earlyCls}">${nm}${achTagHtml(w, a)}<br>${hrsSpan}${restNote}${shadowHtml}</td>`;
           return `<td class="tmpl-missing${coordCls}">חוסר${shadowHtml}</td>`;
         }).join("");
         return `<tr><td class="tmpl-pos">סייר ${pos}${bucketHrs}</td>${cells}</tr>`;
@@ -2717,7 +2729,7 @@ function renderCompactPrintGrid(group, dates, ui){
           if(!a) return `<td class="cpt-missing${cc}">חוסר${shadows}</td>`;
           const w = workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id];
           const hrs = tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate);
-          return `<td${cc?` class="${cc.trim()}"`:""}>${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="cpt-ach">אחמ"ש</span>`:""}${hrs!==std?` <span class="cpt-hrs" dir="ltr">(${hrs})</span>`:""}${shadows}</td>`;
+          return `<td${cc?` class="${cc.trim()}"`:""}>${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="cpt-ach">${coordEveAch(a)?'אחמ"ש ערב':'אחמ"ש'}</span>`:""}${hrs!==std?` <span class="cpt-hrs" dir="ltr">(${hrs})</span>`:""}${shadows}</td>`;
         }).join("");
         const lead = pos===1 ? `<td class="cpt-shift${bucket.key==="coordinated"?" cpt-coord":""}" rowspan="${n}">${label}</td><td class="cpt-hcol${bucket.key==="coordinated"?" cpt-coord":""}" rowspan="${n}">${tmplBucketHoursHtml(bucket) || `<span dir="ltr">${std||""}</span>`}</td>` : "";
         return `<tr class="${pos===1?"cpt-first":""}">${lead}${cells}</tr>`;
@@ -3675,7 +3687,7 @@ function renderMobileGrid(group, dates, ui){
           const w = wOf(a.worker_id), hrs = tmplHoursTxt2(group, d, sec.sector, q, a, abd);
           const role = q.role_counts ? assignmentRole(a, workersById) : null;
           const bad = rest.has(restKey(a)), tight = !bad && rest.tight && rest.tight.has(restKey(a));
-          return `<div class="mg-n${bad?" mg-bad":(tight?" mg-tight":"")}${isEarlyEnd(q, a)?" mg-early":""}">${role?`<span class="mg-role">${escapeHtml(role)}</span> `:""}${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="ach-tag">אחמ"ש</span>`:""}${hrs!==std?` <span class="mg-h" dir="ltr">${escapeHtml(hrs)}</span>`:""}</div>`;
+          return `<div class="mg-n${bad?" mg-bad":(tight?" mg-tight":"")}${isEarlyEnd(q, a)?" mg-early":""}">${role?`<span class="mg-role">${escapeHtml(role)}</span> `:""}${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="ach-tag">${coordEveAch(a)?'אחמ"ש ערב':'אחמ"ש'}</span>`:""}${hrs!==std?` <span class="mg-h" dir="ltr">${escapeHtml(hrs)}</span>`:""}</div>`;
         });
         tmplShadowList(abd, d, sec.sector, q.shift_type).forEach(sh=>lines.push(sh.split ? `<div class="mg-n mg-sh">⇄ ${escapeHtml(nameOf(sh.worker_id))} <span class="mg-h" dir="ltr">${escapeHtml(tmplHoursTxt(q, sh))}</span></div>` : `<div class="mg-n mg-sh">${escapeHtml(nameOf(sh.worker_id))} (ח)</div>`));
         const miss = (q.required_count||0) - list.length;
@@ -3957,7 +3969,8 @@ async function runAutoAssign(){
   const groupHasAch = workers.some(isGuardAchmash);
   const wById = id=>workers.find(x=>x.id===id) || (ui.allWorkersById||{})[id];
   // משמרת "מתואמת" (11:00-23:00) חופפת לבוקר ולערב שכבר יש בהם אחמ"ש - לא נדרש בה אחמ"ש נפרד
-  const slotHasAch = slot=>slot.shiftType==="coordinated" || (assignmentsByDate[slot.date]||[]).some(a=>a.sector===slot.sector && a.shift_type===slot.shiftType && !a.shadow_of && isGuardAchmash(wById(a.worker_id)));
+  const slotHasAch = slot=>slot.shiftType==="coordinated" || (assignmentsByDate[slot.date]||[]).some(a=>a.sector===slot.sector && !a.shadow_of && isGuardAchmash(wById(a.worker_id))
+    && (a.shift_type===slot.shiftType || (slot.shiftType==="evening" && a.shift_type==="coordinated"))); // אחמ"ש במתואמת משמש גם כאחמ"ש הערב (2026-10-28)
   const isTightFor = (slot, w)=>{ const t = tightBySlot.get(slot); return t && t.has(w.id) ? 1 : 0; };
   const fullFirst = slot => (a,b)=> ((gapCoverableNow(a, slot)?0:1) - (gapCoverableNow(b, slot)?0:1)) || (isTightFor(slot, a) - isTightFor(slot, b)) || byFairness(a,b);
 
@@ -4221,7 +4234,7 @@ async function runAutoAssign(){
       if(groupHasAch && slot.shiftType==="coordinated"){
         const eve = slots.find(x=>x.sector===slot.sector && x.date===slot.date && x.shiftType==="evening");
         let maxAch = need;
-        if(eve && !(assignmentsByDate[eve.date]||[]).some(a=>a.sector===eve.sector && a.shift_type==="evening" && !a.shadow_of && isGuardAchmash(wById(a.worker_id)))){
+        if(false && eve){ // (2026-10-28) אחמ"ש במתואמת מסומן כאחמ"ש הערב - אין צורך לשמור אחמ"ש פנוי לערב
           const eveAch = availableForSlot(eve, workers.filter(isGuardAchmash), ui.entriesByWorker, assignmentsByDate, slotKey(eve.sector, eve.shiftType))
             .filter(w=>!w.auto_assign_exempt && underTarget(w, eve.date) && !taskDays.has(w.id + "|" + eve.date) && !streakIssues(streakIdx, w.id, eve.date, eve.shiftType).length);
           maxAch = Math.max(0, eveAch.length - 1);
@@ -4318,7 +4331,8 @@ function computeScheduleGaps(team){
     } else {
       const miss = (sl.required||0) - inS.length;
       if(miss>0) items.push(`חסר${miss>1?` ${miss}`:""} כח אדם`);
-      if(groupHasAch && sl.shiftType!=="coordinated" && (sl.required||0)>0 && !inS.some(a=>isGuardAchmash(byId[a.worker_id]))) items.push('אין אחמ"ש');
+      if(groupHasAch && sl.shiftType!=="coordinated" && (sl.required||0)>0 && !inS.some(a=>isGuardAchmash(byId[a.worker_id]))
+         && !(sl.shiftType==="evening" && coordAchOf(ui.assignments, sl.sector, sl.date))) items.push('אין אחמ"ש'); // אחמ"ש במתואמת = אחמ"ש הערב
     }
     if(items.length) out.push({date:sl.date, sector:sl.sector, shift:SHIFT_LABELS[sl.shiftType]||sl.label||sl.shiftType, items});
   });
