@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=187"></script>
+<script src="portal.js?v=188"></script>
 <script>
 (function(){
 "use strict";
@@ -1964,7 +1964,9 @@ function availableForSlot(slot, workers, entriesByWorker, assignmentsByDate, exc
       if(e.shift_type==="custom") return rangesOverlaps(e.custom_start,e.custom_end, slot.start, slot.end);
       return blocking.includes(e.shift_type) || (coordToEve && e.shift_type==="coordinated");
     });
-    if(matches && slot.shiftType==="coordinated"){ const ok = coordAllowedDates(w, slot.date, entriesByWorker); if(ok && !ok.has(slot.date)) matches = false; }
+    // (2026-10-28, סרגיי: "עובד שהגיש יותר מ-2 משמרות מתואמות - תבחר מתוך כלל המתואמות שהגיש, אך תשבץ 2 בלבד") - כל המתואמות שסימן
+    // נשארות אפשריות, והמגבלה היא על השיבוץ: עד 2 מתואמות בשבוע (במקום בחירה אקראית מראש של 2 תאריכים)
+    if(matches && slot.shiftType==="coordinated" && coordWeekCount(w, slot.date, assignmentsByDate) >= COORD_MAX_PER_WEEK) matches = false;
     const isMoked = workerTeam ? isMokedTeam(workerTeam) : (slot.sector==="מוקד");
     if(!isMoked && guardBlockingAt(workerTeam, slot.date)){
       // חיפה מ-01/11: סימון = חסימה, בלי שעות מותאמות (אם נשארו מהגשה ישנה - מתעלמים)
@@ -2039,6 +2041,7 @@ function coordWeekCount(w, date, assignmentsByDate){
   return days.size;
 }
 function coordAllowedDates(w, date, entriesByWorker){
+  return null; // (2026-10-28) בוטל - ראו availableForSlot: כל המתואמות שסומנו אפשריות, עד 2 שיבוצים בשבוע
   const t = S.teams.find(x=>x.id===w.team_id); if(!t || !t.has_coordinated_shift) return null;
   const dt = parseDate(date), sun = addDays(dt, -dt.getDay());
   const marked = [];
