@@ -299,7 +299,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=214"></script>
+<script src="portal.js?v=215"></script>
 <script>
 (function(){
 "use strict";
@@ -4772,7 +4772,7 @@ async function avoidCutPass(team){
       const ivs = {}; ivs[w.id] = [];
       rowsW.forEach(a=>{ const x = shiftInterval(a); if(x) ivs[w.id].push({start:x.start, end:x.end, cut: secs.includes(a.sector) && dates.includes(a.entry_date) && !a.custom_start && !a.custom_end && !pre.has(key(a))}); });
       const strict = wouldViolateRest(w.id, iv, ivs) || !taskRestOk(w.id, iv);
-      if(strict) return false; // כאן מחפשים החלפה שלא צריכה קיצור בכלל
+      if(strict && !restFixable(w.id, iv, ivs)) return false;
     }
     const idx = buildStreakIndex(outside.concat(L.filter(a=>a!==skipRow && secs.includes(a.sector) && dates.includes(a.entry_date))).concat(tasks.map(t=>({worker_id:t.worker_id, entry_date:t.date, shift_type:"task"}))));
     if(streakIssues(idx, w.id, sl.date, sl.shiftType).length) return false;
@@ -4783,76 +4783,80 @@ async function avoidCutPass(team){
     const others = L.filter(a=>a!==row && a.sector===row.sector && a.entry_date===row.entry_date && !a.shadow_of && (a.shift_type===row.shift_type || (row.shift_type==="evening" && a.shift_type==="coordinated")));
     return others.some(a=>isGuardAchmash(wById(a.worker_id)));
   };
-  // שורה שתצטרך קיצור בגלל מנוחה: יש אחריה (משמרת או משימה של אותו עובד) פחות מ-8 שעות
-  const needsCut = r=>{
-    const iv = shiftInterval(r); if(!iv) return false;
-    const ivs = {}; ivs[r.worker_id] = [];
-    L.forEach(a=>{ if(a!==r && !a.shadow_of && a.worker_id===r.worker_id){ const x = shiftInterval(a); if(x && +x.start >= +iv.end) ivs[r.worker_id].push(x); } });
-    taskRestIntervals().forEach(x=>{ if(x.worker_id===r.worker_id && +x.iv.start >= +iv.end) ivs[r.worker_id].push(x.iv); });
-    return wouldViolateRest(r.worker_id, iv, ivs);
+  // כמה דקות קיצור צריך עובד כדי שיהיו 8 שעות מנוחה בין כל שתי עבודות עוקבות שלו (משמרות + משימות).
+  // Infinity = אי אפשר לפתור בקיצור (משמרת ידנית/קיימת/בשעות מותאמות, משימה, יותר משעתיים, או פחות מ-4 שעות שנשארות)
+  const cutMin = (wid, onDate)=>{
+    const items = [];
+    L.forEach(a=>{ if(a.worker_id!==wid || a.shadow_of) return; const iv = shiftInterval(a); if(iv) items.push({iv, date:a.entry_date, cut: secs.includes(a.sector) && dates.includes(a.entry_date) && !a.custom_start && !a.custom_end && !pre.has(key(a))}); });
+    taskRestIntervals().forEach(x=>{ if(x.worker_id===wid) items.push({iv:x.iv, cut:false}); });
+    items.sort((x,y)=>x.iv.start - y.iv.start);
+    let total = 0;
+    for(let k=0; k+1<items.length; k++){
+      const P = items[k], N = items[k+1];
+      if(+N.iv.start <= +P.iv.end) continue; // רצף/משמרת מחוברת
+      const gap = hoursBetween(P.iv.end, N.iv.start); if(gap >= REST_HOURS_REQUIRED - 0.001) continue;
+      const need = Math.round((REST_HOURS_REQUIRED - gap) * 60);
+      if(!P.cut || need > REST_CUT_MAX_MIN || hoursBetween(P.iv.start, new Date(+P.iv.end - need*60000)) < 4) return Infinity;
+      if(!onDate || P.date===onDate) total += need;
+    }
+    return total;
   };
   const MIXK2 = {morning:"m", evening:"e"};
   let changes = 0;
-  for(let it=0; it<40; it++){
+  // (2026-10-28, סרגיי: "אופק ובנימין ביום רביעי") - מחפשים החלפות (של 2 או 3 עובדים באותו יום, בכל יום בשבוע) שמקטינות את
+  // סך הקיצורים הדרושים למנוחה. כך גם שרשרת: קודם יום רביעי (אופק לבוקר), ואז יום שלישי (אופק ממשמרת שנגמרת ב-24:00 למתואמת)
+  for(let it=0; it<60; it++){
     const {mx} = stats(); const abd = abdOf();
     const dev = (id, dm, de)=>{ const x = mx[id] || {m:0, e:0}; return Math.abs((x.m + dm) - (x.e + de)); };
-    let done = false;
-    outer: for(const rA of L.filter(a=>movable(a) && needsCut(a))){
-      const A = wById(rA.worker_id); if(!A) continue;
-      for(const rB of L.filter(a=>movable(a) && a!==rA && a.sector===rA.sector && a.entry_date===rA.entry_date && a.shift_type!==rA.shift_type && a.worker_id!==rA.worker_id)){
-        const B = wById(rB.worker_id); if(!B) continue;
-        const slA = slotOf(rA), slB = slotOf(rB);
-        const tA = rA.worker_id, tB = rB.worker_id;
-        rA.worker_id = "__x"; rB.worker_id = "__y";
-        const ok = canTake(A, slB, null, abd) && canTake(B, slA, null, abd);
-        rA.worker_id = tA; rB.worker_id = tB;
-        if(!ok || !achOk(rA, B) || !achOk(rB, A)) continue;
-        // אחרי ההחלפה אף אחד מהשניים לא צריך קיצור
-        rA.worker_id = B.id; rB.worker_id = A.id;
-        const still = needsCut(rA) || needsCut(rB);
-        rA.worker_id = tA; rB.worker_id = tB;
-        if(still) continue;
-        const kA = MIXK2[rA.shift_type], kB = MIXK2[rB.shift_type];
-        const before = dev(A.id,0,0) + dev(B.id,0,0);
-        const after = dev(A.id, (kA==="m"?-1:0)+(kB==="m"?1:0), (kA==="e"?-1:0)+(kB==="e"?1:0)) + dev(B.id, (kB==="m"?-1:0)+(kA==="m"?1:0), (kB==="e"?-1:0)+(kA==="e"?1:0));
-        if(after > before + 1) continue;
-        rA.worker_id = B.id; rA.team_id = B.team_id; rB.worker_id = A.id; rB.team_id = A.team_id;
-        changes++; done = true; break outer;
-      }
-    }
-    if(done) continue;
-    // (2026-10-28, סרגיי: "כנ"ל ביום רביעי... אותם עובדים ששובצו ערב, להעביר לבוקר במקום לקצר") - כשאין החלפה ישירה:
-    // סבב של שלושה באותו יום - A (שצריך קיצור) עובר למשבצת של B, B למשבצת של C, ו-C למשבצת של A
-    outer3: for(const rA of L.filter(a=>movable(a) && needsCut(a))){
+    const curCut = {}; const cc = id=>(id in curCut) ? curCut[id] : (curCut[id] = cutMin(id));
+    const needW = new Set(workers.filter(w=>cc(w.id) > 0).map(w=>w.id));
+    if(!needW.size) break;
+    let best = null;
+    const tryMove = (moves)=>{ // moves: [[row, newWorker], ...] - כל השורות באותו יום
+      const ws = Array.from(new Set(moves.map(m=>m[0].worker_id).concat(moves.map(m=>m[1].id))));
+      const before = ws.reduce((t,id)=>t + cc(id), 0);
+      const orig = moves.map(m=>m[0].worker_id);
+      const dDate = moves[0][0].entry_date;
+      const dayBefore = {}; ws.forEach(id=>{ dayBefore[id] = cutMin(id, dDate); });
+      moves.forEach(m=>{ m[0].worker_id = "__v" + Math.random(); });
+      const ok = moves.every(([row, W])=>canTake(W, slotOf(row), null, abd));
+      moves.forEach((m,k)=>{ m[0].worker_id = orig[k]; });
+      if(!ok) return;
+      if(!moves.every(([row, W])=>achOk(row, W))) return;
+      moves.forEach(([row, W])=>{ row.worker_id = W.id; });
+      const after = ws.reduce((t,id)=>t + cutMin(id), 0);
+      // בשוויון - עדיפות למהלך שפותר לגמרי את היום הזה (קיצור שנשאר ביום אחר אפשר לפתור בהחלפה נוספת באותו יום)
+      const sameDay = ws.reduce((t,id)=>t + cutMin(id, dDate), 0);
+      const worse = ws.some(id=>cutMin(id, dDate) > dayBefore[id]); // אף עובד לא מקבל באותו יום קיצור גדול יותר ממה שהיה לו
+      const achAfter = moves.every(([row])=>{ const t = row.worker_id; return true; });
+      moves.forEach((m,k)=>{ m[0].worker_id = orig[k]; });
+      if(!(after < before) || worse) return;
+      const d = {}; moves.forEach(([row, W], k)=>{ const kt = MIXK2[row.shift_type]; const a = d[W.id] = d[W.id] || {m:0,e:0}; if(kt==="m") a.m++; if(kt==="e") a.e++; const b = d[orig[k]] = d[orig[k]] || {m:0,e:0}; if(kt==="m") b.m--; if(kt==="e") b.e--; });
+      const mb = ws.reduce((t,id)=>t + dev(id,0,0), 0), ma = ws.reduce((t,id)=>t + dev(id, (d[id]||{}).m||0, (d[id]||{}).e||0), 0);
+      if(ma > mb + 2) return; // מנוחה בלי קיצור קודמת לאיזון בוקר/ערב, עד פער קטן
+      const gain = before - after;
+      // קודם מהלך שמשאיר את היום הזה בלי קיצורים בכלל (קיצור שעבר ליום אחר אפשר לפתור בהחלפה נוספת), ואז הרווח הגדול
+      if(!best || sameDay < best.sameDay || (sameDay===best.sameDay && gain > best.gain)) best = {gain, sameDay, moves};
+    };
+    const rowsNeed = L.filter(a=>movable(a) && needW.has(a.worker_id));
+    for(const rA of rowsNeed){
       const A = wById(rA.worker_id); if(!A) continue;
       const same = L.filter(a=>movable(a) && a!==rA && a.sector===rA.sector && a.entry_date===rA.entry_date && a.worker_id!==rA.worker_id);
       for(const rB of same){
         if(rB.shift_type===rA.shift_type) continue;
         const B = wById(rB.worker_id); if(!B) continue;
+        tryMove([[rA, B], [rB, A]]);
         for(const rC of same){
-          if(rC===rB || rC.worker_id===rB.worker_id || rC.shift_type===rB.shift_type) continue;
+          if(rC===rB || rC.worker_id===rB.worker_id || rC.shift_type===rB.shift_type || rC.shift_type===rA.shift_type) continue;
           const C = wById(rC.worker_id); if(!C) continue;
-          const sA = slotOf(rA), sB = slotOf(rB), sC = slotOf(rC);
-          const tA = rA.worker_id, tB = rB.worker_id, tC = rC.worker_id;
-          rA.worker_id = "__x"; rB.worker_id = "__y"; rC.worker_id = "__w";
-          const ok = canTake(A, sB, null, abd) && canTake(B, sC, null, abd) && canTake(C, sA, null, abd);
-          rA.worker_id = tA; rB.worker_id = tB; rC.worker_id = tC;
-          if(!ok || !achOk(rB, A) || !achOk(rC, B) || !achOk(rA, C)) continue;
-          rB.worker_id = A.id; rC.worker_id = B.id; rA.worker_id = C.id;
-          const still = needsCut(rA) || needsCut(rB) || needsCut(rC);
-          const achStill = achOk(rB, A) && achOk(rC, B) && achOk(rA, C);
-          rA.worker_id = tA; rB.worker_id = tB; rC.worker_id = tC;
-          if(still || !achStill) continue;
-          const d = {}; [[A.id, rA, rB], [B.id, rB, rC], [C.id, rC, rA]].forEach(([id, from, to])=>{ const x = d[id] = d[id] || {m:0, e:0}; const kf = MIXK2[from.shift_type], kt = MIXK2[to.shift_type]; if(kf==="m") x.m--; if(kf==="e") x.e--; if(kt==="m") x.m++; if(kt==="e") x.e++; });
-          const before = dev(A.id,0,0) + dev(B.id,0,0) + dev(C.id,0,0);
-          const after = [A.id, B.id, C.id].reduce((sum,id)=>sum + dev(id, d[id].m, d[id].e), 0);
-          if(after > before + 1) continue;
-          rB.worker_id = A.id; rB.team_id = A.team_id; rC.worker_id = B.id; rC.team_id = B.team_id; rA.worker_id = C.id; rA.team_id = C.team_id;
-          changes++; done = true; break outer3;
+          tryMove([[rB, A], [rC, B], [rA, C]]); // A->B, B->C, C->A
+          tryMove([[rC, A], [rA, B], [rB, C]]); // A->C, C->B, B->A
         }
       }
     }
-    if(!done) break;
+    if(!best) break;
+    best.moves.forEach(([row, W])=>{ row.worker_id = W.id; row.team_id = W.team_id; });
+    changes++;
   }
   if(!changes) return 0;
   // שמירה: רק משבצות שהרכב העובדים בהן השתנה
@@ -4909,7 +4913,9 @@ async function hoursBalancePass(team){
       const ivs = {}; ivs[w.id] = [];
       rowsW.forEach(a=>{ const x = shiftInterval(a); if(x) ivs[w.id].push({start:x.start, end:x.end, cut: secs.includes(a.sector) && dates.includes(a.entry_date) && !a.custom_start && !a.custom_end && !pre.has(key(a))}); });
       const strict = wouldViolateRest(w.id, iv, ivs) || !taskRestOk(w.id, iv);
-      if(strict) return false; // באיזון השעות - בלי קיצורים חדשים (הם יוצרים חוסר בשעות)
+      // באיזון השעות - בלי קיצורים חדשים (הם יוצרים חוסר בשעות), גם לא לפני משימה
+      const tIv = {}; tIv[w.id] = taskRestIntervals().filter(x=>x.worker_id===w.id).map(x=>x.iv);
+      if(strict || wouldViolateRest(w.id, iv, tIv)) return false;
     }
     const idx = buildStreakIndex(outside.concat(L.filter(a=>a!==skipRow && secs.includes(a.sector) && dates.includes(a.entry_date))).concat(tasks.map(t=>({worker_id:t.worker_id, entry_date:t.date, shift_type:"task"}))));
     if(streakIssues(idx, w.id, sl.date, sl.shiftType).length) return false;
