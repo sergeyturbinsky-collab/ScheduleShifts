@@ -299,7 +299,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=205"></script>
+<script src="portal.js?v=206"></script>
 <script>
 (function(){
 "use strict";
@@ -2185,14 +2185,50 @@ function longChainBanner(rv, dates, nameOf){
    שהצבתם היתה יוצרת פחות מ-8 שעות מנוחה (מול משמרת קיימת שלהם, בכל גזרה, כולל משמרות שכבר שובצו
    באותה הרצה) מודרים מהבחירה - אלא אם אין שום מועמד "נקי" כדי למלא את המשבצת, ואז הם משמשים
    כמוצא אחרון (עדיפות אחרונה), עדיין ממוינים לפי הוגנות כרגיל. */
-function buildWorkerIntervals(assignments){
+function buildWorkerIntervals(assignments, noTasks){
   const byWorker = {};
   (assignments||[]).forEach(a=>{
     const iv = shiftInterval(a);
     if(!iv) return;
     (byWorker[a.worker_id] = byWorker[a.worker_id]||[]).push(iv);
   });
+  // (2026-10-28, סרגיי: "תתייחס גם לשעות המנוחה בין המשמרות לשעת תחילת משימה ביום המחרת") - משימה עם שעת התחלה
+  // נכנסת לבדיקת 8 שעות המנוחה כמו משמרת: לא משבצים ערב שמסתיים פחות מ-8 שעות לפני תחילת המשימה (וגם לא משמרת
+  // שמתחילה פחות מ-8 שעות אחרי סיום המשימה, כשיש לה שעת סיום)
+  if(!noTasks) taskRestIntervals().forEach(x=>{ (byWorker[x.worker_id] = byWorker[x.worker_id]||[]).push(x.iv); });
   return byWorker;
+}
+/* משמרת לפני משימה: מותרת אם אפשר לקצר אותה (עד REST_CUT_MAX_MIN, ולפחות 4 שעות נשארות) כך שיישארו 8 שעות מנוחה
+   עד תחילת המשימה - shortenForRest מקצר אותה בסוף השיבוץ. משמרת שמתחילה פחות מ-8 שעות אחרי סיום משימה - לא מותרת. */
+function taskRestOk(workerId, iv){
+  if(!iv) return true;
+  return taskRestIntervals().filter(x=>x.worker_id===workerId).every(x=>{
+    const t = x.iv;
+    if(+t.start >= +iv.end){
+      const gap = hoursBetween(iv.end, t.start); if(gap >= REST_HOURS_REQUIRED - 0.01) return true;
+      const needMin = Math.round((REST_HOURS_REQUIRED - gap) * 60);
+      return needMin <= REST_CUT_MAX_MIN && hoursBetween(iv.start, new Date(+iv.end - needMin*60000)) >= 4;
+    }
+    if(+t.end <= +iv.start) return hoursBetween(t.end, iv.start) >= REST_HOURS_REQUIRED - 0.01;
+    return false; // חפיפה עם המשימה
+  });
+}
+/* טווח הזמן של משימה (לא משמרת) לצורך המנוחה: מהתאריך + שעת ההתחלה, עד שעת הסיום (סיום <= התחלה, כמו 06:00-00:00 = עד חצות).
+   משימה בלי שעת התחלה - לא נבדקת. בלי שעת סיום - נבדקת רק המנוחה לפני ההתחלה. */
+function taskInterval(t){
+  const st = t && String(t.start||"").slice(0,5); if(!t || !t.worker_id || !t.date || !/^\d{1,2}:\d{2}$/.test(st)) return null;
+  const start = parseDate(t.date), [sh,sm] = st.split(":").map(Number); start.setHours(sh, sm, 0, 0);
+  const en = String(t.end||"").slice(0,5); let end = new Date(+start);
+  if(/^\d{1,2}:\d{2}$/.test(en)){ end = parseDate(t.date); const [eh,em] = en.split(":").map(Number); end.setHours(eh, em, 0, 0); if(end <= start) end.setDate(end.getDate()+1); }
+  return {start, end};
+}
+function taskRestIntervals(){
+  const ui = S.ui || {}, seen = new Set(), out = [];
+  (ui.streakTasks || []).concat(ui.schedTasks || []).forEach(t=>{
+    const k = t && (t.id || (t.worker_id+"|"+t.date+"|"+t.slot)); if(!k || seen.has(k)) return; seen.add(k);
+    const iv = taskInterval(t); if(iv) out.push({worker_id:t.worker_id, iv, task:t});
+  });
+  return out;
 }
 /* בדיוק 8 שעות מנוחה (הצהוב) - מותר, אבל בשיבוץ האוטומטי מועדף מי שיש לו יותר מנוחה (2026-10-21, סרגיי) */
 function wouldBeTightRest(workerId, newInterval, workerIntervals){
@@ -4081,7 +4117,7 @@ async function runAutoAssignImpl(){
   // מניעת ברירת-מחדל של שיבוץ עם פחות מ-8 שעות מנוחה (לבקשת סרגיי, 2026-09-28) - ראו הערה מפורטת
   // ליד wouldViolateRest/buildWorkerIntervals למעלה. נבנה מ-ui.allAssignments (כל הגזרות) כדי לתפוס
   // גם משמרת קודמת של אותו עובד בגזרה אחרת (למשל עובד "מושאל" דרך "הצג זמינים מגזרות אחרות").
-  const workerIntervals = buildWorkerIntervals(ui.allAssignments || ui.assignments || []);
+  const workerIntervals = buildWorkerIntervals(ui.allAssignments || ui.assignments || [], true); // משמרות בלבד; משימות - taskRestOk
   // מפצלת רשימת מועמדים ל"נקיים" (≥8 שעות מנוחה) ו"פוגעים במנוחה" (<8 שעות) - האחרונים משמשים
   // רק כעדיפות אחרונה, כשאין ברירה אחרת למלא את המשבצת.
   const tightBySlot = new Map(); // slot -> Set(workerId) של מי שיגיע לבדיוק 8 שעות מנוחה
@@ -4089,7 +4125,7 @@ async function runAutoAssignImpl(){
     const newInterval = shiftInterval({sector:slot.sector, shift_type:slot.shiftType, entry_date:slot.date, custom_start:null, custom_end:null});
     const ok = [], bad = [], tight = new Set();
     candidates.forEach(w=>{
-      if(newInterval && wouldViolateRest(w.id, newInterval, workerIntervals)) bad.push(w);
+      if(newInterval && (wouldViolateRest(w.id, newInterval, workerIntervals) || !taskRestOk(w.id, newInterval))) bad.push(w);
       else { ok.push(w); if(wouldBeTightRest(w.id, newInterval, workerIntervals)) tight.add(w.id); }
     });
     tightBySlot.set(slot, tight);
@@ -4815,6 +4851,8 @@ async function shortenForRest(team, onlyWorker, protectKeys){
   const all = (ui.allAssignments || ui.assignments || []).filter(a=>!a.shadow_of);
   const byW = {};
   all.forEach(a=>{ const iv = shiftInterval(a); if(iv) (byW[a.worker_id] = byW[a.worker_id] || []).push({a, iv}); });
+  // משימה למחרת עם שעת התחלה - המשמרת שלפניה מתקצרת כדי שיישארו 8 שעות מנוחה (2026-10-28, סרגיי)
+  taskRestIntervals().forEach(x=>{ (byW[x.worker_id] = byW[x.worker_id] || []).push({a:null, iv:x.iv, task:x.task}); });
   const p2 = n=>String(n).padStart(2,"0");
   let cut = 0;
   for(const wid of Object.keys(byW)){
@@ -4822,6 +4860,7 @@ async function shortenForRest(team, onlyWorker, protectKeys){
     const list = byW[wid].sort((x,y)=>x.iv.start - y.iv.start);
     for(let i=0; i+1<list.length; i++){
       const P = list[i], N = list[i+1];
+      if(!P.a) continue; // משימה - לא מקצרים אותה
       if(!secs.has(P.a.sector) || !inPeriod.has(P.a.entry_date) || P.a.custom_end) continue;
       if(protectKeys && protectKeys.has(P.a.sector+"|"+P.a.entry_date+"|"+P.a.shift_type+"|"+P.a.worker_id)) continue; // שיבוץ ידני/קיים - לא נוגעים
       if(+N.iv.start <= +P.iv.end) continue; // רצף עבודה / חפיפה - לא מנוחה
