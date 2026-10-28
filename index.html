@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=180"></script>
+<script src="portal.js?v=181"></script>
 <script>
 (function(){
 "use strict";
@@ -1491,11 +1491,11 @@ function renderAvailabilityByDay(dates, group, ui){
       });
     });
     const items = Array.from(byWorker.values())
-      .sort((a,b)=>((notSubmittedOpen(a.worker)?1:0)-(notSubmittedOpen(b.worker)?1:0)) || a.worker.name.localeCompare(b.worker.name,"he"))
+      .sort((a,b)=>((notSubmittedOpen(a.worker, daySlots[0].date)?1:0)-(notSubmittedOpen(b.worker, daySlots[0].date)?1:0)) || a.worker.name.localeCompare(b.worker.name,"he"))
       .map(({worker:w, types})=>{
         const allDay = shiftTypesForDay.length>0 && shiftTypesForDay.every(st=>types.has(st));
         const typesTxt = allDay ? "כל היום" : shiftTypesForDay.filter(st=>types.has(st)).map(st=>SHIFT_LABELS[st]||st).join(", ");
-        return `${escapeHtml(w.name)}${w.role?` [${escapeHtml(w.role)}]`:""} <span class="muted" style="font-size:.85em;">(${notSubmittedOpen(w) ? ((S.ui.submittedWorkerIds||new Set()).has(w.id) ? "לא סימן משמרות — זמין כברירת מחדל" : "לא הגיש — זמין כברירת מחדל") : typesTxt})</span>`;
+        return `${escapeHtml(w.name)}${w.role?` [${escapeHtml(w.role)}]`:""} <span class="muted" style="font-size:.85em;">(${notSubmittedOpen(w, daySlots[0].date) ? ((S.ui.submittedWorkerIds||new Set()).has(w.id) ? "לא סימן ביום הזה — זמין כברירת מחדל" : "לא הגיש — זמין כברירת מחדל") : typesTxt})</span>`;
       });
     return `<tr><td>${fmtDateHeb(d)}</td><td style="text-align:right;">${items.length?items.join(", "):'<span class="muted">אין</span>'}</td></tr>`;
   }).join("");
@@ -1959,8 +1959,8 @@ function availableForSlot(slot, workers, entriesByWorker, assignmentsByDate, exc
       } else if(matches) return false; // מוקד: סימון = חסימה (המודל הקיים, ללא שינוי)
     } else {
       // (2026-10-28, סרגיי) גם מי שלא הגיש בכלל - עד 2 מתואמות בשבוע
-      if(!matches && slot.shiftType==="coordinated" && notSubmittedOpen(w) && coordWeekCount(w, slot.date, assignmentsByDate) >= COORD_MAX_PER_WEEK) return false;
-      if(!matches && !notSubmittedOpen(w)) return false; // מאבטחים: רק סימון מפורש = זמינות; ברירת המחדל היא "לא זמין" (חיפה: מי שלא הגיש - זמין, ראו notSubmittedOpen)
+      if(!matches && slot.shiftType==="coordinated" && notSubmittedOpen(w, slot.date) && coordWeekCount(w, slot.date, assignmentsByDate) >= COORD_MAX_PER_WEEK) return false;
+      if(!matches && !notSubmittedOpen(w, slot.date)) return false; // מאבטחים: רק סימון מפורש = זמינות; ברירת המחדל היא "לא זמין" (חיפה: מי שלא הגיש - זמין, ראו notSubmittedOpen)
     }
     if(!skipAlreadyCheck){
       const already = (assignmentsByDate[slot.date]||[]).some(a => a.worker_id===w.id && slotKey(a.sector,a.shift_type) !== excludeSlotKey);
@@ -1974,12 +1974,15 @@ function slotKey(sector, shiftType){ return sector+"|"+shiftType; }
    (עדיפות קודמת למשבצת למי שכן הגיש)". רק כשרשימת ההגשות של התקופה נטענה (במסכי השיבוץ). העדיפות למי שהגיש - ב-earlyRank
    בשיבוץ האוטומטי, ובבורר הידני מי שלא הגיש מוצג אחרי מי שהגיש, עם תגית. */
 function openIfNotSubmittedTeam(t){ return !!t && (t.sectors||[]).includes("חיפה"); }
-function notSubmittedOpen(w){
+function notSubmittedOpen(w, date){
   const subs = S.ui && S.ui.submittedWorkerIds;
   if(!(subs instanceof Set) || !S.ui.loaded) return false;
   const t = S.teams.find(x=>x.id===w.team_id);
   if(!openIfNotSubmittedTeam(t)) return false;
-  return !subs.has(w.id) || noShiftMarks(w);
+  if(!subs.has(w.id)) return true;
+  // (2026-10-28, סרגיי: "תתייחס פר יום") - יום שהעובד לא סימן בו כלום = פתוח לפי צורכי המערכת; יום עם חופשה וכו' נשאר חסום
+  if(date) return !(((S.ui.entriesByWorker||{})[w.id]||{})[date]||[]).length;
+  return noShiftMarks(w);
 }
 /* (2026-10-28, סרגיי: "מי שלא סימן כלום, תתייחס כאילו הוא זמין למה שהמערכת צריכה") - הגיש, אבל בלי אף משמרת
    (רק חופשה/מחלה/מילואים/אחר, או כלום) - פתוח כמו מי שלא הגיש. ימי החופשה וכו' שסימן נשארים חסומים. */
@@ -2025,9 +2028,9 @@ function coordAllowedDates(w, date, entriesByWorker){
   const h = str=>{ let x = 2166136261; for(let i=0;i<str.length;i++){ x ^= str.charCodeAt(i); x = Math.imul(x, 16777619); } return x>>>0; };
   return new Set(marked.slice().sort((a,b)=>h(w.id+a)-h(w.id+b)).slice(0, COORD_MAX_PER_WEEK));
 }
-function noSubTag(w){ if(!notSubmittedOpen(w)) return ""; const sub = (S.ui.submittedWorkerIds||new Set()).has(w.id);
-  return sub ? ` <span class="pill" title="הגיש בלי לסמן משמרות - זמין בכל משמרת, אחרי מי שסימן">לא סימן</span>` : ` <span class="pill" title="לא הגיש סידור - זמין בכל משמרת, אחרי מי שהגיש">לא הגיש</span>`; }
-function subFirst(list){ return list.filter(w=>!notSubmittedOpen(w)).concat(list.filter(w=>notSubmittedOpen(w))); }
+function noSubTag(w, date){ if(!notSubmittedOpen(w, date)) return ""; const sub = (S.ui.submittedWorkerIds||new Set()).has(w.id);
+  return sub ? ` <span class="pill" title="לא סימן כלום ביום הזה - זמין לפי צורכי המערכת, אחרי מי שסימן">לא סימן</span>` : ` <span class="pill" title="לא הגיש סידור - זמין בכל משמרת, אחרי מי שהגיש">לא הגיש</span>`; }
+function subFirst(list, date){ return list.filter(w=>!notSubmittedOpen(w, date)).concat(list.filter(w=>notSubmittedOpen(w, date))); }
 
 /* ================================================================
    בדיקת 8 שעות מנוחה בין משמרות עוקבות של אותו עובד - לבקשת סרגיי (2026-09-28).
@@ -3116,10 +3119,10 @@ function renderTmplCellOverlay(){
   // --- מיון התצוגה: קודם זמינים (ופנויים), אח"כ זמינים-אך-כבר-משובצים-היום-במשמרת-אחרת (עם הערה),
   // אח"כ לא-זמינים (שיבוץ ידני בכל זאת) - ואז (למטה) האפשרות הרביעית - זמינים מגזרה אחרת.
   // לבקשת סרגיי (2026-10-05, הורחב 2026-10-06). ---
-  const availOptions = subFirst(options.filter(w=>avail.some(a=>a.id===w.id)));
+  const availOptions = subFirst(options.filter(w=>avail.some(a=>a.id===w.id)), c.date);
   const busyOptions = options.filter(w=> !avail.some(a=>a.id===w.id) && availIncludingBusy.some(a=>a.id===w.id));
   const unavailOptions = options.filter(w=>!availIncludingBusy.some(a=>a.id===w.id));
-  const pickBtn = w => `<button class="btn small ${w.id===(currentWorker&&currentWorker.id)?"":"secondary"}" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}${partialTag(w, slot)}${noSubTag(w)}${taskTag(w.id, c.date)}</button>`;
+  const pickBtn = w => `<button class="btn small ${w.id===(currentWorker&&currentWorker.id)?"":"secondary"}" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}${partialTag(w, slot)}${noSubTag(w, c.date)}${taskTag(w.id, c.date)}</button>`;
   const busyNote = w => {
     const already = (assignmentsByDate[c.date]||[]).filter(a=>a.worker_id===w.id);
     const labels = Array.from(new Set(already.map(a=>SHIFT_LABELS[a.shift_type]||a.shift_type)));
@@ -3259,7 +3262,7 @@ function renderMokedCellOverlay(){
   // --- מיון התצוגה: קודם זמינים, אח"כ זמינים-אך-כבר-משובצים-היום-במשמרת-אחרת (עם הערה), אח"כ
   // לא-זמינים (שיבוץ ידני בכל זאת) - ואז (למטה) האפשרות הרביעית - זמינים מגזרה אחרת. לבקשת סרגיי
   // (2026-10-05, הורחב 2026-10-06). ---
-  const availOptions = subFirst(options.filter(w=>avail.some(a=>a.id===w.id)));
+  const availOptions = subFirst(options.filter(w=>avail.some(a=>a.id===w.id)), c.date);
   const busyOptions = options.filter(w=> !avail.some(a=>a.id===w.id) && availIncludingBusy.some(a=>a.id===w.id));
   const unavailOptions = options.filter(w=>!availIncludingBusy.some(a=>a.id===w.id));
   const pickBtn = w => `<button class="btn small secondary" data-action="tmpl-pick" data-worker="${w.id}">${escapeHtml(w.name)}${streakTag(w.id, c.date, c.type)}${partialTag(w, slot)}</button>`;
@@ -3900,7 +3903,7 @@ async function runAutoAssign(){
   const canBothCache = {};
   const canBoth = w=>{
     if(w.id in canBothCache) return canBothCache[w.id];
-    if(notSubmittedOpen(w)) return (canBothCache[w.id] = true);
+    if(notSubmittedOpen(w) || dates.some(d=>notSubmittedOpen(w, d))) return (canBothCache[w.id] = true);
     let m = false, e = false;
     dates.forEach(d=>((ui.entriesByWorker[w.id]||{})[d]||[]).forEach(x=>{ if(x.shift_type==="morning") m = true; if(x.shift_type==="evening" || x.shift_type==="coordinated") e = true; }));
     return (canBothCache[w.id] = m && e);
@@ -3959,7 +3962,7 @@ async function runAutoAssign(){
       const subAt = ui.submittedAt || {};
       // (2026-10-24, סרגיי: "שלושה ראשונים, ואז את כל הראשונים") - כל המועמדים לפי סדר ההגשה: 3 הראשונים קודמים,
       // אחריהם כל השאר לפי מי שהגיש קודם; מי שלא הגיש (שיבוץ ידני/חריג) - בסוף
-      const ord = candidates.filter(w=>subAt[w.id] && !notSubmittedOpen(w)).sort((a,b)=>String(subAt[a.id]).localeCompare(String(subAt[b.id])));
+      const ord = candidates.filter(w=>subAt[w.id] && !notSubmittedOpen(w, slot.date)).sort((a,b)=>String(subAt[a.id]).localeCompare(String(subAt[b.id])));
       earlyBySlot.set(slot, new Map(ord.map((w,i)=>[w.id, i])));
     }
     return {ok, bad, newInterval};
