@@ -299,7 +299,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=208"></script>
+<script src="portal.js?v=209"></script>
 <script>
 (function(){
 "use strict";
@@ -4772,7 +4772,9 @@ async function hoursBalancePass(team){
       if(h[r.worker_id]==null) continue;
       const H = wById(r.worker_id), d = durOf(r), sl = slotOf(r); if(!d) continue;
       const cands = workers.filter(w=>w.id!==r.worker_id && (h[r.worker_id] - (h[w.id]||0)) > d + 0.25
-          && fc(w.id) < fc(r.worker_id) && ((c[w.id]||0) + 1 <= weekTarget(w) || (c[r.worker_id]||0) > weekTarget(H))
+          // (2026-10-28, סרגיי: "למה למאור יש 6 ולאופק 4") - איזון השעות לא מעלה אף עובד מעל היעד שלו ולא נותן משמרת
+          // למי שכבר יש לו אותו מספר משמרות או יותר - כמות המשמרות קודמת לשעות
+          && fc(w.id) < fc(r.worker_id) && (c[w.id]||0) < (c[r.worker_id]||0) && (c[w.id]||0) + 1 <= weekTarget(w)
           && (c[w.id]||0) + 1 <= MAX_WEEK_SHIFTS && (w.target_shifts==null || (c[w.id]||0) + 1 <= w.target_shifts))
         .sort((x,y)=>(h[x.id]-h[y.id]) || (fc(x.id)-fc(y.id)));
       const w = cands.find(w=>achOk2(r, w) && canTake(w, sl, r, abd));
