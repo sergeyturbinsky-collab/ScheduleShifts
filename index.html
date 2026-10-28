@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=181"></script>
+<script src="portal.js?v=182"></script>
 <script>
 (function(){
 "use strict";
@@ -1006,6 +1006,7 @@ function renderSubmitPeriod(){
       <h4>${fmtDateHeb(d)}</h4>
       <div class="chip-opts">
         ${opts.map(ot=>`<div class="chip ${sel.types.includes(ot)?"on":""} ${positiveChips?"positive":""}"${readOnly?"":` data-action="toggle-shift" data-date="${d}" data-type="${ot}"`}>${submitOptionLabel(ot, d)}</div>`).join("")}
+        ${(positiveChips && !readOnly && opts.length > 1) ? (()=>{ const all = opts.filter(o=>o!=="coordinated").every(o=>sel.types.includes(o)); return `<div class="chip ${all?"on":""} positive" data-action="toggle-allday" data-date="${d}" style="font-weight:700;">${all?"✔ ":""}זמין לכל המשמרות</div>`; })() : ""}
         ${guardBlocking ? "" : readOnly ? (sel.customOn ? `<div class="chip on positive">${positiveChips?"שעות מותאמות":"שעות שאני כן יכול/ה"}</div>` : "")
           : `<div class="chip ${sel.customOn?"on":""} positive" data-action="toggle-custom" data-date="${d}">${positiveChips?"שעות מותאמות":"שעות שאני כן יכול/ה"}</div>`}
       </div>
@@ -4953,6 +4954,27 @@ function onAppClick(e){
     ui.entries = null; ui.subError = null; ui.saveMsg = null; ui.blockMsg = null; return render();
   }
   if(a==="sub-retry"){ ui.subError = null; return render(); }
+  /* (2026-10-28, סרגיי: "תוסיף באפשרויות שיבוץ אצל המאבטחים לחצן של זמין לכל המשמרות פר יום") - מסמן את כל המשמרות של היום;
+     לחיצה נוספת מבטלת. מתואמת נכנסת רק אם עוד לא סומנו 2 בשבוע */
+  if(a==="toggle-allday"){
+    const d = el.dataset.date;
+    const tm = teamById(S.identity && S.identity.teamId);
+    const opts = tm ? submitOptionsForTeamDay(tm, d) : [];
+    const e = ui.entries[d] = ui.entries[d] || {types:[], customOn:false, customStart:"07:00", customEnd:"15:00", dayStatus:null};
+    e.dayStatus = null; ui.blockMsg = null;
+    const allOn = opts.filter(o=>o!=="coordinated").every(o=>e.types.includes(o));
+    if(allOn){ e.types = []; return render(); }
+    opts.forEach(o=>{
+      if(e.types.includes(o)) return;
+      if(o==="coordinated" && tm && tm.has_coordinated_shift){
+        const dt = parseDate(d), wk = fmtDate(addDays(dt, -dt.getDay()));
+        const n = Object.keys(ui.entries).filter(k=>{ const x = ui.entries[k]; if(!x || x.dayStatus || !(x.types||[]).includes("coordinated")) return false; const y = parseDate(k); return fmtDate(addDays(y, -y.getDay()))===wk; }).length;
+        if(n >= COORD_MAX_PER_WEEK){ ui.blockMsg = `סומנו כל המשמרות חוץ מהמתואמת — כבר סומנו ${COORD_MAX_PER_WEEK} מתואמות השבוע.`; return; }
+      }
+      e.types.push(o);
+    });
+    return render();
+  }
   if(a==="toggle-shift"){
     const d = el.dataset.date, ty = el.dataset.type;
     ui.entries[d] = ui.entries[d] || {types:[], customOn:false, customStart:"07:00", customEnd:"15:00", dayStatus:null};
