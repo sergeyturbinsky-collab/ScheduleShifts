@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=193"></script>
+<script src="portal.js?v=194"></script>
 <script>
 (function(){
 "use strict";
@@ -3846,7 +3846,24 @@ async function clearSchedule(){
     // (2026-10-28, סרגיי: "כשעושים ניקוי של שיבוץ אוטומטי, לא לנקות את מה שהוזן ידנית") - רק שיבוצים אוטומטיים נמחקים
     const n = await apiRpc("rpc_schedule_clear_auto", {p_pin:S.pin, p_sectors:group.citySectors, p_from:dates[0], p_to:dates[dates.length-1]});
     ui.buildMsg = `🗑 השיבוץ האוטומטי נוקה — נמחקו ${n||0} שיבוצים אוטומטיים. שיבוצים ידניים ומשימות נשארו. אפשר להריץ שיבוץ אוטומטי מחדש.`;
-  }catch(e){ ui.buildMsg = /rpc_schedule_clear_auto|does not exist|Could not find/i.test(e.message||"") ? "הניקוי ששומר על השיבוצים הידניים עוד לא הופעל בשרת — לא נמחק כלום." : "שגיאה בניקוי הסידור: " + e.message; }
+  }catch(e){
+    if(/rpc_schedule_clear_auto|does not exist|Could not find|PGRST202/i.test(e.message||"")){
+      // השרת עוד לא עודכן: מנקים מכאן, משבצת-משבצת - בכל משבצת נשארים רק מי ששובצו ידנית (עם השעות/התפקיד/החפיפות שלהם)
+      try{
+        const rows = (ui.assignments||[]).filter(a=>group.citySectors.includes(a.sector) && dates.includes(a.entry_date));
+        const cells = new Map(); rows.forEach(a=>{ const k = a.sector+"|"+a.entry_date+"|"+a.shift_type; (cells.get(k) || cells.set(k, []).get(k)).push(a); });
+        let n = 0;
+        for(const [k, list] of cells){
+          const autos = list.filter(a=>a.method!=="manual" && !a.shadow_of);
+          if(!autos.length) continue;
+          const [sec, d, t] = k.split("|");
+          await setAssignmentListPreservingHours(sec, d, t, list.filter(a=>a.method==="manual" && !a.shadow_of).map(a=>a.worker_id), "manual");
+          n += autos.length;
+        }
+        ui.buildMsg = `🗑 השיבוץ האוטומטי נוקה — נמחקו ${n} שיבוצים אוטומטיים. שיבוצים ידניים ומשימות נשארו. אפשר להריץ שיבוץ אוטומטי מחדש.`;
+      }catch(e2){ ui.buildMsg = "שגיאה בניקוי הסידור: " + e2.message; }
+    } else ui.buildMsg = "שגיאה בניקוי הסידור: " + e.message;
+  }
   ui.loaded = false; await loadAggregateData(team); render();
 }
 async function setSchedulePublished(publish, force){
