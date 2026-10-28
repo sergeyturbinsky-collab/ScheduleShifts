@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=190"></script>
+<script src="portal.js?v=191"></script>
 <script>
 (function(){
 "use strict";
@@ -513,13 +513,15 @@ function motzashStart(dateStr, sector){
 }
 function fmtMinutes(m){ const h = Math.floor(m/60), mm = Math.round(m%60); return `${String(h).padStart(2,"0")}:${String(mm).padStart(2,"0")}`; }
 /* סיום משמרת שישי בוקר: שעתיים לפני כניסת שבת, בחצאי שעות (לבקשת סרגיי, 2026-10-09):
-   כניסה עד "ורבע" (17:15) → סיום בשעה העגולה שעתיים לפני (15:00);
-   כניסה אחרי "ורבע" ועד "רבע ל" (18:17, 19:35, 20:28) → סיום בחצי (16:30, 17:30, 18:30);
-   כניסה אחרי "רבע ל" (17:48, 18:51) → סיום בשעה העגולה שאחרי (16:00, 17:00). */
+   כניסה לפני "ורבע" (17:10) → סיום בשעה העגולה שעתיים לפני (15:00);
+   כניסה מ"ורבע" ועד לפני "רבע ל" (16:15, 18:17, 19:35) → סיום בחצי (14:30, 16:30, 17:30);
+   כניסה מ"רבע ל" (16:45, 17:48) → סיום בשעה העגולה שאחרי (15:00, 16:00).
+   (2026-10-28, סרגיי: "בהנחה וזה יוצא ורבע או רבע ל... תעגל למעלה" - בדיוק ברבע מעגלים למעלה) */
 function fridayMorningEnd(dateStr, sector){
   const cl = candleLightingMinutes(dateStr, sector); if(cl==null) return null;
   const h = Math.floor(cl/60), m = cl % 60;
-  const end = m <= 15 ? (h-2)*60 : m <= 45 ? (h-2)*60 + 30 : (h-1)*60;
+  // (2026-10-28, סרגיי) לחצי השעה הקרובה; בדיוק ברבע (16:15 / 16:45) - מעגלים למעלה (16:15 → 14:30)
+  const end = m < 15 ? (h-2)*60 : m < 45 ? (h-2)*60 + 30 : (h-1)*60;
   return fmtMinutes(end);
 }
 /* התקן בפועל לתאריך מסוים: כמו התקן הרגיל, חוץ משישי בוקר של המאבטחים שמתעדכן לפי כניסת השבת */
