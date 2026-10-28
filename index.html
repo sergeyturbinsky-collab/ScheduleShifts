@@ -126,6 +126,7 @@
 .note-box{background:#fff8e6;border:1px solid #f0dca0;border-radius:8px;padding:10px 12px;font-size:13px;color:#7a5c00;margin-bottom:12px;}
   .overlay{position:fixed;inset:0;background:rgba(10,30,55,.55);display:flex;align-items:center;justify-content:center;z-index:50;}
   .overlay .card{max-width:360px;width:90%;}
+  .tmpl-part{border-top:1px dashed #7fb3c8;margin-top:4px;padding-top:3px;}
   /* חלונית השיבוץ הידני (2026-10-28, סרגיי: "תקטין את החלונית שנפתחת ב-30%, ותוסיף גלגלת מהצד") */
   .overlay[data-action="tmpl-cell-bg"] .card{width:63%;min-width:270px;max-width:360px;max-height:70vh;overflow-y:auto;font-size:.9em;padding:12px 14px 12px 20px;margin:0;
     scrollbar-width:none;overscroll-behavior:contain;}
@@ -298,7 +299,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=203"></script>
+<script src="portal.js?v=204"></script>
 <script>
 (function(){
 "use strict";
@@ -2019,6 +2020,9 @@ function noShiftMarks(w){
 /* כמה מתואמות כבר יש לעובד באותו שבוע (ראשון-שבת), לא כולל התאריך עצמו - מהסידור השמור ומהשיבוץ שבתהליך */
 /* (2026-10-28, סרגיי: "תגביל למקסימום 6 משמרות בשבוע (כולל משימות חיצוניות)") - במאבטחים, בשיבוץ האוטומטי */
 const MAX_WEEK_SHIFTS = 6;
+/* יעד שבועי לשוויון (2026-10-28, סרגיי: "אחמ"שים יקבלו 5, השאר 4") - משמש לבחירה בהארכות ובסבב האיזון; התקרה נשארת 6 */
+const TARGET_ACH = 5, TARGET_REG = 4;
+function weekTarget(w){ return (w && w.target_shifts!=null) ? w.target_shifts : (isGuardAchmash(w) ? TARGET_ACH : TARGET_REG); }
 function weekLoad(ui, wid, date){
   const dt = parseDate(date), sun = addDays(dt, -dt.getDay()), week = new Set();
   for(let i=0;i<7;i++) week.add(fmtDate(addDays(sun, i)));
@@ -2604,8 +2608,27 @@ function pickedForRoleCell(candidates, ridx, roleRowsCount){
 /* (2026-10-28) כשבמשמרת יש יותר עובדים מהתקן (למשל עובד בשעות חלקיות שמשלים שעות) - מציגים שורות נוספות כדי שכולם ייראו */
 function tmplRowsN(bucket, sector, dates, assignmentsByDate){
   let n = bucket.maxReq || 0;
-  dates.forEach(d=>{ const q = bucket.perDate[d]; if(q) n = Math.max(n, tmplAssignedList(assignmentsByDate, d, sector, q.shift_type).length); });
+  dates.forEach(d=>{ const q = bucket.perDate[d]; if(q) n = Math.max(n, tmplDisplayList(tmplAssignedList(assignmentsByDate, d, sector, q.shift_type)).length); });
   return n;
+}
+/* (2026-10-28, סרגיי: "אל תעשה שורה נוספת בעת חלוקה, אלא שיופיע באותה משבצת חצי חצי") - עובדים בשעות חלקיות שלא חופפות
+   (למשל 15:30-19:00 ו-19:00-22:30) מוצגים באותה משבצת. מחזיר רשימה לתצוגה: כל פריט הוא השיבוץ הראשון, ו-_more = ההמשך */
+function tmplDisplayList(list){
+  const iv = a=>shiftInterval(a), partial = a=>!!(a && (a.custom_start || a.custom_end));
+  const out = [];
+  (list||[]).forEach(a=>{
+    const x = iv(a);
+    if(partial(a) && x){
+      const host = out.find(h=>partial(h._orig) && [h._orig].concat(h._more).every(b=>{ const y = iv(b); return y && (+y.end <= +x.start || +x.end <= +y.start); }));
+      if(host){ host._more.push(a); return; }
+    }
+    out.push(Object.assign({}, a, {_orig:a, _more:[]}));
+  });
+  return out.map(h=>{
+    if(!h._more.length) return h;
+    const parts = [h._orig].concat(h._more).sort((p,q)=>(iv(p)?+iv(p).start:0) - (iv(q)?+iv(q).start:0));
+    return Object.assign({}, parts[0], {_orig:parts[0], _more:parts.slice(1)});
+  });
 }
 function tmplCoordMirrorRows(sector, bucket, coordBucket, dates, assignmentsByDate, workers, allWorkersById, restViolations, mode){
   /* (2026-10-20, סרגיי) בשיבוץ ידני גם שורות המתואמת שבתוך בוקר/ערב לחיצות - פותחות את משבצת ה"מתואמת" עצמה */
@@ -2675,9 +2698,13 @@ function renderTemplateGrid(group, dates, ui, mode){
       const rowsHtml = Array.from({length:bucket.maxReq}, (_,i)=>i+1).map(pos=>{
         const cells = dates.map(d=>{
           const q = bucket.perDate[d];
-          const list = q ? tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type) : [];
+          const list0 = q ? tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type) : [];
+          const list = tmplDisplayList(list0);
           if(!q || (pos>q.required_count && !list[pos-1])) return `<td class="tmpl-na"></td>`;
           const a = list[pos-1];
+          const origPos = a ? list0.indexOf(a._orig) + 1 : pos;
+          const moreHtml = a && a._more.length ? a._more.map(b=>{ const wb = workers.find(x=>x.id===b.worker_id) || allWorkersById[b.worker_id];
+              return `<div class="tmpl-part">${wb?escapeHtml(wb.name):""}${achTagHtml(wb, b)}<br><span class="muted" style="font-size:.85em;">${tmplHoursTxt2(group, d, secData.sector, q, b, assignmentsByDate)}</span></div>`; }).join("") : "";
           const w = a ? (workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id]) : null;
           const hoursTxt = a ? tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate) : `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
           const restBad = a && restViolations.has(restKey(a));
@@ -2685,16 +2712,16 @@ function renderTemplateGrid(group, dates, ui, mode){
           const restNote = (restBad? `<span class="tmpl-restwarn-note">⚠ &lt;8 שעות מנוחה</span>` : "") + longNote(restViolations, a);
           const shadowHtml = tmplShadowHtml(tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, a?[a.worker_id]:[], pos===1), q, id=>{ const x = workers.find(y=>y.id===id) || allWorkersById[id]; return x?x.name:"?"; });
           const coordCls = bucket.key==="coordinated" ? " tmpl-coord" : "";
-          const early = isEarlyEnd(q, a);
+          const early = isEarlyEnd(q, a) || !!(a && a._more.some(b=>isEarlyEnd(q, b)));
           const nm = w ? escapeHtml(w.name) : "";
           const hrsSpan = `<span class="muted" style="font-size:.85em;">${hoursTxt}</span>`;
           const earlyCls = early ? " tmpl-early" : "";
           if(mode==="manual"){
             const cls = "tmpl-cell" + coordCls + earlyCls + (w? (restBad?" tmpl-restwarn":(restTight?" tmpl-resttight":"")) + longCls(restViolations, a) : " tmpl-missing");
-            const label = (w? `${nm}${achTagHtml(w, a)}<br>${hrsSpan}${restNote}` : "חוסר") + shadowHtml;
-            return `<td class="${cls}" data-action="tmpl-cell" data-sector="${escapeHtml(secData.sector)}" data-date="${d}" data-type="${q.shift_type}" data-pos="${pos}">${label}</td>`;
+            const label = (w? `${nm}${achTagHtml(w, a)}<br>${hrsSpan}${restNote}${moreHtml}` : "חוסר") + shadowHtml;
+            return `<td class="${cls}" data-action="tmpl-cell" data-sector="${escapeHtml(secData.sector)}" data-date="${d}" data-type="${q.shift_type}" data-pos="${origPos}">${label}</td>`;
           }
-          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${coordCls}${earlyCls}">${nm}${achTagHtml(w, a)}<br>${hrsSpan}${restNote}${shadowHtml}</td>`;
+          if(w) return `<td class="${restBad?'tmpl-restwarn':(restTight?'tmpl-resttight':'')}${longCls(restViolations, a)}${coordCls}${earlyCls}">${nm}${achTagHtml(w, a)}<br>${hrsSpan}${restNote}${moreHtml}${shadowHtml}</td>`;
           return `<td class="tmpl-missing${coordCls}">חוסר${shadowHtml}</td>`;
         }).join("");
         return `<tr><td class="tmpl-pos">סייר ${pos}${bucketHrs}</td>${cells}</tr>`;
@@ -2744,15 +2771,17 @@ function renderCompactPrintGrid(group, dates, ui){
       return Array.from({length:n}, (_,i)=>i+1).map(pos=>{
         const cells = dates.map(d=>{
           const q = bucket.perDate[d];
-          const a = q ? tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type)[pos-1] : null;
+          const a = q ? tmplDisplayList(tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type))[pos-1] : null;
           if(!q || (pos>q.required_count && !a)) return `<td class="cpt-na"></td>`;
+          const moreC = a && a._more.length ? a._more.map(b=>{ const wb = workers.find(x=>x.id===b.worker_id) || allWorkersById[b.worker_id];
+              return ` / ${escapeHtml(nameOf(b.worker_id))}${isGuardAchmash(wb)?` <span class="cpt-ach">אחמ"ש</span>`:""} <span class="cpt-hrs" dir="ltr">(${tmplHoursTxt2(group, d, secData.sector, q, b, assignmentsByDate)})</span>`; }).join("") : "";
           const shadows = tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, a?[a.worker_id]:[], pos===1)
             .map(sh=> sh.split ? ` / ${escapeHtml(nameOf(sh.worker_id))} <span class="cpt-hrs" dir="ltr">(${tmplHoursTxt(q, sh)})</span>` : ` + ${escapeHtml(nameOf(sh.worker_id))} (ח)`).join("");
-          const cc = (bucket.key==="coordinated" ? " cpt-coord" : "") + (a && isEarlyEnd(q, a) ? " cpt-early" : "");
+          const cc = (bucket.key==="coordinated" ? " cpt-coord" : "") + (a && (isEarlyEnd(q, a) || a._more.some(b=>isEarlyEnd(q, b))) ? " cpt-early" : "");
           if(!a) return `<td class="cpt-missing${cc}">חוסר${shadows}</td>`;
           const w = workers.find(x=>x.id===a.worker_id) || allWorkersById[a.worker_id];
           const hrs = tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate);
-          return `<td${cc?` class="${cc.trim()}"`:""}>${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="cpt-ach">${coordEveAch(a)?'אחמ"ש ערב':'אחמ"ש'}</span>`:""}${hrs!==std?` <span class="cpt-hrs" dir="ltr">(${hrs})</span>`:""}${shadows}</td>`;
+          return `<td${cc?` class="${cc.trim()}"`:""}>${escapeHtml(nameOf(a.worker_id))}${isGuardAchmash(w)?` <span class="cpt-ach">${coordEveAch(a)?'אחמ"ש ערב':'אחמ"ש'}</span>`:""}${(hrs!==std || moreC)?` <span class="cpt-hrs" dir="ltr">(${hrs})</span>`:""}${moreC}${shadows}</td>`;
         }).join("");
         const lead = pos===1 ? `<td class="cpt-shift${bucket.key==="coordinated"?" cpt-coord":""}" rowspan="${n}">${label}</td><td class="cpt-hcol${bucket.key==="coordinated"?" cpt-coord":""}" rowspan="${n}">${tmplBucketHoursHtml(bucket) || `<span dir="ltr">${std||""}</span>`}</td>` : "";
         return `<tr class="${pos===1?"cpt-first":""}">${lead}${cells}</tr>`;
@@ -4381,6 +4410,10 @@ async function runAutoAssign(){
     const st = await stretchFill(team);
     if(st){ ui.buildMsg = (ui.buildMsg||"") + ` 🔗 ${st===1?"עובד אחד שובץ":st+" עובדים שובצו"} במשמרת מחוברת (עד ${LONG_CHAIN_HOURS} שעות) כדי לכסות חוסר בשתי משמרות סמוכות.`; }
   }catch(e){ console.error(e); }
+  try{ // סבב איזון שני - אחרי ההארכות (2026-10-28)
+    const bal2 = await balancePass(team);
+    if(bal2){ ui.buildMsg = (ui.buildMsg||"") + ` ⚖️ איזון אחרי ההארכות: ${bal2} שינויים.`; }
+  }catch(e){ console.error(e); }
   try{
     const mm = await morningMinPass(team);
     if(mm){ ui.buildMsg = (ui.buildMsg||"") + ` 🌅 ${mm===1?"עובד אחד הועבר":mm+" עובדים הועברו"} למשמרת הבוקר כדי שבתחילת הבוקר יהיו לפחות 2 מאבטחים.`; }
@@ -4522,7 +4555,8 @@ async function balancePass(team){
       if(c[r.worker_id]==null) continue;
       const hi = fc(r.worker_id);
       const sl = slotOf(r);
-      const cands = workers.filter(w=>w.id!==r.worker_id && hi - fc(w.id) >= 2 && (c[w.id]||0) + 1 <= MAX_WEEK_SHIFTS && (w.target_shifts==null || (c[w.id]||0) + 1 <= w.target_shifts))
+      const H = wById(r.worker_id), overH = (c[r.worker_id]||0) > weekTarget(H);
+      const cands = workers.filter(w=>w.id!==r.worker_id && (hi - fc(w.id) >= 2 || (overH && (c[w.id]||0) < weekTarget(w))) && (c[w.id]||0) + 1 <= MAX_WEEK_SHIFTS && (w.target_shifts==null || (c[w.id]||0) + 1 <= w.target_shifts))
         .sort((x,y)=>(fc(x.id)-fc(y.id)) || ((notSubmittedOpen(x, sl.date)?1:0) - (notSubmittedOpen(y, sl.date)?1:0)));
       const w = cands.find(w=>achOk(r, w) && canTake(w, sl, r, abd));
       if(w){ r.worker_id = w.id; r.team_id = w.team_id; changes++; done = true; break; }
@@ -4677,7 +4711,7 @@ async function stretchFill(team){
               && availableForSlot(A, [w], ui.entriesByWorker, abd, null, false, true).length
               && availableForSlot(B, [w], ui.entriesByWorker, abd, null, false, true).length
               && !wouldViolateRest(w.id, combined, ivAll) && !streakIssues(streakIdx, w.id, B.date, B.shiftType).length && capOk(w, 2))
-            .sort((x,y)=>(weekLoad(ui, x.id, B.date) - weekLoad(ui, y.id, B.date)) || x.name.localeCompare(y.name, "he"));
+            .sort((x,y)=>((weekLoad(ui, x.id, B.date) - weekTarget(x)) - (weekLoad(ui, y.id, B.date) - weekTarget(y))) || x.name.localeCompare(y.name, "he"));
           if(cands.length){ await save(cands[0], hm(start), hm(ivB.start), hm(ivB.start), String(B.end||hm(ivB.end)).slice(0,5), true, true); continue; }
         }
       }
@@ -4690,7 +4724,8 @@ async function stretchFill(team){
             .map(a=>(ui.workers||[]).find(x=>x.id===a.worker_id)).filter(w=>w && !w.auto_assign_exempt
               && !all.some(a=>a.worker_id===w.id && a.entry_date===B.date && a.shift_type!==B.shiftType)
               && availableForSlot(A, [w], ui.entriesByWorker, abd, null, false, true).length && capOk(w, 1)
-              && !wouldViolateRest(w.id, combined, buildWorkerIntervals(all.filter(a=>!(a.worker_id===w.id && a.entry_date===B.date && a.shift_type===B.shiftType)))));
+              && !wouldViolateRest(w.id, combined, buildWorkerIntervals(all.filter(a=>!(a.worker_id===w.id && a.entry_date===B.date && a.shift_type===B.shiftType)))))
+            .sort((x,y)=>((weekLoad(ui, x.id, B.date) - weekTarget(x)) - (weekLoad(ui, y.id, B.date) - weekTarget(y))));
           if(ext.length){ await save(ext[0], hm(start), hm(ivB.start), hm(ivB.start), String(B.end||hm(ivB.end)).slice(0,5), true, false); continue; }
         }
       }
@@ -4703,7 +4738,7 @@ async function stretchFill(team){
             && !all.some(a=>a.worker_id===w.id && a.entry_date===B.date && a.shift_type!==A.shiftType)
             && availableForSlot(B, [w], ui.entriesByWorker, abd, null, false, true).length && capOk(w, 1)
             && !streakIssues(streakIdx, w.id, B.date, B.shiftType).length)
-          .sort((x,y)=>(weekLoad(ui, x.id, B.date) - weekLoad(ui, y.id, B.date)) || x.name.localeCompare(y.name, "he"));
+          .sort((x,y)=>((weekLoad(ui, x.id, B.date) - weekTarget(x)) - (weekLoad(ui, y.id, B.date) - weekTarget(y))) || x.name.localeCompare(y.name, "he"));
         let didIt = false;
         for(const w of fw){
           const others = buildWorkerIntervals(all.filter(a=>!(a.worker_id===w.id && a.entry_date===A.date && a.shift_type===A.shiftType)));
@@ -5039,13 +5074,14 @@ function exportAssignments(){
         for(let pos=1; pos<=nRows; pos++){
           const cells = dates.map(d=>{
             const q = bucket.perDate[d];
-            const list = q ? tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type) : [];
+            const list = q ? tmplDisplayList(tmplAssignedList(assignmentsByDate, d, secData.sector, q.shift_type)) : [];
             if(!q || (pos>q.required_count && !list[pos-1])) return "";
             const a = list[pos-1];
             const w = a ? ui.workers.find(x=>x.id===a.worker_id) : null;
+            const moreT = a && a._more.length ? a._more.map(b=>{ const wb = ui.workers.find(x=>x.id===b.worker_id); return ` / ${wb?wb.name:""} ${tmplHoursTxt2(group, d, secData.sector, q, b, assignmentsByDate)}`; }).join("") : "";
             const hoursTxt = a ? tmplHoursTxt2(group, d, secData.sector, q, a, assignmentsByDate) : `${tmplHourNum(q.start_time)}-${tmplHourNum(q.end_time)}`;
             const shTxt = tmplShadowText(tmplCellShadows(assignmentsByDate, d, secData.sector, q.shift_type, a?[a.worker_id]:[], pos===1), q, id=>{ const x=ui.workers.find(y=>y.id===id)||(ui.allWorkersById||{})[id]; return x?x.name:"?"; });
-            return (w? `${w.name} ${hoursTxt}` : "חוסר") + shTxt;
+            return (w? `${w.name} ${hoursTxt}${moreT}` : "חוסר") + shTxt;
           });
           lines.push([`סייר ${pos}`, ...cells].join("\t"));
         }
