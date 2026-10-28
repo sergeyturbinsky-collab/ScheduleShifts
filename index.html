@@ -298,7 +298,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=196"></script>
+<script src="portal.js?v=197"></script>
 <script>
 (function(){
 "use strict";
@@ -4539,58 +4539,84 @@ async function stretchFill(team){
   const secs = (group.citySectors||[]).filter(x=>x!=="מוקד"); if(!secs.length) return 0;
   const slots = buildSlots(dates, group, S.quotas).filter(x=>secs.includes(x.sector) && x.shiftType!=="coordinated" && !x.roleCounts);
   const p2 = n=>String(n).padStart(2,"0"), hm = d=>p2(d.getHours()) + ":" + p2(d.getMinutes());
+  const H12 = LONG_CHAIN_HOURS*3600000;
   let added = 0;
   for(const B of slots){
     for(let guard=0; guard<4; guard++){
       const rows = ui.assignments || [];
-      const cnt = sl=>rows.filter(a=>a.sector===sl.sector && a.entry_date===sl.date && a.shift_type===sl.shiftType && !a.shadow_of).length;
-      const bShort = cnt(B) < (B.required||0);
+      // חוסר לפי שעות (מיצוי שעות): המשמרת "בחוסר" אם בחלק כלשהו מהשעות שלה (בחלונות של חצי שעה) יש פחות עובדים מהתקן
+      const shortIn = (sl, from, to)=>{ // יש חלון של חצי שעה בטווח [from,to) עם פחות עובדים מהתקן
+        const ivs = rows.filter(a=>a.sector===sl.sector && a.entry_date===sl.date && a.shift_type===sl.shiftType && !a.shadow_of).map(a=>shiftInterval(a)).filter(Boolean);
+        for(let t=+from; t<+to; t+=1800000){ if(ivs.filter(x=>+x.start<=t && +x.end>t).length < (sl.required||0)) return true; }
+        return false;
+      };
+      const shortBy = sl=>{ const iv = shiftInterval({sector:sl.sector, shift_type:sl.shiftType, entry_date:sl.date}); return !!iv && shortIn(sl, iv.start, iv.end); };
+      const bShort = shortBy(B);
       const ivB = shiftInterval({sector:B.sector, shift_type:B.shiftType, entry_date:B.date}); if(!ivB) break;
-      const As = slots.filter(A=>A!==B && A.sector===B.sector && A.date===B.date && cnt(A) < (A.required||0)).map(A=>({A, iv:shiftInterval({sector:A.sector, shift_type:A.shiftType, entry_date:A.date})}))
+      // המשמרת שלפני B באותו יום (נגמרת כש-B מתחילה או חופפת לה) - המאוחרת ביותר
+      const prevs = slots.filter(A=>A!==B && A.sector===B.sector && A.date===B.date).map(A=>({A, iv:shiftInterval({sector:A.sector, shift_type:A.shiftType, entry_date:A.date})}))
         .filter(x=>x.iv && +x.iv.start < +ivB.start && +x.iv.end >= +ivB.start).sort((x,y)=>y.iv.start - x.iv.start);
-      if(!As.length) break;
-      const {A, iv:ivA} = As[0];
-      const start = new Date(Math.max(+ivA.start, +ivB.end - LONG_CHAIN_HOURS*3600000));
-      if(+start >= +ivB.start) break;
-      const combined = {start, end: ivB.end};
+      if(!prevs.length) break;
+      const {A, iv:ivA} = prevs[0];
+      const aShort = shortBy(A);
+      if(!aShort && !bShort) break;
       const all = ui.allAssignments || rows;
       const ivAll = buildWorkerIntervals(all);
       const streakIdx = buildStreakIndex((ui.streakAssignments || all).concat((ui.streakTasks||[]).map(t=>({worker_id:t.worker_id, entry_date:t.date, shift_type:"task"}))));
       const taskD = taskDaySet(ui);
       const abd = {}; rows.forEach(a=>{ (abd[a.entry_date]=abd[a.entry_date]||[]).push(a); });
-      const cands = (ui.workers||[]).filter(w=>!w.auto_assign_exempt && !isMokedTeam(S.teams.find(t=>t.id===w.team_id)||{})
-          && !all.some(a=>a.worker_id===w.id && a.entry_date===B.date)
-          && !taskD.has(w.id + "|" + B.date)
-          && availableForSlot(A, [w], ui.entriesByWorker, abd, null, false, true).length
-          && availableForSlot(B, [w], ui.entriesByWorker, abd, null, false, true).length
-          && !wouldViolateRest(w.id, combined, ivAll)
-          && !streakIssues(streakIdx, w.id, B.date, B.shiftType).length
-          && weekLoad(ui, w.id, B.date) + 2 <= MAX_WEEK_SHIFTS && (w.target_shifts==null || weekLoad(ui, w.id, B.date) + 2 <= w.target_shifts))
-        .sort((x,y)=>(weekLoad(ui, x.id, B.date) - weekLoad(ui, y.id, B.date)) || x.name.localeCompare(y.name, "he"));
       const regular = sl=>rows.filter(a=>a.sector===sl.sector && a.entry_date===sl.date && a.shift_type===sl.shiftType && !a.shadow_of).map(a=>a.worker_id);
-      // אם אין עובד פנוי: עובד ששובץ עכשיו (בהרצה הזו) ל-B בשעות הרגילות - מאריכים לו את המשמרת אחורה לתוך A (עד 12 שעות)
-      const ext = rows.filter(a=>a.sector===B.sector && a.entry_date===B.date && a.shift_type===B.shiftType && !a.shadow_of && !a.custom_start && !a.custom_end
-            && !(ui.autoPreKeys && ui.autoPreKeys.has(a.sector+"|"+a.entry_date+"|"+a.shift_type+"|"+a.worker_id)))
-        .map(a=>(ui.workers||[]).find(x=>x.id===a.worker_id)).filter(w=>w && !w.auto_assign_exempt
-          && !all.some(a=>a.worker_id===w.id && a.entry_date===B.date && a.shift_type!==B.shiftType)
-          && availableForSlot(A, [w], ui.entriesByWorker, abd, null, false, true).length
-          && weekLoad(ui, w.id, B.date) + 1 <= MAX_WEEK_SHIFTS && (w.target_shifts==null || weekLoad(ui, w.id, B.date) + 1 <= w.target_shifts)
-          && !wouldViolateRest(w.id, combined, buildWorkerIntervals(all.filter(a=>!(a.worker_id===w.id && a.entry_date===B.date && a.shift_type===B.shiftType)))));
-      if(bShort && cands.length){ // עובד פנוי שזמין לשתיהן - סוגר חוסר בשתי המשמרות
-        const w = cands[0];
-        await setAssignmentListPreservingHours(A.sector, A.date, A.shiftType, regular(A).concat([w.id]), "auto", w.id, hm(start), hm(ivB.start));
-        await setAssignmentListPreservingHours(B.sector, B.date, B.shiftType, regular(B).concat([w.id]), "auto", w.id, hm(ivB.start), hm(ivB.end));
-        added++;
-        ui.loaded = false; await loadAggregateData(team);
-        continue;
+      const isNew = a=>!(ui.autoPreKeys && ui.autoPreKeys.has(a.sector+"|"+a.entry_date+"|"+a.shift_type+"|"+a.worker_id));
+      const capOk = (w, add)=>weekLoad(ui, w.id, B.date) + add <= MAX_WEEK_SHIFTS && (w.target_shifts==null || weekLoad(ui, w.id, B.date) + add <= w.target_shifts);
+      const save = async (w, aStart, aEnd, bStart, bEnd, addA, addB)=>{
+        if(addA) await setAssignmentListPreservingHours(A.sector, A.date, A.shiftType, regular(A).concat([w.id]), "auto", w.id, aStart, aEnd);
+        else await asgAtomic(()=>asgCall("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:A.sector, p_entry_date:A.date, p_shift_type:A.shiftType, p_worker_id:w.id, p_custom_start:aStart, p_custom_end:aEnd}));
+        if(addB) await setAssignmentListPreservingHours(B.sector, B.date, B.shiftType, regular(B).concat([w.id]), "auto", w.id, bStart, bEnd);
+        else await asgAtomic(()=>asgCall("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:B.sector, p_entry_date:B.date, p_shift_type:B.shiftType, p_worker_id:w.id, p_custom_start:bStart, p_custom_end:bEnd}));
+        added++; ui.loaded = false; await loadAggregateData(team);
+      };
+      // 1) עובד פנוי שזמין לשתיהן, כששתיהן בחוסר: כל B + סוף A (עד 12 שעות)
+      if(aShort && bShort){
+        const start = new Date(Math.max(+ivA.start, +ivB.end - H12));
+        if(+start < +ivB.start && shortIn(A, start, ivB.start)){
+          const combined = {start, end: ivB.end};
+          const cands = (ui.workers||[]).filter(w=>!w.auto_assign_exempt && !isMokedTeam(S.teams.find(t=>t.id===w.team_id)||{})
+              && !all.some(a=>a.worker_id===w.id && a.entry_date===B.date) && !taskD.has(w.id + "|" + B.date)
+              && availableForSlot(A, [w], ui.entriesByWorker, abd, null, false, true).length
+              && availableForSlot(B, [w], ui.entriesByWorker, abd, null, false, true).length
+              && !wouldViolateRest(w.id, combined, ivAll) && !streakIssues(streakIdx, w.id, B.date, B.shiftType).length && capOk(w, 2))
+            .sort((x,y)=>(weekLoad(ui, x.id, B.date) - weekLoad(ui, y.id, B.date)) || x.name.localeCompare(y.name, "he"));
+          if(cands.length){ await save(cands[0], hm(start), hm(ivB.start), hm(ivB.start), hm(ivB.end), true, true); continue; }
+        }
       }
-      if(ext.length){
-        const w = ext[0];
-        await setAssignmentListPreservingHours(A.sector, A.date, A.shiftType, regular(A).concat([w.id]), "auto", w.id, hm(start), hm(ivB.start));
-        await asgAtomic(()=>asgCall("rpc_assignment_set_hours", {p_pin:S.pin, p_sector:B.sector, p_entry_date:B.date, p_shift_type:B.shiftType, p_worker_id:w.id, p_custom_start:hm(ivB.start), p_custom_end:hm(ivB.end)}));
-        added++;
-        ui.loaded = false; await loadAggregateData(team);
-        continue;
+      // 2) A בחוסר: עובד ששובץ עכשיו ל-B בשעות הרגילות - מאריכים אחורה לתוך A (עד 12 שעות)
+      if(aShort){
+        const start = new Date(Math.max(+ivA.start, +ivB.end - H12));
+        if(+start < +ivB.start && shortIn(A, start, ivB.start)){
+          const combined = {start, end: ivB.end};
+          const ext = rows.filter(a=>a.sector===B.sector && a.entry_date===B.date && a.shift_type===B.shiftType && !a.shadow_of && !a.custom_start && !a.custom_end && isNew(a))
+            .map(a=>(ui.workers||[]).find(x=>x.id===a.worker_id)).filter(w=>w && !w.auto_assign_exempt
+              && !all.some(a=>a.worker_id===w.id && a.entry_date===B.date && a.shift_type!==B.shiftType)
+              && availableForSlot(A, [w], ui.entriesByWorker, abd, null, false, true).length && capOk(w, 1)
+              && !wouldViolateRest(w.id, combined, buildWorkerIntervals(all.filter(a=>!(a.worker_id===w.id && a.entry_date===B.date && a.shift_type===B.shiftType)))));
+          if(ext.length){ await save(ext[0], hm(start), hm(ivB.start), hm(ivB.start), hm(ivB.end), true, false); continue; }
+        }
+      }
+      // 3) B בחוסר (2026-10-28, סרגיי: "בנימין רשם ביום חמישי בוקר וערב, אז למה לא משכת אותו גם לחצי של הערב? תעשה מיצוי מקסימלי
+      //    של שעות"): עובד ששובץ עכשיו ל-A בשעות הרגילות וזמין גם ל-B - ממשיך קדימה לתוך B, עד 12 שעות מתחילת A
+      if(bShort){
+        const end = new Date(Math.min(+ivB.end, +ivA.start + H12));
+        if(+end > +ivB.start && shortIn(B, ivB.start, end)){
+          const combined = {start: ivA.start, end};
+          const fw = rows.filter(a=>a.sector===A.sector && a.entry_date===A.date && a.shift_type===A.shiftType && !a.shadow_of && !a.custom_start && !a.custom_end && isNew(a))
+            .map(a=>(ui.workers||[]).find(x=>x.id===a.worker_id)).filter(w=>w && !w.auto_assign_exempt
+              && !all.some(a=>a.worker_id===w.id && a.entry_date===B.date && a.shift_type!==A.shiftType)
+              && availableForSlot(B, [w], ui.entriesByWorker, abd, null, false, true).length && capOk(w, 1)
+              && !streakIssues(streakIdx, w.id, B.date, B.shiftType).length
+              && !wouldViolateRest(w.id, combined, buildWorkerIntervals(all.filter(a=>!(a.worker_id===w.id && a.entry_date===A.date && a.shift_type===A.shiftType)))))
+            .sort((x,y)=>(weekLoad(ui, x.id, B.date) - weekLoad(ui, y.id, B.date)) || x.name.localeCompare(y.name, "he"));
+          if(fw.length){ await save(fw[0], hm(ivA.start), hm(ivB.start), hm(ivB.start), hm(end), false, true); continue; }
+        }
       }
       break;
     }
