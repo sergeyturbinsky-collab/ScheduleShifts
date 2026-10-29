@@ -302,7 +302,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=223"></script>
+<script src="portal.js?v=224"></script>
 <script>
 (function(){
 "use strict";
@@ -1020,6 +1020,8 @@ function renderSubmitPeriod(){
   const prevP = shiftPeriod(ui.periodStart, team, -1);
   if(S.pubAt[team.id+"|"+prevP]===undefined){ loadPubAt(team, prevP).then(render); return `<div class="card"><p>טוען...</p></div>`; }
   if(!ui.entries){
+    // (2026-10-29, עדכון אבטחה) הכניסה האישית פגה - קריאת ההגשה דורשת זיהוי: כניסה מחדש עם הקוד האישי
+    if(ui.subError==="AUTH") return `<div class="card"><p>הכניסה האישית שלך פגה. כדי לראות ולערוך את האילוצים צריך להיכנס שוב עם הקוד האישי.</p><button class="btn" data-action="reset-identity">כניסה מחדש</button></div>`;
     if(ui.subError) return `<div class="card"><p>לא הצלחנו לטעון את האילוצים שכבר הגשת (${escapeHtml(ui.subError)}). כדי לא לדרוס אותם — הטופס לא מוצג עד שהטעינה תצליח.</p><button class="btn" data-action="sub-retry">נסו שוב</button></div>`;
     loadMySubmission(team); return `<div class="card"><p>טוען...</p></div>`;
   }
@@ -1186,7 +1188,7 @@ async function loadMySubmission(team){
     ui.hasException = exc && exc.length>0; ui.note = note; ui.entries = entries;
   }catch(e){
     if(stale()) return;
-    ui.subError = /failed to fetch|networkerror|load failed/i.test(e.message||"") ? "אין חיבור לשרת." : (e.message||"שגיאה");
+    ui.subError = /failed to fetch|networkerror|load failed/i.test(e.message||"") ? "אין חיבור לשרת." : /נדרשת התחברות/.test(e.message||"") ? "AUTH" : (e.message||"שגיאה");
   }finally{ if(ui.subLoading === ps) ui.subLoading = null; }
   render();
 }
