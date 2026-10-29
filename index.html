@@ -302,7 +302,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=222"></script>
+<script src="portal.js?v=223"></script>
 <script>
 (function(){
 "use strict";
@@ -348,7 +348,40 @@ function netState(ok){
 }
 window.addEventListener("offline", ()=>netState(false));
 window.addEventListener("online", ()=>{ netState(true); try{ render(); }catch(e){} });
+/* (2026-10-29, עדכון אבטחה מהמוקד: "שאף מידע רגיש לא ייצא מהשרת בלי זיהוי") - הטבלאות האלה נקראות דרך app_get עם זיהוי
+   (סשן מנהל / עובד / קוד עריכה / קוד צוות), ולא בקריאה ציבורית. השרת בודק את הזיהוי ומחזיר רק מה שמותר */
+const SECURE_TABLES = new Set(["shift_assignments","constraint_entries","constraint_submissions","constraint_exceptions","shift_quotas","schedule_publications","constraint_teams","logistics_items"]);
+function readAuths(){
+  const out = [];
+  try{
+    const u = S.ui || {};
+    if(typeof S.pin==="string" && S.pin) out.push(S.pin);
+    if(u.viewerToken) out.push("wtok:" + u.viewerToken);
+    const m = loadJSON("cst_manager_session"); if(m && m.token) out.push("mgr:" + m.token);
+    const w = loadJSON("cst_worker_session"); if(w && w.token) out.push("wtok:" + w.token);
+    if(S.identity && S.identity.token) out.push("wtok:" + S.identity.token);
+    const tc = loadJSON("cst_team_codes") || {}; Object.keys(tc).forEach(id=>{ if(tc[id]) out.push("team:" + id + ":" + tc[id]); });
+  }catch(e){}
+  return Array.from(new Set(out));
+}
+/* הזיהוי לא תקף: קוד עריכה ישן נמחק (שלא ייספר שוב ושוב כניסיון שגוי), וגישת קוד צוות בלי קוד שמור - נדרש להזין שוב */
+function readAuthLost(){
+  try{
+    const prefixed = readAuths().some(a=>/^(mgr|wrk|wtok):/.test(a));
+    if(typeof S.pin==="string" && S.pin && !/^(mgr|wrk):/.test(S.pin) && !prefixed){ S.pin = null; localStorage.removeItem("cst_pin"); }
+    const u = S.ui || {}, tc = loadJSON("cst_team_codes") || {};
+    if(u.teamId && S.teamAccess && S.teamAccess[u.teamId] && !prefixed && !tc[u.teamId]){
+      delete S.teamAccess[u.teamId]; saveJSON("cst_team_access", S.teamAccess);
+      u.teamCodeError = "עדכון אבטחה: יש להזין שוב את קוד הקב\"ט (פעם אחת במכשיר הזה).";
+    }
+  }catch(e){}
+}
 async function apiGet(table, query){
+  if(SECURE_TABLES.has(table)){
+    const params = Array.from(new URLSearchParams(query || "").entries());
+    try{ return (await apiRpc("app_get", {p_auths: readAuths(), p_table: table, p_params: params})) || []; }
+    catch(e){ if(/נדרשת התחברות/.test(e.message || "")) readAuthLost(); throw e; }
+  }
   const url = `${SUPABASE_URL}/rest/v1/${table}?${query}`;
   const res = await netFetch(url, {headers:{apikey:SUPABASE_ANON_KEY, Authorization:`Bearer ${SUPABASE_ANON_KEY}`}}, 1);
   if(!res.ok) throw new Error(await res.text());
@@ -1763,7 +1796,7 @@ async function loadAggregateData(team){
       ui.schedTasks = group.citySectors.length ? await apiRpc("sched_tasks_list_v2", {p_sectors: group.citySectors, p_from: tdates[0], p_to: tdates[tdates.length-1], p_auth: schedTasksAuth()}) : [];
       // (2026-10-25, סרגיי) עובד שפותח את "הסידור המלא" רואה רק את המשימות (שאינן משמרת) שלו עצמו
       if(ui.workerView) ui.schedTasks = (ui.schedTasks||[]).filter(t=>ui.viewerWorkerId && t.worker_id===ui.viewerWorkerId);
-      try{ ui.schedTaskRows = group.citySectors.length ? await apiRpc("sched_task_rows_list", {p_sectors: group.citySectors, p_from: tdates[0], p_to: tdates[tdates.length-1]}) : []; }catch(e){ ui.schedTaskRows = []; }
+      try{ ui.schedTaskRows = group.citySectors.length ? await apiRpc("sched_task_rows_list_v2", {p_sectors: group.citySectors, p_from: tdates[0], p_to: tdates[tdates.length-1], p_auths: readAuths()}) : []; }catch(e){ ui.schedTaskRows = []; }
     }catch(e){ ui.schedTasks = []; }
     // חופשה / מילואים / מחלה של עובדי הגזרה בתקופה (2026-10-25) - רק עם הרשאת עריכה
     try{
@@ -2989,7 +3022,7 @@ async function staskReload(){
   const team = teamById(ui.teamId), group = sectorGroupForTeam(team), dts = periodDates(ui.periodStart, team);
   const args = {p_sectors: group.citySectors, p_from: dts[0], p_to: dts[dts.length-1]};
   ui.schedTasks = await apiRpc("sched_tasks_list_v2", Object.assign({p_auth: schedTasksAuth()}, args));
-  try{ ui.schedTaskRows = await apiRpc("sched_task_rows_list", args); }catch(e){}
+  try{ ui.schedTaskRows = await apiRpc("sched_task_rows_list_v2", Object.assign({p_auths: readAuths()}, args)); }catch(e){}
   ui.streakTasks = (ui.streakTasks||[]).filter(t=>t.date < dts[0] || t.date > dts[dts.length-1]).concat(ui.schedTasks||[]);
   rebuildStreakIdx(ui);
 }
@@ -3877,7 +3910,7 @@ function renderOriginalPrint(team){
   const ui = S.ui, group = sectorGroupForTeam(team), dates = periodDates(ui.periodStart, team);
   if(ui.origAssignments===undefined){
     ui.origAssignments = null;
-    apiRpc("schedule_original", {p_sectors: group.citySectors, p_from: dates[0], p_to: dates[dates.length-1]})
+    apiRpc("schedule_original_v2", {p_sectors: group.citySectors, p_from: dates[0], p_to: dates[dates.length-1], p_auths: readAuths()})
       .then(r=>{ ui.origAssignments = r || []; render(); }).catch(()=>{ ui.origAssignments = []; render(); });
   }
   if(ui.origAssignments===null) return `<p class="muted">טוען...</p>`;
@@ -3892,7 +3925,7 @@ function renderSwapHistoryBox(group, dates, teamId){
   const key = group.citySectors.join(",") + "|" + dates[0];
   if(ui.swapHistKey !== key && !ui.workerView){
     ui.swapHistKey = key; ui.swapHist = null;
-    apiRpc("swap_history", {p_sectors: group.citySectors, p_from: dates[0], p_to: dates[dates.length-1]})
+    apiRpc("swap_history_v2", {p_sectors: group.citySectors, p_from: dates[0], p_to: dates[dates.length-1], p_auths: readAuths()})
       .then(r=>{ ui.swapHist = r || []; render(); }).catch(()=>{ ui.swapHist = []; });
   }
   // בקשות פתוחות - רק למנהל מחובר (לפי הסשן שלו), מתרענן כל 30 שניות
@@ -5995,6 +6028,7 @@ function onAppClick(e){
         if(!ok){ ui.teamCodeError = "קוד שגוי"; return render(); }
         S.teamAccess[ui.teamId] = true;
         saveJSON("cst_team_access", S.teamAccess);
+        { const tc = loadJSON("cst_team_codes") || {}; tc[ui.teamId] = code; saveJSON("cst_team_codes", tc); } // לזיהוי בקריאות (app_get)
         ui.teamCodeError = null; ui.teamCodeValue = null;
         render();
       }catch(err){ ui.teamCodeError = "שגיאה: "+err.message; render(); }
@@ -6313,7 +6347,7 @@ document.addEventListener("input", function(e){
 });
 
 /* מה שהפורטל (portal.js) צריך מהקוד הראשי */
-const App = { netFetch, navCanBack, navReset, submitPeriodStart, SUPABASE_URL, SUPABASE_ANON_KEY, effQuota, logoStripHtml, S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
+const App = { readAuths, netFetch, navCanBack, navReset, submitPeriodStart, SUPABASE_URL, SUPABASE_ANON_KEY, effQuota, logoStripHtml, S, render, apiGet, apiRpc, escapeHtml, fmtDateHeb, fmtDate, addDays, parseDate, dayTypeForDate, SHIFT_LABELS, teamById, loadJSON, saveJSON, pickerTiles, sectorGroupForTeam, isMokedTeam, currentPeriodStart };
 
 init();
 })();

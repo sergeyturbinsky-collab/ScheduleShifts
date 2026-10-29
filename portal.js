@@ -4724,7 +4724,7 @@ function renderPView(App){
     const H = PV.swapHist || (PV.swapHist = {list:null});
     if(H.list===null){ H.list = "loading";
       const secs = a.id ? App.sectorGroupForTeam(App.teamById(a.id)).citySectors : [].concat(...mgrScopeGroups(App, ms).map(g=>App.sectorGroupForTeam(App.teamById(g.id)).citySectors));
-      App.apiRpc("swap_history", {p_sectors: secs, p_from: App.fmtDate(App.addDays(new Date(), -60)), p_to: App.fmtDate(App.addDays(new Date(), 90))})
+      App.apiRpc("swap_history_v2", {p_auths: App.readAuths(), p_sectors: secs, p_from: App.fmtDate(App.addDays(new Date(), -60)), p_to: App.fmtDate(App.addDays(new Date(), 90))})
         .then(r=>{ H.list = (r||[]).slice().sort((x,y)=>String(y.entry_date).localeCompare(String(x.entry_date))); App.render(); }).catch(()=>{ H.list = []; App.render(); }); }
     if(H.list==="loading") return loading();
     swoLoad(App, ms);
@@ -4758,7 +4758,7 @@ function renderPView(App){
           <button class="btn secondary" data-action="portal-swapm-hclose">ביטול</button></div></div>` : ""}`).join("")}</div><hr style="border:none;border-top:1px solid #e3e9f0;margin:14px 0;">` : "";
     if(S2.hist===undefined){ S2.hist = null; const today = App.fmtDate(new Date());
       const secs = S2.teamId ? App.sectorGroupForTeam(App.teamById(S2.teamId)).citySectors : [].concat(...mgrScopeGroups(App, ms).map(g=>App.sectorGroupForTeam(App.teamById(g.id)).citySectors));
-      App.apiRpc("swap_history", {p_sectors: secs, p_from: App.fmtDate(App.addDays(new Date(), -14)), p_to: App.fmtDate(App.addDays(new Date(), 90))}).then(r=>{ S2.hist = r||[]; App.render(); }).catch(()=>{ S2.hist = []; }); }
+      App.apiRpc("swap_history_v2", {p_auths: App.readAuths(), p_sectors: secs, p_from: App.fmtDate(App.addDays(new Date(), -14)), p_to: App.fmtDate(App.addDays(new Date(), 90))}).then(r=>{ S2.hist = r||[]; App.render(); }).catch(()=>{ S2.hist = []; }); }
     // (2026-10-22, סרגיי) ההיסטוריה לא מוצגת ישר - לחצן שמעביר לעמוד שלה
     const histHtml = (S2.hist && S2.hist.length) ? `<div style="margin-top:16px;"><button class="btn secondary" data-action="portal-pv" data-page="swap-hist"${S2.teamId?` data-id="${S2.teamId}"`:""}>📜 היסטוריית החלפות (${S2.hist.length})</button></div>` : "";
     if(!S2.teamId){
