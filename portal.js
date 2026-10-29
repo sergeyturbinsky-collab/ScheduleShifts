@@ -4084,11 +4084,13 @@ async function mtAction(App, a, el){
    "ניתוק כל העמדות" ו"החלפת קוד המוקד" (מנתק את כולן). השרת: rpc_admin_moked_security / _revoke / _set_code
    (בפרויקט moked-tracker: moked-app/server/run-2026-10-29-security.sql).
    ================================================================ */
-const MSEC = { data:null, loading:false, token:null, error:null, msg:null, ask:null, busy:false, missing:false, open:false };
+const MSEC = { data:null, loading:false, token:null, error:null, msg:null, ask:null, busy:false, missing:false, open:false, devs:null, devAsk:null };
 function msecLoad(App, ms, force){
   if(MSEC.token !== ms.token){ MSEC.token = ms.token; MSEC.data = null; MSEC.missing = false; }
   if(MSEC.loading || MSEC.missing || (MSEC.data && !force)) return;
   MSEC.loading = true;
+  // (29.10) מכשירי הקשר הרשומים - לכפתור "ביטול מכשיר" (אבד / נגנב)
+  App.apiRpc("rpc_admin_moked_devices", {p_token:ms.token}).then(d=>{ MSEC.devs = Array.isArray(d) ? d : []; App.render(); }).catch(()=>{ MSEC.devs = null; });
   App.apiRpc("rpc_admin_moked_security", {p_token:ms.token}).then(d=>{ MSEC.data = d || {}; MSEC.loading = false; App.render(); })
     .catch(e=>{ MSEC.loading = false; MSEC.data = {};
       if(/rpc_admin_moked_security|Could not find the function/i.test(e.message)) MSEC.missing = true; else MSEC.error = e.message;
@@ -4126,6 +4128,14 @@ function renderMokedSecurityCard(App, ms){
       <h4 style="margin:10px 0 4px;">כניסות אחרונות לקוד המוקד</h4>
       ${logins.length ? `<div style="overflow-x:auto;max-height:240px;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;font-size:.88em;">
         ${logins.map(x=>row([esc(fmtDT(App, x.at)), x.ok ? "✅ הצליחה" : "❌ קוד שגוי", esc(msecDevice(x.user_agent)), `<span dir="ltr">${esc(x.ip||"—")}</span>`], !x.ok)).join("")}</table></div>` : `<p class="muted">עוד אין כניסות.</p>`}
+      ${(()=>{ const devs = (MSEC.devs||[]).filter(x=>x.enrolled);
+        if(!MSEC.devs) return "";
+        return `<h4 style="margin:12px 0 4px;">📟 מכשירי קשר רשומים <span class="muted" style="font-weight:400;font-size:.85em;">— מכשיר שאבד או נגנב: "ביטול מכשיר" מנתק אותו מיד (יפסיק לשלוח ויחזור למסך הרישום; רישום מחדש רק עם קוד העריכה)</span></h4>
+        ${devs.length ? `<div style="overflow-x:auto;max-height:260px;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;font-size:.88em;">
+          ${devs.map(x=>row([`<b>${esc(x.name)}</b>`, esc(x.guard||"—"), esc(x.last_seen_at ? fmtDT(App, x.last_seen_at) : "לא דיווח"), esc(x.app_version ? "גרסה "+x.app_version : ""),
+            MSEC.devAsk===x.radio_id
+              ? `<span style="white-space:nowrap;"><button class="btn small" style="background:#b42318;border-color:#b42318;" data-action="portal-msec-devrevoke" data-id="${esc(x.radio_id)}" ${MSEC.busy?"disabled":""}>לבטל את ${esc(x.name)}</button> <button class="btn small secondary" data-action="portal-msec-devno">לא</button></span>`
+              : `<button class="btn small secondary" data-action="portal-msec-devask" data-id="${esc(x.radio_id)}">⛔ ביטול מכשיר</button>`])).join("")}</table></div>` : `<p class="muted">אין מכשירים רשומים.</p>`}`; })()}
       <div class="flexbar" style="gap:6px;margin-top:10px;flex-wrap:wrap;">
         ${askEnd ? `<span>לנתק את כל עמדות המוקד? כל עמדה תצטרך להזין שוב את הקוד.</span>
             <button class="btn small" style="background:#b42318;border-color:#b42318;" data-action="portal-msec-revoke" ${MSEC.busy?"disabled":""}>כן, לנתק</button>
@@ -4144,9 +4154,17 @@ async function msecAction(App, a, el){
   if(a==="portal-msec-refresh"){ MSEC.error = null; msecLoad(App, ms, true); return App.render(); }
   if(a==="portal-msec-ask"){ MSEC.ask = el.dataset.k; MSEC.msg = null; MSEC.error = null; App.render(); const x = document.getElementById("msec_code"); if(x) x.focus(); return; }
   if(a==="portal-msec-cancel"){ MSEC.ask = null; return App.render(); }
+  if(a==="portal-msec-devask"){ MSEC.devAsk = el.dataset.id; MSEC.msg = null; MSEC.error = null; return App.render(); }
+  if(a==="portal-msec-devno"){ MSEC.devAsk = null; return App.render(); }
   if(MSEC.busy) return;
   try{
-    if(a==="portal-msec-revoke"){
+    if(a==="portal-msec-devrevoke"){
+      const dev = (MSEC.devs||[]).find(x=>x.radio_id===el.dataset.id);
+      MSEC.busy = true; App.render();
+      try{ await App.apiRpc("rpc_admin_device_revoke", {p_token:ms.token, p_radio_id:el.dataset.id}); }
+      catch(e2){ if(/rpc_admin_device_revoke|Could not find the function/i.test(e2.message)) throw new Error("ביטול מכשיר עוד לא הותקן בשרת (נבנה בשיחה על מכשירי הקשר)"); throw e2; }
+      MSEC.devAsk = null; MSEC.msg = `✅ המכשיר ${dev?dev.name:""} בוטל. הוא יפסיק לשלוח ויחזור למסך הרישום.`;
+    } else if(a==="portal-msec-revoke"){
       MSEC.busy = true; App.render();
       const n = await App.apiRpc("rpc_admin_moked_revoke", {p_token:ms.token});
       MSEC.msg = `✅ נותקו ${n||0} עמדות. כל עמדה תצטרך להזין שוב את קוד המוקד.`;
@@ -4159,7 +4177,7 @@ async function msecAction(App, a, el){
     }
     MSEC.busy = false; MSEC.ask = null; MSEC.error = null; setTimeout(()=>{ MSEC.msg = null; App.render(); }, 12000);
     msecLoad(App, ms, true);
-  }catch(e){ MSEC.busy = false; MSEC.error = /session expired/i.test(e.message) ? "פג תוקף ההתחברות — צריך להתחבר מחדש" : e.message; }
+  }catch(e){ MSEC.busy = false; MSEC.devAsk = null; MSEC.error = /session expired/i.test(e.message) ? "פג תוקף ההתחברות — צריך להתחבר מחדש" : e.message; }
   App.render();
 }
 
