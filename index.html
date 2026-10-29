@@ -171,7 +171,10 @@
   .abs-tag.abs-pend{border-style:dashed;background:#fff;}
   .mg-abs td{background:#faf5ff;color:#6b21a8;text-align:right;font-size:11px;}
   .tmpl-fixed th,.tmpl-fixed td{white-space:normal;overflow-wrap:anywhere;}
-  .stask-cell{min-width:70px;} /* (2026-10-25, סרגיי) משימות באותו גופן כמו המשמרות */
+  .stask-cell{min-width:70px;}
+  .stask-ctrl{padding:4px 2px !important;}
+  .stask-ctrl-btns{display:flex;flex-wrap:wrap;justify-content:center;gap:4px;}
+  .stask-ctrl-btns .stask-rb{min-width:34px;min-height:32px;padding:2px 6px;margin:0;font-size:15px;line-height:1;} /* (2026-10-25, סרגיי) משימות באותו גופן כמו המשמרות */
   .tmpl-pos-hrs{font-size:.72em;font-weight:400;color:#4b5563;white-space:nowrap;line-height:1.35;} .hstyle .tmpl-pos-hrs{font-weight:700;color:#000;} /* (2026-10-26, סרגיי) העיצוב החדש של הסידור (בולד שחור, תכלת, צהוב) - רק בחיפה (hstyle) */
   .tmpl-na{background:#2a2a2a;}
   .tmpl-missing{font-weight:700;}
@@ -299,7 +302,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=219"></script>
+<script src="portal.js?v=220"></script>
 <script>
 (function(){
 "use strict";
@@ -2946,9 +2949,11 @@ function schedTasksBlock(sector, dates, ui, mode){
     }).join("");
     return `<tr><td class="tmpl-pos">משימה ${slot}</td>${cells}</tr>`;
   }).join("");
-  const ctrl = mode==="manual" ? `<tr class="no-print"><td class="tmpl-pos" style="font-size:.85em;">שורות</td>${dates.map((d,di)=>`<td style="white-space:nowrap;">
-      <button class="btn small secondary" data-action="stask-rows" data-sector="${escapeHtml(sector)}" data-date="${d}" data-rows="${perDay[di]+1}" title="הוספת שורת משימה ליום הזה" ${perDay[di]>=20?"disabled":""}>➕ שורה</button>
-      <button class="btn small secondary" data-action="stask-rows" data-sector="${escapeHtml(sector)}" data-date="${d}" data-rows="${perDay[di]-1}" title="הסרת השורה האחרונה ביום הזה" ${perDay[di]<=0?"disabled":""}>➖ שורה</button></td>`).join("")}</tr>` : "";
+  // (2026-10-29, סרגיי: "בנייד הפלוס והמינוס עולים אחד על השני, והלחצן לא נלחץ") - שני לחצנים קטנים שנכנסים בתוך התא
+  // (גם בעמודה צרה בטלפון) ולא גולשים לתא של היום הסמוך
+  const ctrl = mode==="manual" ? `<tr class="no-print"><td class="tmpl-pos" style="font-size:.85em;">שורות<br><span class="muted" style="font-size:.85em;font-weight:400;">הוספה / הסרה</span></td>${dates.map((d,di)=>`<td class="stask-ctrl"><div class="stask-ctrl-btns">
+      <button class="btn small secondary stask-rb" data-action="stask-rows" data-sector="${escapeHtml(sector)}" data-date="${d}" data-rows="${perDay[di]+1}" title="הוספת שורת משימה ליום הזה" aria-label="הוספת שורה" ${perDay[di]>=20?"disabled":""}>➕</button>
+      <button class="btn small secondary stask-rb" data-action="stask-rows" data-sector="${escapeHtml(sector)}" data-date="${d}" data-rows="${perDay[di]-1}" title="הסרת השורה האחרונה ביום הזה" aria-label="הסרת שורה" ${perDay[di]<=0?"disabled":""}>➖</button></div></td>`).join("")}</tr>` : "";
   return `
       <div class="tmpl-bucket-head">משימות (לא משמרת)${mode==="agg"?` <span class="muted" style="font-weight:400;font-size:.85em;">— להוספה או עריכה: "שיבוץ ידני"</span>`:""}</div>
       ${ui.staskRowsMsg ? `<p class="shortage" style="margin:4px 0;">${escapeHtml(ui.staskRowsMsg)}</p>` : ""}
