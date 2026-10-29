@@ -4079,6 +4079,91 @@ async function mtAction(App, a, el){
 }
 
 /* ================================================================
+   אבטחת המוקד (2026-10-29, סרגיי - הגנה מפני זליגת מידע): לסרגיי בלבד, בתוך "מוקד" באיזור האישי.
+   אילו עמדות מחוברות לאפליקציית המוקד (מתי נכנסו, פעילות אחרונה, כתובת, סוג מכשיר), יומן כניסות לקוד המוקד (כולל ניסיונות שגויים),
+   "ניתוק כל העמדות" ו"החלפת קוד המוקד" (מנתק את כולן). השרת: rpc_admin_moked_security / _revoke / _set_code
+   (בפרויקט moked-tracker: moked-app/server/run-2026-10-29-security.sql).
+   ================================================================ */
+const MSEC = { data:null, loading:false, token:null, error:null, msg:null, ask:null, busy:false, missing:false, open:false };
+function msecLoad(App, ms, force){
+  if(MSEC.token !== ms.token){ MSEC.token = ms.token; MSEC.data = null; MSEC.missing = false; }
+  if(MSEC.loading || MSEC.missing || (MSEC.data && !force)) return;
+  MSEC.loading = true;
+  App.apiRpc("rpc_admin_moked_security", {p_token:ms.token}).then(d=>{ MSEC.data = d || {}; MSEC.loading = false; App.render(); })
+    .catch(e=>{ MSEC.loading = false; MSEC.data = {};
+      if(/rpc_admin_moked_security|Could not find the function/i.test(e.message)) MSEC.missing = true; else MSEC.error = e.message;
+      App.render(); });
+}
+function msecDevice(ua){
+  ua = ua || "";
+  if(/MokedApp|Android/i.test(ua)) return "📱 אנדרואיד";
+  if(/Electron/i.test(ua)) return "💻 תוכנת המוקד (Windows)";
+  if(/Windows/i.test(ua)) return "💻 Windows";
+  if(/iPhone|iPad|Mac/i.test(ua)) return "🍎 אפל";
+  return ua ? "מכשיר אחר" : "—";
+}
+function renderMokedSecurityCard(App, ms){
+  if(!ms.is_admin) return "";
+  msecLoad(App, ms);
+  const esc = App.escapeHtml, d = MSEC.data || {};
+  if(MSEC.missing) return `<div class="card"><h3 style="margin:0;">🔐 אבטחת המוקד</h3><p class="muted" style="margin:6px 0 0;">צריך להריץ פעם אחת את קובץ העדכון <b dir="ltr">run-2026-10-29-security.sql</b> ב-Supabase.</p></div>`;
+  const sess = d.sessions || [], logins = d.logins || [];
+  const row = (cells, bad)=>`<tr${bad?' style="color:#b42318;font-weight:600;"':""}>${cells.map(c=>`<td style="padding:4px 6px;border-bottom:1px solid var(--border);">${c}</td>`).join("")}</tr>`;
+  const askEnd = MSEC.ask === "revoke", askCode = MSEC.ask === "code";
+  return `<div class="card">
+    <div class="flexbar" style="justify-content:space-between;">
+      <h3 style="margin:0;">🔐 אבטחת המוקד <span class="muted" style="font-size:.8em;font-weight:400;">(${sess.length} עמדות מחוברות${d.failed_24h?` · <span style="color:#b42318;">${d.failed_24h} ניסיונות שגויים ב-24 שעות</span>`:""})</span></h3>
+      <span><button class="btn small secondary" data-action="portal-msec-toggle">${MSEC.open?"▲ הסתר":"▼ פרטים"}</button> <button class="btn small secondary" data-action="portal-msec-refresh" title="רענון">🔄</button></span>
+    </div>
+    <p class="muted" style="font-size:.82em;margin:4px 0 0;">נתוני המוקד (מיקומי מאבטחים, כניסות, התראות, דוחות) נפתחים רק בעמדה שהוזן בה קוד המוקד. כאן רואים מי מחובר, ואפשר לנתק את כולם או להחליף את הקוד.</p>
+    ${d.locked_until ? `<p class="shortage">קוד המוקד נעול זמנית עד ${esc(fmtDT(App, d.locked_until))} בגלל ניסיונות שגויים.</p>` : ""}
+    ${MSEC.msg ? `<p style="color:#1b7f3b;font-weight:600;margin:6px 0 0;">${esc(MSEC.msg)}</p>` : ""}
+    ${MSEC.error ? `<p class="shortage">${esc(MSEC.error)}</p>` : ""}
+    ${MSEC.open ? `
+      <h4 style="margin:10px 0 4px;">עמדות מחוברות</h4>
+      ${sess.length ? `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:.88em;"><tr class="muted"><td>נכנסה</td><td>פעילות אחרונה</td><td>מכשיר</td><td>כתובת</td></tr>
+        ${sess.map(x=>row([esc(fmtDT(App, x.created_at)), esc(x.last_seen_at ? fmtDT(App, x.last_seen_at) : "—"), esc(msecDevice(x.user_agent)), `<span dir="ltr">${esc(x.ip||"—")}</span>`])).join("")}</table></div>` : `<p class="muted">אין עמדות מחוברות.</p>`}
+      <h4 style="margin:10px 0 4px;">כניסות אחרונות לקוד המוקד</h4>
+      ${logins.length ? `<div style="overflow-x:auto;max-height:240px;overflow-y:auto;"><table style="width:100%;border-collapse:collapse;font-size:.88em;">
+        ${logins.map(x=>row([esc(fmtDT(App, x.at)), x.ok ? "✅ הצליחה" : "❌ קוד שגוי", esc(msecDevice(x.user_agent)), `<span dir="ltr">${esc(x.ip||"—")}</span>`], !x.ok)).join("")}</table></div>` : `<p class="muted">עוד אין כניסות.</p>`}
+      <div class="flexbar" style="gap:6px;margin-top:10px;flex-wrap:wrap;">
+        ${askEnd ? `<span>לנתק את כל עמדות המוקד? כל עמדה תצטרך להזין שוב את הקוד.</span>
+            <button class="btn small" style="background:#b42318;border-color:#b42318;" data-action="portal-msec-revoke" ${MSEC.busy?"disabled":""}>כן, לנתק</button>
+            <button class="btn small secondary" data-action="portal-msec-cancel">לא</button>`
+          : askCode ? `<label>קוד חדש (6–12 ספרות): <input type="password" inputmode="numeric" id="msec_code" maxlength="12" style="width:9em;" dir="ltr" autocomplete="new-password"></label>
+            <button class="btn small ok" data-action="portal-msec-setcode" ${MSEC.busy?"disabled":""}>שמירת הקוד ונתוק כל העמדות</button>
+            <button class="btn small secondary" data-action="portal-msec-cancel">ביטול</button>`
+          : `<button class="btn small secondary" data-action="portal-msec-ask" data-k="revoke">🔌 ניתוק כל העמדות</button>
+             <button class="btn small secondary" data-action="portal-msec-ask" data-k="code">🔑 החלפת קוד המוקד</button>`}
+      </div>` : ""}
+  </div>`;
+}
+async function msecAction(App, a, el){
+  const ms = loadMgr(App); if(!ms) return;
+  if(a==="portal-msec-toggle"){ MSEC.open = !MSEC.open; return App.render(); }
+  if(a==="portal-msec-refresh"){ MSEC.error = null; msecLoad(App, ms, true); return App.render(); }
+  if(a==="portal-msec-ask"){ MSEC.ask = el.dataset.k; MSEC.msg = null; MSEC.error = null; App.render(); const x = document.getElementById("msec_code"); if(x) x.focus(); return; }
+  if(a==="portal-msec-cancel"){ MSEC.ask = null; return App.render(); }
+  if(MSEC.busy) return;
+  try{
+    if(a==="portal-msec-revoke"){
+      MSEC.busy = true; App.render();
+      const n = await App.apiRpc("rpc_admin_moked_revoke", {p_token:ms.token});
+      MSEC.msg = `✅ נותקו ${n||0} עמדות. כל עמדה תצטרך להזין שוב את קוד המוקד.`;
+    } else if(a==="portal-msec-setcode"){
+      const code = ((document.getElementById("msec_code")||{}).value||"").trim();
+      if(!/^[0-9]{6,12}$/.test(code)){ MSEC.error = "הקוד צריך להיות 6 עד 12 ספרות"; return App.render(); }
+      MSEC.busy = true; App.render();
+      const n = await App.apiRpc("rpc_admin_moked_set_code", {p_token:ms.token, p_code:code});
+      MSEC.msg = `✅ קוד המוקד הוחלף ונותקו ${n||0} עמדות. מסרו את הקוד החדש רק לצוות המוקד.`;
+    }
+    MSEC.busy = false; MSEC.ask = null; MSEC.error = null; setTimeout(()=>{ MSEC.msg = null; App.render(); }, 12000);
+    msecLoad(App, ms, true);
+  }catch(e){ MSEC.busy = false; MSEC.error = /session expired/i.test(e.message) ? "פג תוקף ההתחברות — צריך להתחבר מחדש" : e.message; }
+  App.render();
+}
+
+/* ================================================================
    סטטוס התחברות משתמשים (2026-10-21, סרגיי): לסרגיי בלבד - לכל מאבטח/מוקדן ולכל מנהל: מחובר עכשיו (יש סשן
    בתוקף), התראות פעילות, כניסה אחרונה ומספר כניסות. השרת: admin_login_status (רישום כניסות: user_logins).
    ================================================================ */
@@ -5501,7 +5586,8 @@ function renderManagerHome(App, ms){
         ${areqMgrTile(App, ms)}
       </div>
     </div>
-    ${renderMokedTaskCard(App, ms)}`;
+    ${renderMokedTaskCard(App, ms)}
+    ${renderMokedSecurityCard(App, ms)}`;
   }
   const big = (s, icon, title, sub)=>`<div class="team-tile mh-big" data-action="portal-mh-section" data-s="${s}"><div style="font-size:2em;">${icon}</div><div style="font-size:1.25em;font-weight:800;margin-top:4px;">${title}</div><div class="muted" style="font-size:.88em;margin-top:4px;">${sub}</div></div>`;
   return `${head}
@@ -6136,6 +6222,7 @@ function onClick(App, a, el){
   if(a==="portal-ls-openall"){ LS.openAll = !LS.openAll; return App.render(); }
   if(a.indexOf("portal-todo-")===0) return todoAction(App, a, el);
   if(a.indexOf("portal-mt-")===0) return mtAction(App, a, el);
+  if(a.indexOf("portal-msec-")===0) return msecAction(App, a, el);
   if(a.indexOf("portal-wtodo-")===0) return workerTodoAction(App, a, el);
   if(a.indexOf("portal-inc-")===0) return incClick(App, a, el);
   if(a.indexOf("portal-cal-")===0 || a.indexOf("portal-calw-")===0) return calClick(App, a, el);
