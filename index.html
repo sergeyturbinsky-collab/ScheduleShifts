@@ -299,7 +299,7 @@ window.addEventListener("appinstalled", function(){ try{ localStorage.setItem("c
   window.addEventListener("load", function(){ mine = (document.querySelector('script[src*="portal.js?v="]')||{}).src || ""; setTimeout(check, 1200); });
 })();
 </script>
-<script src="portal.js?v=218"></script>
+<script src="portal.js?v=219"></script>
 <script>
 (function(){
 "use strict";
@@ -1289,7 +1289,7 @@ function renderAggregate(){
   let quotaSection = "";
   if(group.citySectors.length){
     if(isMoked){
-      quotaSection = responsiveGrid(renderMokedTemplateGrid(group, dates, ui, "view"), group, dates, ui);
+      quotaSection = responsiveGrid(renderMokedTemplateGrid(group, dates, ui, "agg"), group, dates, ui); // "agg" - שורות המשימות מוצגות
     } else {
       quotaSection = responsiveGrid(renderTemplateGrid(group, dates, ui, "agg"), group, dates, ui); // "agg" = תצוגה כמו view, אבל שורות המשימות תמיד מוצגות
     }
@@ -3046,8 +3046,8 @@ function renderSchedTaskOverlay(){
   <div class="overlay" data-action="stask-close-bg">
     <div class="card" data-action="noop">
       <h3>${escapeHtml(c.sector)} · ${fmtDateHeb(c.date)} · משימה ${c.slot}</h3>
-      <div class="field"><label>1. מאבטח</label>
-        <select id="stask_worker" data-stf="worker"><option value="">— בחרו מאבטח —</option>${ws.map(w=>`<option value="${w.id}" ${w.id===f.worker?"selected":""}>${escapeHtml(w.name)}</option>`).join("")}</select></div>
+      <div class="field"><label>1. ${c.sector==="מוקד"?"עובד":"מאבטח"}</label>
+        <select id="stask_worker" data-stf="worker"><option value="">— בחרו ${c.sector==="מוקד"?"עובד":"מאבטח"} —</option>${ws.map(w=>`<option value="${w.id}" ${w.id===f.worker?"selected":""}>${escapeHtml(w.name)}</option>`).join("")}</select></div>
       ${f.worker ? `
       <div class="field"><label>2. סוג המשימה</label>
         ${radio("once", `חד פעמית — רק ב-${fmtDateHeb(c.date)}`)}
@@ -3065,7 +3065,7 @@ function renderSchedTaskOverlay(){
         <div class="field"><label>משעה</label><input type="time" id="stask_start" data-stf="start" value="${escapeHtml(f.start||"")}"></div>
         <div class="field"><label>עד שעה</label><input type="time" id="stask_end" data-stf="end" value="${escapeHtml(f.end||"")}"></div>
       </div>
-      <p class="muted" style="font-size:.85em;">המשימה תופיע אצל המאבטח באיזור האישי, והוא יקבל התראה.${f.kind==="range"?" השעות חלות על כל הימים.":""}</p>` : ""}
+      <p class="muted" style="font-size:.85em;">המשימה תופיע אצל ${c.sector==="מוקד"?"העובד":"המאבטח"} באיזור האישי, והוא יקבל התראה.${f.kind==="range"?" השעות חלות על כל הימים.":""}</p>` : ""}
       ${t && t.series_id ? `<p class="muted" style="font-size:.85em;">🔁 חלק ממשימה מתמשכת ${fmtDateHeb(t.series_from)} – ${fmtDateHeb(t.series_to)}.${f.kind==="once"?" שמירה כ\"חד פעמית\" תשנה רק את היום הזה.":""}</p>` : ""}
       ${ui.staskMsg? `<p class="shortage">${escapeHtml(ui.staskMsg)}</p>`:""}
       <div class="row" style="margin-top:8px;flex-wrap:wrap;">
@@ -3136,7 +3136,8 @@ function renderMokedTemplateGrid(group, dates, ui, mode){
       </table>
       </div>`;
     }).join("");
-    return `<div class="tmpl-block"><div class="tmpl-sector-head">${escapeHtml(secData.sector)}</div>${bucketsHtml}</div>`;
+    // (2026-10-29, סרגיי: "תוסיף לכלל הסדרנים את האפשרויות של הזנת משימות מחוץ למשמרת, כמו אצל אלירן") - גם במוקד
+    return `<div class="tmpl-block"><div class="tmpl-sector-head">${escapeHtml(secData.sector)}</div>${bucketsHtml}${schedTasksBlock(secData.sector, dates, ui, mode)}</div>`;
   }).join("");
 
   const banner = mode==="manual" ? longChainBanner(restViolations, dates, id=>{ const x = workersById[id]; return x?x.name:"?"; }) : "";
@@ -5540,7 +5541,8 @@ function renderManualBuild(team){
     <button class="btn secondary small" data-action="sched-preview" style="margin-top:8px;">🖼 הצג בתמונה</button>
   </div>
   ${bottomTables}
-  ${renderMokedCellOverlay()}`;
+  ${renderMokedCellOverlay()}
+  ${renderSchedTaskOverlay()}`;
 }
 
 
