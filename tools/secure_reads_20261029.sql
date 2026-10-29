@@ -57,7 +57,14 @@ declare
   sel text[] := '{}'; conds text[] := '{}'; ords text[] := '{}'; lim int; off int; items text[]; it text; res jsonb;
   anon_ok text[] := array['constraint_teams','shift_quotas','schedule_publications'];
 begin
-  select a.kind, a.worker_id into v_kind, v_wid from public.app_auth(p_auths) a;
+  -- אפליקציית המוקד (צפי למשמרת): 'moked:<token>' מ-moked_sessions - רק 4 הטבלאות שהיא צריכה
+  if exists(select 1 from jsonb_array_elements_text(coalesce(p_auths, '[]'::jsonb)) x
+             where x like 'moked:%' and exists(select 1 from public.moked_sessions s where s.token = substr(x, 7) and s.expires_at > now())) then
+    v_kind := 'moked';
+    if p_table not in ('shift_assignments','shift_quotas','schedule_publications','constraint_teams') then raise exception 'נדרשת התחברות' using errcode = '28000'; end if;
+  else
+    select a.kind, a.worker_id into v_kind, v_wid from public.app_auth(p_auths) a;
+  end if;
   allowed := case p_table
     when 'shift_assignments' then array['id','sector','entry_date','shift_type','worker_id','team_id','method','created_at','custom_start','custom_end','shadow_of','filled_role','split']
     when 'constraint_entries' then array['id','submission_id','shift_type','custom_start','custom_end','entry_date']
@@ -69,6 +76,7 @@ begin
     when 'logistics_items' then array['id','name','has_size','sort_order','size_options','has_serial','has_vehicle']
     else null end;
   if allowed is null then raise exception 'טבלה לא מורשית' using errcode = '42501'; end if;
+  allowed := array(select x from unnest(allowed) x where exists(select 1 from pg_attribute t where t.attrelid = ('public.' || p_table)::regclass and t.attname = x and not t.attisdropped));
   if v_kind is null then
     if not (p_table = any(anon_ok)) then raise exception 'נדרשת התחברות' using errcode = '28000'; end if;
     if p_table = 'schedule_publications' then allowed := array['sector','period_start','period_end','published_at']; end if;
